@@ -1,0 +1,55 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "eyeos"
+version = "2.0.0"
+description = "Webcam eye tracking as an input device: MediaPipe gaze moves the Windows cursor behind a four-gate safety model."
+readme = "README.md"
+requires-python = ">=3.10"
+license = { text = "MIT" }
+authors = [{ name = "Mitansh" }]
+dependencies = ["numpy>=1.24", "PyYAML>=6.0"]
+
+[project.optional-dependencies]
+webcam = ["opencv-python>=4.8", "mediapipe>=0.10"]
+windows-fallback = ["pynput>=1.7"]
+dev = [
+    "pytest>=7.4",
+    "pytest-cov>=4.1",
+    "ruff>=0.4",
+    "black>=24.1",
+    "mypy>=1.8",
+    "types-PyYAML>=6.0",
+]
+
+[project.scripts]
+eyeos = "eyeos.cli:main"
+
+[tool.setuptools.packages.find]
+include = ["eyeos*"]
+
+[tool.black]
+line-length = 100
+target-version = ["py310"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py310"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B"]
+
+[tool.mypy]
+python_version = "3.10"
+ignore_missing_imports = true
+warn_unused_ignores = true
+
+[[tool.mypy.overrides]]
+module = "yaml"
+ignore_missing_imports = true
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-ra"

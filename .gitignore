@@ -1,0 +1,50 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.eggs/
+build/
+dist/
+.mypy_cache/
+.ruff_cache/
+.pytest_cache/
+.coverage
+htmlcov/
+*.egg
+
+# Virtual environments
+.venv/
+venv/
+env/
+
+# Secrets
+.env
+.env.*
+!.env.example
+*.key
+*.pem
+secrets/
+
+# Model weights / datasets / recordings — never committed
+*.gguf
+*.safetensors
+*.bin
+*.onnx
+*.tflite
+*.task
+*.mp4
+*.avi
+*.mov
+data/raw/
+
+# Session logs (runtime output, not source)
+logs/
+*.session.jsonl
+
+# Generated eval output (regenerate with `python -m eval.run_eval`)
+eval/results.json
+
+# Editor / OS
+.vscode/
+.idea/
+.DS_Store
