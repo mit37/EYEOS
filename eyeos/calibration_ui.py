@@ -1,6 +1,7 @@
 """A fullscreen 9-dot calibration screen (PRD §4: "a calibration UI (a fullscreen
-Tkinter/PySide6 dots screen)"). Needs a display — untested here, same as overlay.py;
-see docs/PLAN.md.
+Tkinter/PySide6 dots screen)"). Needs a display — untested here, same as overlay.py
+(and guards the same two failure modes: tkinter missing entirely, or installed with
+no $DISPLAY); see docs/PLAN.md.
 
 Usage: show one target at a time; the caller presses space when they're looking
 steadily at the dot, which calls ``capture_sample(target_px)`` (wired by the caller to
@@ -39,7 +40,14 @@ class CalibrationUI:
         self._index = 0
         self._cancelled = False
 
-        self.root: Any = tk.Tk()
+        try:
+            self.root: Any = tk.Tk()
+        except tk.TclError as e:
+            raise RuntimeError(
+                "CalibrationUI needs a display (tkinter is installed, but there is "
+                "no $DISPLAY / desktop session here). Run it on a machine with a "
+                "desktop session."
+            ) from e
         self.root.attributes("-fullscreen", True)
         self.canvas: Any = tk.Canvas(self.root, bg="black", highlightthickness=0)
         self.canvas.pack(fill="both", expand=True)

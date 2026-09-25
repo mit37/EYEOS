@@ -1,7 +1,9 @@
 """A small always-on-top window showing the four gate lights live (PRD §2: "the
-overlay shows the four gate lights live"). Needs a display — this cloud container has
-none (``tkinter`` isn't even importable here; see docs/PLAN.md) — so this module is
-untested and only guarded to fail clearly, not exercised.
+overlay shows the four gate lights live"). Needs a display, which no cloud CI runner
+has — ``tkinter`` itself may or may not be installed (it isn't in this project's local
+build container; it is, but with no ``$DISPLAY``, on GitHub's own runners), so this
+guards both failure modes and only fails clearly, never exercised for real; see
+docs/PLAN.md.
 """
 
 from __future__ import annotations
@@ -26,7 +28,14 @@ class GateOverlay:
             ) from e
 
         self._tk = tk
-        self.root: Any = tk.Tk()
+        try:
+            self.root: Any = tk.Tk()
+        except tk.TclError as e:
+            raise RuntimeError(
+                "GateOverlay needs a display (tkinter is installed, but there is no "
+                "$DISPLAY / desktop session here). Run it on a machine with a "
+                "desktop session."
+            ) from e
         self.root.title("EyeOS gates")
         self.root.attributes("-topmost", True)
         self.root.resizable(False, False)
