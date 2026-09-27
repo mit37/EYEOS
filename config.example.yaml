@@ -1,0 +1,48 @@
+# EyeOS config. Copy to config.yaml and edit; config.yaml is gitignored-by-convention
+# (it's local calibration/tuning, not a secret, but keep your own out of commits).
+# No API keys live here — EyeOS calls no paid API.
+
+screen:
+  width_px: 1920
+  height_px: 1080
+
+input:
+  # webcam | video_file | synthetic
+  source: synthetic
+  device_index: 0 # webcam only
+  video_path: null # video_file only
+  synthetic_path: eval/fixtures/synthetic_session.csv # synthetic only
+
+calibration:
+  points: 9
+
+filter:
+  # One Euro filter (Casiez et al. 2012)
+  min_cutoff: 1.0
+  beta: 0.02
+  d_cutoff: 1.0
+
+gates:
+  presence_confidence_threshold: 0.5
+  calibration_max_error_px: 60.0
+  calibration_max_head_pose_delta_deg: 15.0
+  dwell_time_s: 0.8
+  dwell_jitter_px: 20.0
+  max_cursor_speed_px_s: 4000.0
+  max_clicks_per_window: 5
+  click_window_s: 10.0
+  confirmation_hold_s: 0.4
+  no_click_zones:
+    # Example: the Windows taskbar close-button area, on a 1920x1080 screen.
+    - x_min: 1860
+      y_min: 0
+      x_max: 1920
+      y_max: 40
+
+output:
+  # dry_run | windows_sendinput | pynput
+  backend: dry_run
+  kill_hotkey: "esc"
+
+logging:
+  session_log_dir: logs

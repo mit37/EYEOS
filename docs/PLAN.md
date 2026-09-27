@@ -1,0 +1,48 @@
+# PLAN.md — EyeOS v2 rebuild
+
+Restated from `PRD.md` §8, per `STANDARDS.md` §6 step 1.
+
+## Definition of Done
+
+- [ ] Gate state machine fully tested (≥40 tests), including the kill switch and no-click zones
+- [ ] Dry-run mode runs the whole pipeline on a video file
+- [ ] Eval numbers generated (synthetic in CI; real ones from Mitansh's recordings or marked pending)
+- [ ] README states "experiment, not an assistive-tech product"; CI green; tag v2.0.0
+
+## Milestones (PRD §6), built in order
+
+1. Scaffold, CI, config, an input-source interface (webcam | video file | synthetic landmarks).
+2. Landmark → features + head pose (unit-tested on fixture landmarks).
+3. Calibration + regression + validation error.
+4. One Euro filter (tested against the reference behavior).
+5. The four gates as a pure state machine with a fake clock (the most tests: every gate transition).
+6. Output adapters (Windows SendInput + fallback) behind an interface; dry-run mode prints actions instead of moving the mouse.
+7. Overlay + calibration UI.
+8. Eval, README with gate diagram, `docs/DEMO.md`, tag v2.0.0.
+
+## Cloud-instance constraints (PRD §7, STANDARDS §6.4)
+
+This session has no webcam, no Windows desktop, and no display server (`tkinter` is not
+even importable in this container — verified during scaffolding). Consequences:
+
+- `WebcamInputSource` and `VideoFileInputSource` depend on `opencv-python` and `mediapipe`,
+  which are **not installed** and are not required by the core package. They are behind the
+  `InputSource` interface, with the imports lazy (inside `frames()`, not at module level),
+  so importing `eyeos` never requires them. Real capture is untested here and must be
+  verified by Mitansh on a real machine (see `docs/DEMO.md`).
+- `WindowsSendInputOutput` depends on `ctypes.windll`, which only exists on Windows. It is
+  behind the `OutputAdapter` interface and is guarded to raise a clear `RuntimeError` off
+  Windows. It is untested here; `DryRunOutputAdapter` (fully tested) stands in for it in
+  the pipeline test and in the eval harness.
+- `overlay.py` and `calibration_ui.py` depend on `tkinter`, which this container does not
+  have. Both modules guard the import and raise a clear `RuntimeError` with instructions
+  if `tkinter` is missing, so importing the package never fails. They are not unit tested
+  here (nothing to test without a display); `docs/DEMO.md` is the script for Mitansh to
+  record them on his own machine.
+- The eval numbers in the README come from a **generated synthetic landmark sequence**
+  (`eval/fixtures/`, produced by `eval/generate_synthetic.py`, committed so CI needs no
+  camera). Real-session numbers from recorded video are marked "not measured — pending
+  Mitansh's recordings" until he supplies them.
+
+Everything else (features, calibration, filter, gates, dry-run pipeline, eval on synthetic
+data) runs and is tested in this container with no external hardware.
