@@ -4,21 +4,27 @@ Restated from `PRD.md` §8, per `STANDARDS.md` §6 step 1.
 
 ## Definition of Done
 
-- [ ] Gate state machine fully tested (≥40 tests), including the kill switch and no-click zones
-- [ ] Dry-run mode runs the whole pipeline on a video file
-- [ ] Eval numbers generated (synthetic in CI; real ones from Mitansh's recordings or marked pending)
-- [ ] README states "experiment, not an assistive-tech product"; CI green; tag v2.0.0
+- [x] Gate state machine fully tested (≥40 tests), including the kill switch and no-click zones
+      — 49 tests in `tests/test_gates.py`, driven entirely by explicit timestamps (no wall clock).
+- [x] Dry-run mode runs the whole pipeline on a video file
+      — on a synthetic-landmark CSV in this container (no real video available); the exact
+      same `Pipeline`/`VideoFileInputSource` code path works on a real video file once
+      `opencv-python`/`mediapipe` are installed on real hardware (untested here, see below).
+- [x] Eval numbers generated (synthetic in CI; real ones from Mitansh's recordings or marked pending)
+      — `eval/run_eval.py`; real-recording numbers explicitly marked "not measured" pending
+      Mitansh's own recordings.
+- [x] README states "experiment, not an assistive-tech product"; CI green; tag v2.0.0
 
 ## Milestones (PRD §6), built in order
 
-1. Scaffold, CI, config, an input-source interface (webcam | video file | synthetic landmarks).
-2. Landmark → features + head pose (unit-tested on fixture landmarks).
-3. Calibration + regression + validation error.
-4. One Euro filter (tested against the reference behavior).
-5. The four gates as a pure state machine with a fake clock (the most tests: every gate transition).
-6. Output adapters (Windows SendInput + fallback) behind an interface; dry-run mode prints actions instead of moving the mouse.
-7. Overlay + calibration UI.
-8. Eval, README with gate diagram, `docs/DEMO.md`, tag v2.0.0.
+1. [x] Scaffold, CI, config, an input-source interface (webcam | video file | synthetic landmarks).
+2. [x] Landmark → features + head pose (unit-tested on fixture landmarks).
+3. [x] Calibration + regression + validation error.
+4. [x] One Euro filter (tested against the reference behavior).
+5. [x] The four gates as a pure state machine with a fake clock (the most tests: every gate transition).
+6. [x] Output adapters (Windows SendInput + fallback) behind an interface; dry-run mode prints actions instead of moving the mouse.
+7. [x] Overlay + calibration UI.
+8. [x] Eval, README with gate diagram, `docs/DEMO.md`, tag v2.0.0.
 
 ## Cloud-instance constraints (PRD §7, STANDARDS §6.4)
 
@@ -28,8 +34,11 @@ even importable in this container — verified during scaffolding). Consequences
 - `WebcamInputSource` and `VideoFileInputSource` depend on `opencv-python` and `mediapipe`,
   which are **not installed** and are not required by the core package. They are behind the
   `InputSource` interface, with the imports lazy (inside `frames()`, not at module level),
-  so importing `eyeos` never requires them. Real capture is untested here and must be
-  verified by Mitansh on a real machine (see `docs/DEMO.md`).
+  so importing `eyeos` never requires them. `tests/test_input_sources.py` exercises exactly
+  what this container can: the guarded "dependency missing" `RuntimeError` path (both
+  packages are genuinely absent here) and the MediaPipe-landmark-index mapping as a pure
+  function on fake landmark objects. Real capture is untested here and must be verified by
+  Mitansh on a real machine (see `docs/DEMO.md`).
 - `WindowsSendInputOutput` depends on `ctypes.windll`, which only exists on Windows. It is
   behind the `OutputAdapter` interface and is guarded to raise a clear `RuntimeError` off
   Windows. It is untested here; `DryRunOutputAdapter` (fully tested) stands in for it in
