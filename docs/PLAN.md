@@ -43,11 +43,17 @@ even importable in this container — verified during scaffolding). Consequences
   behind the `OutputAdapter` interface and is guarded to raise a clear `RuntimeError` off
   Windows. It is untested here; `DryRunOutputAdapter` (fully tested) stands in for it in
   the pipeline test and in the eval harness.
-- `overlay.py` and `calibration_ui.py` depend on `tkinter`, which this container does not
-  have. Both modules guard the import and raise a clear `RuntimeError` with instructions
-  if `tkinter` is missing, so importing the package never fails. They are not unit tested
-  here (nothing to test without a display); `docs/DEMO.md` is the script for Mitansh to
-  record them on his own machine.
+- `overlay.py` and `calibration_ui.py` depend on `tkinter` *and* a real display, which
+  this build container has neither of, and GitHub's own hosted CI runners have only the
+  first (`tkinter` is installed there, but there's no `$DISPLAY`). Both modules guard
+  both failure modes — `ImportError` (no tkinter) and `tkinter.TclError` (tkinter
+  present, no display) — into the same clear `RuntimeError`, so importing the package
+  never fails and CI fails clearly instead of with a raw Tcl traceback (this is exactly
+  the bug CI itself caught on the first push of this branch: the guard only handled the
+  `ImportError` case, which is all this local build container ever produces, and CI's
+  `TclError` case slipped through untested until then). They are not otherwise unit
+  tested (nothing to test without a display); `docs/DEMO.md` is the script for Mitansh
+  to record them on his own machine.
 - The eval numbers in the README come from a **generated synthetic landmark sequence**
   (`eval/fixtures/`, produced by `eval/generate_synthetic.py`, committed so CI needs no
   camera). Real-session numbers from recorded video are marked "not measured — pending
