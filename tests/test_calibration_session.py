@@ -24,21 +24,39 @@ PER_DOT = SETTLE_FRAMES + SAMPLE_FRAMES
 
 
 class FakeDotScreen:
-    """Stands in for CalibrationUI: 'presses space' on each dot, retrying a failed one."""
+    """Stands in for CalibrationUI: 'presses space' on each dot, retrying a failed one.
+
+    Like Tk, it doesn't raise an exception from ``capture_sample``: it records it in
+    ``callback_errors`` and counts that press as a failed capture.
+    """
 
     def __init__(self, width, height, capture_sample, cancel=False):
         self.targets = target_points(width, height)
         self.capture_sample = capture_sample
-        self.cancel = cancel
+        self.cancel_at_start = cancel
+        self.cancelled = False
+        self.presses = 0
+        self.callback_errors = []
+
+    def cancel(self):
+        self.cancelled = True
 
     def run(self):
-        if self.cancel:
+        if self.cancel_at_start:
             return False
         for target in self.targets:
             for _attempt in range(3):
-                if self.capture_sample(target) is not False:
+                if self.cancelled:
+                    return False
+                self.presses += 1
+                try:
+                    captured = self.capture_sample(target)
+                except Exception as e:
+                    self.callback_errors.append(e)
+                    captured = False
+                if captured is not False:
                     break
-        return True
+        return not self.cancelled
 
 
 def _calibration_frames(t0=0.0, fps=30):
@@ -68,6 +86,13 @@ def test_collect_dot_features_skips_settle_frames_and_unusable_frames():
 def test_collect_dot_features_gives_up_when_too_few_usable_frames():
     frames = [Frame(i / 30, None) for i in range(100)]
     assert collect_dot_features(iter(frames)) is None
+
+
+def test_collect_dot_features_reports_the_end_of_the_input():
+    # Not "too few usable frames": the stream itself stopped (camera unplugged).
+    frames = [Frame(i / 30, make_landmarks(0.2, -0.1)) for i in range(SETTLE_FRAMES + 3)]
+    with pytest.raises(RuntimeError, match="ran out of frames"):
+        collect_dot_features(iter(frames))
 
 
 def test_calibrate_interactively_fits_on_the_stream():
@@ -102,6 +127,33 @@ def test_calibrate_interactively_needs_a_sample_for_every_dot(dots):
             return True
 
     assert calibrate_interactively(Config(), iter(frames), EndsEarly) is None
+
+
+@pytest.mark.parametrize(
+    "ending, message",
+    [
+        ("raises", "camera unplugged"),
+        ("ends", r"camera stopped during calibration: .* at point 4/9"),
+    ],
+)
+def test_calibrate_interactively_reports_a_stream_that_fails_mid_calibration(ending, message):
+    frames, _ = _calibration_frames()
+
+    def stream():
+        yield from frames[: 3 * PER_DOT]  # three dots' worth, then the camera fails
+        if ending == "raises":
+            raise RuntimeError("camera unplugged")
+
+    screens = []
+
+    def dot_screen(width, height, capture_sample):
+        screens.append(FakeDotScreen(width, height, capture_sample))
+        return screens[-1]
+
+    with pytest.raises(RuntimeError, match=message):
+        calibrate_interactively(Config(), stream(), dot_screen)
+    assert screens[0].cancelled
+    assert screens[0].presses == 4  # the dot screen closed at the dot that failed
 
 
 def _write_session_csv(tmp_path, frames):
@@ -172,3 +224,95 @@ def test_eyeos_run_calibrate_closing_the_window_emits_nothing(tmp_path, monkeypa
     assert exit_code == 1
     assert "calibration cancelled" in captured.err
     assert captured.out == ""  # no validation error, no frames processed, no moves
+
+
+def _scripted_dot_screen(monkeypatch, presses, shown):
+    """Replace eyeos run's dot screen with the real one on a fake tkinter, where the
+    user presses space ``presses`` times."""
+    import eyeos.cli as cli
+    from eyeos.calibration_ui import CalibrationUI
+
+    monkeypatch.setitem(sys.modules, "tkinter", make_fake_tk())
+
+    def dot_screen(width, height, capture_sample):
+        ui = CalibrationUI(width, height, capture_sample=capture_sample)
+        ui.root.on_mainloop = lambda root: [root.fire("<space>") for _ in range(presses)]
+        shown.append(ui)
+        return ui
+
+    monkeypatch.setattr(cli, "CalibrationUI", dot_screen)
+
+
+def _webcam_config(tmp_path):
+    config_path = tmp_path / "config.yaml"
+    config_path.write_text("input:\n  source: webcam\noutput:\n  backend: dry_run\n")
+    return config_path
+
+
+@pytest.mark.parametrize(
+    "cv2_kwargs, mp_kwargs, message",
+    [
+        ({"opened": False}, {}, "could not open webcam device 0"),
+        ({}, {"solutions": False}, "legacy Solutions API"),
+    ],
+)
+def test_eyeos_run_calibrate_reports_a_camera_that_cannot_open_before_any_dot(
+    tmp_path, monkeypatch, capsys, cv2_kwargs, mp_kwargs, message
+):
+    from eyeos.cli import main
+    from tests.fake_capture import FakeCv2, FakeMediapipe, install_fakes
+
+    monkeypatch.chdir(tmp_path)
+    install_fakes(
+        monkeypatch,
+        cv2=FakeCv2(n_frames=1000, **cv2_kwargs),
+        mediapipe=FakeMediapipe(**mp_kwargs),
+    )
+    shown = []
+    _scripted_dot_screen(monkeypatch, presses=9, shown=shown)
+
+    with pytest.raises(RuntimeError, match=message):
+        main(["run", "--config", str(_webcam_config(tmp_path)), "--calibrate", "--no-log"])
+
+    assert shown == []  # failed before the fullscreen window could hide the error
+    assert "calibration cancelled" not in capsys.readouterr().err
+
+
+def test_eyeos_run_calibrate_refuses_a_source_with_no_frames(tmp_path, monkeypatch, capsys):
+    from eyeos.cli import main
+    from tests.fake_capture import FakeCv2, FakeMediapipe, install_fakes
+
+    monkeypatch.chdir(tmp_path)
+    install_fakes(monkeypatch, cv2=FakeCv2(n_frames=0), mediapipe=FakeMediapipe())
+    shown = []
+    _scripted_dot_screen(monkeypatch, presses=9, shown=shown)
+
+    exit_code = main(["run", "--config", str(_webcam_config(tmp_path)), "--calibrate", "--no-log"])
+
+    err = capsys.readouterr().err
+    assert exit_code == 1
+    assert "gave no frames" in err
+    assert "calibration cancelled" not in err
+    assert shown == []
+
+
+def test_eyeos_run_calibrate_reports_a_camera_that_stops_mid_calibration(
+    tmp_path, monkeypatch, capsys
+):
+    from eyeos.cli import main
+
+    monkeypatch.chdir(tmp_path)
+    frames, _ = _calibration_frames()
+    config_path = _write_session_csv(tmp_path, frames[: 3 * PER_DOT])  # ends at dot 4
+    shown = []
+    _scripted_dot_screen(monkeypatch, presses=9, shown=shown)
+
+    with pytest.raises(RuntimeError, match="camera stopped during calibration"):
+        main(["run", "--config", str(config_path), "--calibrate", "--no-log"])
+
+    (ui,) = shown
+    assert ui.root.destroyed
+    assert ui.root.callback_errors == []  # nothing left for Tk to swallow
+    captured = capsys.readouterr()
+    assert "calibration cancelled" not in captured.err
+    assert captured.out == ""

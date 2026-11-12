@@ -8,11 +8,15 @@ processing events.
 
 Like real Tk, a destroyed window stays destroyed: a second ``destroy()``, and any call
 on it or on one of its widgets, raises TclError. Events (``fire``, ``close_window``)
-sent after that are dropped, as no window is left to receive them.
+sent after that are dropped, as no window is left to receive them. Also like real Tk,
+an exception raised by an event handler is not raised to the caller: it goes to
+``report_callback_exception``, which prints it and records it in ``callback_errors``.
 """
 
 from __future__ import annotations
 
+import sys
+import traceback
 import types
 from typing import Any
 
@@ -67,6 +71,7 @@ class Tk(_Widget):
         self.mainloop_calls = 0
         self.on_mainloop: Any = None
         self.on_update: Any = None  # called inside update(), as Tk handles events there
+        self.callback_errors: list[BaseException] = []
 
     def winfo_screenwidth(self) -> int:
         self._check_alive("winfo")
@@ -91,9 +96,21 @@ class Tk(_Widget):
         self._check_alive("bind")
         self.bindings[sequence] = handler
 
+    def _dispatch(self, handler: Any, *args: Any) -> None:
+        """Run an event handler the way Tk does: report an exception, don't raise it."""
+        try:
+            handler(*args)
+        except Exception:
+            self.report_callback_exception(*sys.exc_info())
+
+    def report_callback_exception(self, exc: Any, val: Any, tb: Any) -> None:
+        self.callback_errors.append(val)
+        print("Exception in Tkinter callback", file=sys.stderr)
+        traceback.print_exception(exc, val, tb, file=sys.stderr)
+
     def fire(self, sequence: str) -> None:
         if not self.destroyed:
-            self.bindings[sequence](None)
+            self._dispatch(self.bindings[sequence], None)
 
     def protocol(self, name: str, func: Any = None) -> None:
         self._check_alive("wm")
@@ -105,10 +122,7 @@ class Tk(_Widget):
         if self.destroyed:
             return
         handler = self.protocols.get("WM_DELETE_WINDOW")
-        if handler is None:
-            self.destroy()
-        else:
-            handler()
+        self._dispatch(handler if handler is not None else self.destroy)
 
     def update(self) -> None:
         self._check_alive("update")

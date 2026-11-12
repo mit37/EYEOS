@@ -7,8 +7,9 @@ Usage: show one target at a time; the caller presses space when they're looking
 steadily at the dot, which calls ``capture_sample(target_px)`` (wired by the caller to
 pull the current FeatureVector out of the running pipeline and add it to a
 Calibration). If it returns False (no usable sample), the same dot is asked for again
-instead of being silently skipped. Escape cancels, and so does closing the window
-(Alt+F4, the title-bar X): ``run()`` is True only once every dot has been captured.
+instead of being silently skipped; it may call ``cancel()`` first to give up. Escape
+cancels, and so does closing the window (Alt+F4, the title-bar X): ``run()`` is True
+only once every dot has been captured.
 """
 
 from __future__ import annotations
@@ -41,6 +42,7 @@ class CalibrationUI:
         self.targets = target_points(screen_width_px, screen_height_px)
         self._index = 0
         self._cancelled = False
+        self._closed = False
 
         try:
             self.root: Any = tk.Tk()
@@ -93,21 +95,30 @@ class CalibrationUI:
             )
 
     def _on_space(self, _event: object) -> None:
-        if self._index >= len(self.targets):
+        if self._closed or self._index >= len(self.targets):
             return
-        if self.capture_sample(self.targets[self._index]) is False:
+        captured = self.capture_sample(self.targets[self._index])
+        if self._closed:  # capture_sample cancelled the screen (e.g. the camera failed)
+            return
+        if captured is False:
             self._draw_current_target(retry=True)
             return
         self._index += 1
         if self._index >= len(self.targets):
-            self.root.destroy()
+            self._close()
         else:
             self._draw_current_target()
 
     def cancel(self, _event: object = None) -> None:
-        """Stop without a calibration: Esc and the window's close button both land here."""
+        """Stop without a calibration. Esc and the window's close button land here, and
+        the caller may call it too (from ``capture_sample``, say)."""
         self._cancelled = True
-        self.root.destroy()
+        self._close()
+
+    def _close(self) -> None:
+        if not self._closed:
+            self._closed = True
+            self.root.destroy()
 
     def run(self) -> bool:
         """Blocks until calibration finishes or is cancelled.

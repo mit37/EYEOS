@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import argparse
 import contextlib
+import itertools
 import sys
 from datetime import datetime, timezone
 from pathlib import Path
@@ -156,6 +157,17 @@ def _run(args: argparse.Namespace) -> int:
         frames = iter(input_source.frames())
         calibration = None
         if args.calibrate:
+            # Open the source now. Opened lazily inside the dot screen's key handler, a
+            # webcam or MediaPipe error would be swallowed by Tk behind the window.
+            first_frame = next(frames, None)
+            if first_frame is None:
+                print(
+                    "eyeos: the input source gave no frames, so there is nothing to "
+                    "calibrate on",
+                    file=sys.stderr,
+                )
+                return 1
+            frames = itertools.chain([first_frame], frames)
             calibration = calibrate_interactively(config, frames, CalibrationUI)
             if calibration is None:
                 print("eyeos: calibration cancelled", file=sys.stderr)
