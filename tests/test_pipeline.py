@@ -1100,3 +1100,66 @@ def test_a_bystanders_open_eyes_never_end_the_users_closure(fps, unit):
 
     result, _output = _run_frames(frames)
     assert result.total_clicks == 1
+
+
+@pytest.mark.parametrize("fps", [15, 30, 60])
+def test_a_frame_with_unmeasured_eyelids_never_joins_two_closures(fps):
+    # As the dropped-frame case, but the gap frame arrives with NaN eyelid points.
+    n = round(0.25 * fps)
+    nan_lids = dict(
+        left_eye_top=Point3D(math.nan, math.nan), right_eye_top=Point3D(math.nan, math.nan)
+    )
+    frames = _seq([(1.0, lambda: _gaze_landmarks(960, 540))], fps=fps)
+    t0 = frames[-1].timestamp_s
+    pattern = "c" * n + "x" + "c" * n + "o" * fps
+    for k, ch in enumerate(pattern, start=1):
+        lm = (
+            _gaze_landmarks(960, 540, **nan_lids)
+            if ch == "x"
+            else _gaze_landmarks(960, 540, closed=(ch == "c"))
+        )
+        frames.append(Frame(t0 + k / fps, lm))
+
+    result, _output = _run_frames(frames)
+    assert result.total_clicks == 0
+
+
+@pytest.mark.parametrize("fps", [15, 30, 60])
+def test_a_glimpse_onto_a_far_point_drops_the_held_target(fps):
+    # Dwell on A, close 0.2 s, open briefly (under the debounce) on a far point B, then
+    # close 0.5 s: the blink-hold must not click A, where the eyes no longer are.
+    n_open = {15: 2, 30: 3, 60: 6}[fps]  # the longest glimpse still under the 0.1 s debounce
+    pattern = "c" * round(0.2 * fps) + "o" * n_open
+    pattern += "c" * round(0.5 * fps)
+    frames = _seq([(1.0, lambda: _gaze_landmarks(960, 540))], fps=fps)
+    t0 = frames[-1].timestamp_s
+    for k, ch in enumerate(pattern, start=1):
+        frames.append(Frame(t0 + k / fps, _gaze_landmarks(1700, 200, closed=(ch == "c"))))
+
+    result, _output = _run_frames(frames)
+    assert result.total_clicks == 0
+
+
+@pytest.mark.parametrize("bad", ["nan", "stale"])
+@pytest.mark.parametrize("fps", [15, 30, 60])
+def test_bad_timestamps_on_closed_frames_never_join_glimpses_into_looking(bad, fps):
+    hold = "c" * (int(0.4 * fps) + 2)
+    frames = _flutter(hold, fps=fps)
+    t = frames[-1].timestamp_s
+    glimpse = {n: v for n, v in _lids(0.3).items() if n.endswith("_eye_top")}
+    closed = {n: v for n, v in _lids(0.025).items() if n.endswith("_eye_top")}
+    for _ in range(int(0.1 * fps) + 1):  # glimpses joined only by bad-timestamp frames
+        t += 1 / fps
+        frames.append(Frame(t, _gaze_landmarks(960, 300, **glimpse)))
+        bad_t = math.nan if bad == "nan" else t
+        frames.append(Frame(bad_t, _gaze_landmarks(960, 300, **closed)))
+    for _ in range(round(1.5 * fps / 3)):  # then short flutter: closed, glimpse, glimpse
+        for lids in (closed, glimpse, glimpse):
+            t += 1 / fps
+            frames.append(Frame(t, _gaze_landmarks(960, 300, **lids)))
+    for _ in range(len(hold)):
+        t += 1 / fps
+        frames.append(Frame(t, _gaze_landmarks(960, 300, **closed)))
+
+    result, _output = _run_frames(frames)
+    assert result.total_clicks == 1

@@ -169,8 +169,11 @@ class Pipeline:
         if not math.isfinite(frame.timestamp_s) or (
             last_t is not None and not frame.timestamp_s > last_t
         ):
-            # Gate 1 rejects a non-finite or non-advancing timestamp. Touch no timing
-            # state and don't feed the filter.
+            # Gate 1 rejects a non-finite or non-advancing timestamp. It is an
+            # unobserved frame: it breaks any open or closed run, touches no other timing
+            # state, and doesn't feed the filter.
+            self._closed_run_start_s = None
+            self._reopen_since_s = None
             return FrameInput(
                 timestamp_s=frame.timestamp_s,
                 face_count=frame.landmarks.face_count if frame.landmarks else 0,
@@ -204,14 +207,27 @@ class Pipeline:
 
         landmarks = frame.landmarks
         confidence = landmarks.detection_confidence
+        eye_points = (
+            landmarks.left_iris_center,
+            landmarks.right_iris_center,
+            landmarks.left_eye_inner,
+            landmarks.left_eye_outer,
+            landmarks.left_eye_top,
+            landmarks.left_eye_bottom,
+            landmarks.right_eye_inner,
+            landmarks.right_eye_outer,
+            landmarks.right_eye_top,
+            landmarks.right_eye_bottom,
+        )
         if (
             landmarks.face_count != 1
             or not math.isfinite(confidence)
             or confidence < self.config.gates.presence_confidence_threshold
+            or not all(math.isfinite(p.x) and math.isfinite(p.y) for p in eye_points)
         ):
-            # Gate 1 rejects this frame for presence (a second face may be a bystander's).
-            # Like a lost face: its eyes are not the user's, so it neither opens nor
-            # extends anything.
+            # Gate 1 rejects this frame for presence (a second face may be a bystander's),
+            # or its eyes weren't measured (non-finite landmarks). Like a lost face: it
+            # neither opens nor extends anything.
             self._closed_run_start_s = None
             self._reopen_since_s = None
             self._last_open_gaze = None
@@ -250,6 +266,10 @@ class Pipeline:
         # is always this frame's: it comes from the nose, face outline and eye corners,
         # not the lids, and Gate 2 must still see a head turn mid-blink.
         head_pose = features.head_pose()
+        if raw_eyes_open and not eyes_open and self._glimpse_is_elsewhere(features):
+            # A glimpse that clearly lands somewhere else: the point held from before the
+            # blink is no longer where the eyes are, so it may not be clicked.
+            self._last_open_gaze = None
         gaze_point: ScreenPoint | None
         gaze_held = False
         if eyes_open:
@@ -274,6 +294,20 @@ class Pipeline:
             confirm_keypress=confirm_keypress,
             gaze_held=gaze_held,
         )
+
+    def _glimpse_is_elsewhere(self, features: FeatureVector) -> bool:
+        """Whether a glimpse's raw gaze is more than the dwell radius from the held point.
+
+        Only ever used to drop the held point (fail closed), never to end a closure, so
+        raw-gaze noise can cost a blink-hold click but can't cause one."""
+        held = self._last_open_gaze
+        if held is None or self.calibration is None or not self.calibration.is_fitted:
+            return False
+        raw = self.calibration.predict(features)
+        if not all(math.isfinite(c) for c in raw):
+            return True
+        px = self._to_screen_pixel(raw)
+        return math.hypot(px[0] - held[0], px[1] - held[1]) > self.config.gates.dwell_jitter_px
 
     def _map_gaze(self, timestamp_s: float, features: FeatureVector) -> ScreenPoint | None:
         if self.calibration is None or not self.calibration.is_fitted:
