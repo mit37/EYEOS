@@ -285,3 +285,28 @@ def test_cli_requires_video_path_for_a_video_source(tmp_path):
 
     with pytest.raises(ValueError, match="video_path is not set"):
         main(["run", "--config", str(config_path), "--no-log"])
+
+
+def test_two_runs_in_the_same_second_keep_both_session_logs(tmp_path, monkeypatch):
+    import eyeos.cli as cli
+
+    class FrozenDatetime:
+        @staticmethod
+        def now(tz=None):
+            from datetime import datetime
+
+            return datetime(2026, 11, 12, 14, 0, 0, tzinfo=tz)
+
+    monkeypatch.setattr(cli, "datetime", FrozenDatetime)
+    log_dir = tmp_path / "logs"
+    config_path = _synthetic_config(tmp_path, f"logging:\n  session_log_dir: {log_dir}\n")
+
+    assert main(["run", "--config", str(config_path), "--max-frames", "3"]) == 0
+    assert main(["run", "--config", str(config_path), "--max-frames", "1"]) == 0
+
+    logs = sorted(log_dir.glob("session-*.jsonl"))
+    assert [p.name for p in logs] == [
+        "session-20261112T140000Z-2.jsonl",
+        "session-20261112T140000Z.jsonl",
+    ]
+    assert [len(p.read_text().splitlines()) for p in logs] == [1, 3]

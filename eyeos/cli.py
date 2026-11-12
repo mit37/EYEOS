@@ -115,7 +115,12 @@ def _session_log_path(args: argparse.Namespace, config: Config) -> Path | None:
     if config.logging.session_log_dir is None:
         return None
     stamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
-    return Path(config.logging.session_log_dir) / f"session-{stamp}.jsonl"
+    path = Path(config.logging.session_log_dir) / f"session-{stamp}.jsonl"
+    n = 1
+    while path.exists():  # a second run within the same second keeps both logs
+        n += 1
+        path = path.with_name(f"session-{stamp}-{n}.jsonl")
+    return path
 
 
 def _build_key_signals(config: Config) -> KeySignals:
