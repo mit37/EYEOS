@@ -134,6 +134,13 @@ def _run(args: argparse.Namespace) -> int:
     if config.output.backend not in OUTPUT_BACKENDS:
         raise ValueError(f"unknown output.backend: {config.output.backend!r}")
 
+    if config.output.backend == "dry_run" and config.gates.confirmation_mode == "keypress":
+        print(
+            "eyeos: warning: dry runs don't listen to the keyboard, so in "
+            "confirmation_mode 'keypress' no click can be confirmed",
+            file=sys.stderr,
+        )
+
     # Any backend that can move the real cursor gets the kill switch first: if no
     # keyboard backend can start, exit before an output adapter even exists.
     keys: KeySignals | None = None

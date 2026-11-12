@@ -159,6 +159,11 @@ def load_config(path: str | Path | None) -> Config:
             f"gates.confirmation_mode must be one of {', '.join(CONFIRMATION_MODES)}, "
             f"not {gates.confirmation_mode!r}"
         )
+    if gates.confirmation_mode == "keypress" and output.confirm_key is None:
+        raise ValueError(
+            "gates.confirmation_mode 'keypress' needs output.confirm_key: without a "
+            "confirm key no click can ever be confirmed"
+        )
 
     return Config(
         screen=_dc(ScreenConfig, raw.get("screen"), "screen"),

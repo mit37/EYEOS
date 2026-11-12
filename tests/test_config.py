@@ -46,6 +46,16 @@ def test_confirmation_mode_and_confirm_key_validation(tmp_path):
         load_config(p)
 
 
+def test_keypress_mode_needs_a_confirm_key(tmp_path):
+    # Without one, keypress mode loads but can never click.
+    p = tmp_path / "c.yaml"
+    p.write_text("gates:\n  confirmation_mode: keypress\noutput:\n  confirm_key: null\n")
+    with pytest.raises(
+        ValueError, match="gates.confirmation_mode 'keypress' needs output.confirm_key"
+    ):
+        load_config(p)
+
+
 def test_calibration_points_must_be_nine(tmp_path):
     import pytest
 

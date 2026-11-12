@@ -36,6 +36,8 @@ gates:
   confirmation_hold_s: 0.4
   # How a click is confirmed: either | blink_hold | keypress (PRD §2).
   # keypress also turns off the blink grace window, so closed eyes fail Gate 1 at once.
+  # keypress needs output.confirm_key set (a config without one is refused). Dry runs
+  # don't listen to the keyboard, so a keypress-mode dry run can't confirm any click.
   confirmation_mode: either
   # A longer gap between frames (a camera stall) fails Gate 1 for that frame.
   max_frame_gap_s: 0.25
@@ -51,7 +53,8 @@ output:
   backend: dry_run
   # One press stops the session (Gate 4). Needs pynput for any non-dry_run backend.
   kill_hotkey: "esc"
-  # Key held to confirm a click (keypress/either modes). null = no confirm key.
+  # Key held to confirm a click (keypress/either modes). null = no confirm key, which
+  # only blink_hold/either modes allow. Needs pynput and a non-dry_run backend.
   confirm_key: null
 
 logging:

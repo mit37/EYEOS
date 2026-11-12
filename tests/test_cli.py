@@ -184,6 +184,33 @@ def _synthetic_config(tmp_path, extra=""):
     return config_path
 
 
+@pytest.mark.parametrize(
+    "mode, backend, warned",
+    [("keypress", "dry_run", True), ("either", "dry_run", False), ("keypress", "pynput", False)],
+)
+def test_cli_warns_that_a_keypress_dry_run_cannot_click(
+    tmp_path, monkeypatch, capsys, mode, backend, warned
+):
+    import eyeos.cli as cli
+    from eyeos.hotkeys import FakeKeySource, KeySignals
+
+    if backend != "dry_run":
+        monkeypatch.setattr(cli, "_build_output", lambda config: _RecordingRealCursor())
+        monkeypatch.setattr(
+            cli, "_build_key_signals", lambda config: KeySignals("esc", FakeKeySource(), "f9")
+        )
+    config_path = _write_n_frames_config(tmp_path, 3, backend=backend)
+    with config_path.open("a") as f:
+        f.write(f"  confirm_key: f9\ngates:\n  confirmation_mode: {mode}\n")
+
+    assert main(["run", "--config", str(config_path), "--no-log"]) == 0
+
+    err = capsys.readouterr().err
+    assert ("dry runs don't listen to the keyboard" in err) is warned
+    if warned:
+        assert len(err.strip().splitlines()) == 1
+
+
 def test_cli_writes_a_session_log_by_default(tmp_path):
     log_dir = tmp_path / "my-logs"
     config_path = _synthetic_config(tmp_path, f"logging:\n  session_log_dir: {log_dir}\n")
