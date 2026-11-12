@@ -8,6 +8,8 @@ from typing import Any
 
 import yaml
 
+from eyeos.hotkeys import parse_key_name
+
 
 @dataclass(frozen=True)
 class ScreenConfig:
@@ -100,12 +102,18 @@ def load_config(path: str | Path | None) -> Config:
     zones_raw = gates_raw.pop("no_click_zones", []) or []
     zones = tuple(NoClickZone(**z) for z in zones_raw)
 
+    output = _dc(OutputConfig, raw.get("output"))
+    try:
+        parse_key_name(output.kill_hotkey)
+    except ValueError as e:
+        raise ValueError(f"output.kill_hotkey: {e}") from e
+
     return Config(
         screen=_dc(ScreenConfig, raw.get("screen")),
         input=_dc(InputConfig, raw.get("input")),
         calibration=_dc(CalibrationConfig, raw.get("calibration")),
         filter=_dc(FilterConfig, raw.get("filter")),
         gates=GatesConfig(**gates_raw, no_click_zones=zones),
-        output=_dc(OutputConfig, raw.get("output")),
+        output=output,
         logging=_dc(LoggingConfig, raw.get("logging")),
     )
