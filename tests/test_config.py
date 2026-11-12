@@ -1,3 +1,5 @@
+import pytest
+
 from eyeos.config import load_config
 
 
@@ -59,4 +61,19 @@ def test_presence_confidence_threshold_must_be_a_probability(tmp_path):
     p = tmp_path / "c.yaml"
     p.write_text("gates:\n  presence_confidence_threshold: 1.5\n")
     with pytest.raises(ValueError, match="presence_confidence_threshold"):
+        load_config(p)
+
+
+@pytest.mark.parametrize(
+    "yaml_text, key",
+    [
+        ("gates:\n  dwell_time: 0.5\n", "gates.dwell_time"),
+        ("screen:\n  width: 800\n", "screen.width"),
+        ("ouptut:\n  backend: dry_run\n", "config.ouptut"),
+    ],
+)
+def test_unknown_config_keys_get_a_readable_error(tmp_path, yaml_text, key):
+    p = tmp_path / "c.yaml"
+    p.write_text(yaml_text)
+    with pytest.raises(ValueError, match=key.replace(".", r"\.")):
         load_config(p)

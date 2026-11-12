@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, fields
 from pathlib import Path
 from typing import Any
 
@@ -90,8 +90,20 @@ class Config:
     logging: LoggingConfig = field(default_factory=LoggingConfig)
 
 
-def _dc(cls: type, data: dict[str, Any] | None) -> Any:
-    return cls(**(data or {}))
+def _check_keys(section: str, data: dict[str, Any], cls: type) -> None:
+    known = {f.name for f in fields(cls)}
+    unknown = sorted(set(data) - known)
+    if unknown:
+        raise ValueError(
+            f"unknown config key(s) {', '.join(f'{section}.{k}' for k in unknown)}; "
+            f"{section} accepts: {', '.join(sorted(known))}"
+        )
+
+
+def _dc(cls: type, data: dict[str, Any] | None, section: str) -> Any:
+    data = data or {}
+    _check_keys(section, data, cls)
+    return cls(**data)
 
 
 def load_config(path: str | Path | None) -> Config:
@@ -104,11 +116,13 @@ def load_config(path: str | Path | None) -> Config:
         text = Path(path).read_text()
         raw = yaml.safe_load(text) or {}
 
+    _check_keys("config", raw, Config)
     gates_raw = dict(raw.get("gates") or {})
+    _check_keys("gates", gates_raw, GatesConfig)
     zones_raw = gates_raw.pop("no_click_zones", []) or []
     zones = tuple(NoClickZone(**z) for z in zones_raw)
 
-    output = _dc(OutputConfig, raw.get("output"))
+    output = _dc(OutputConfig, raw.get("output"), "output")
     try:
         kill_key = parse_key_name(output.kill_hotkey)
     except ValueError as e:
@@ -121,7 +135,7 @@ def load_config(path: str | Path | None) -> Config:
         if confirm_key == kill_key:
             raise ValueError("output.confirm_key must differ from output.kill_hotkey")
 
-    calibration = _dc(CalibrationConfig, raw.get("calibration"))
+    calibration = _dc(CalibrationConfig, raw.get("calibration"), "calibration")
     if calibration.points != 9:
         raise ValueError("calibration.points: PRD §3 fixes a 9-point calibration")
 
@@ -135,11 +149,11 @@ def load_config(path: str | Path | None) -> Config:
         )
 
     return Config(
-        screen=_dc(ScreenConfig, raw.get("screen")),
-        input=_dc(InputConfig, raw.get("input")),
+        screen=_dc(ScreenConfig, raw.get("screen"), "screen"),
+        input=_dc(InputConfig, raw.get("input"), "input"),
         calibration=calibration,
-        filter=_dc(FilterConfig, raw.get("filter")),
+        filter=_dc(FilterConfig, raw.get("filter"), "filter"),
         gates=gates,
         output=output,
-        logging=_dc(LoggingConfig, raw.get("logging")),
+        logging=_dc(LoggingConfig, raw.get("logging"), "logging"),
     )
