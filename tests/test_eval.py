@@ -64,6 +64,15 @@ def test_generate_rows_different_seeds_give_different_noise():
     assert rows_a != rows_b
 
 
+def test_calibration_frames_carry_noise_within_each_dot():
+    rows = [row for row in generate_rows() if row["segment"] == "calibration"]
+    by_dot: dict[tuple[str, str], set[str]] = {}
+    for row in rows:
+        by_dot.setdefault((row["target_x"], row["target_y"]), set()).add(row["left_iris_center_x"])
+    assert len(by_dot) == 9
+    assert all(len(xs) > 1 for xs in by_dot.values())
+
+
 def test_generate_rows_covers_all_four_segments():
     rows = generate_rows()
     segments = {row["segment"] for row in rows}
@@ -82,7 +91,11 @@ def test_committed_fixture_is_the_current_generator_output():
 def test_compute_metrics_on_the_committed_fixture_matches_documented_expectations():
     metrics = compute_metrics(FIXTURE_PATH)
 
-    assert metrics["calibration_validation_error_px"] < 5.0
+    # The calibration frames are noisy too, so the error measures something, and it stays
+    # under Gate 2's limit (at or above it the cursor would freeze and every zero below
+    # would be vacuous).
+    max_error = Config().gates.calibration_max_error_px
+    assert 1.0 < metrics["calibration_validation_error_px"] < max_error
     # The fixture's whole point: gates never false-accept a "looking away" frame, and
     # no click ever fires during "just reading" without confirmation.
     assert metrics["gate_false_accept_rate"] == 0.0

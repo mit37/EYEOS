@@ -89,7 +89,8 @@ def results_table(m: dict[str, Any]) -> str:
         ("---", "---"),
         (
             "Calibration validation error (leave-one-out RMS over the 45 calibration frames,"
-            " 5 per dot). The synthetic calibration is noiseless, so this is ~0 by construction",
+            " 5 per dot, carrying the same injected noise as the on-target frames; Gate 2"
+            " refuses a calibration at or above 60 px)",
             f"{m['calibration_validation_error_px']:.2f} px",
         ),
         (

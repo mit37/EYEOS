@@ -9,9 +9,10 @@ data, reproducible with one command:
 
 The session simulates, in order:
 
-1. ``calibration``  -- the standard 9-point grid, clean (no noise): the calibration
-   a real session would collect.
-2. ``on_target``    -- 6 held gaze targets, WITH per-frame noise on the (synthetic)
+1. ``calibration``  -- the standard 9-point grid, with the same per-frame iris-offset
+   noise as ``on_target``, so the calibration's leave-one-out validation error
+   measures something rather than being ~0 by construction.
+2. ``on_target``    -- 6 held gaze targets, with per-frame noise on the (synthetic)
    iris offset, so run_eval.py has something for the One Euro filter to smooth and a
    noisy-vs-calibrated pixel error to report.
 3. ``looking_away`` -- three failure modes in turn (two faces, low confidence, no
@@ -110,11 +111,14 @@ def generate_rows(seed: int = 20260925) -> list[dict[str, str]]:
     rows: list[dict[str, str]] = []
     t = 0.0
 
-    # 1. Calibration: the standard 9-point grid, clean.
+    noise_sigma = 0.03  # in iris-offset units, for both calibration and on-target frames
+
+    # 1. Calibration: the standard 9-point grid, with the same noise as on-target gaze.
     for target in target_points(SCREEN_W, SCREEN_H):
         ox, oy = offset_for_target(*target)
         for _ in range(5):
-            rows.append(make_row(t, make_landmarks(ox, oy), target, "calibration"))
+            noisy = (ox + rng.gauss(0, noise_sigma), oy + rng.gauss(0, noise_sigma))
+            rows.append(make_row(t, make_landmarks(*noisy), target, "calibration"))
             t += DT
 
     # 2. On-target dwell, with noise: what the filter and pixel-error metrics use.
@@ -126,7 +130,6 @@ def generate_rows(seed: int = 20260925) -> list[dict[str, str]]:
         (1600.0, 900.0),
         (960.0, 150.0),
     ]
-    noise_sigma = 0.03  # in iris-offset units
     for target in on_target_points:
         ox, oy = offset_for_target(*target)
         for _ in range(15):
