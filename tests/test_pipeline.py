@@ -49,15 +49,13 @@ def _fitted_calibration(screen_w=1920, screen_h=1080) -> Calibration:
 
 
 def test_uncalibrated_pipeline_never_moves_or_clicks():
-    frames = [
-        Frame(timestamp_s=t, landmarks=make_landmarks()) for t in (0.0, 0.2, 0.4, 0.6, 0.8, 1.0)
-    ]
+    frames = [Frame(timestamp_s=k / 30, landmarks=make_landmarks()) for k in range(31)]
     output = DryRunOutputAdapter(echo=None)
     pipeline = Pipeline(Config(), ListInputSource(frames), output, calibration=None)
 
     result = pipeline.run()
 
-    assert result.frame_count == 6
+    assert result.frame_count == 31
     assert result.total_moves == 0
     assert result.total_clicks == 0
     assert output.actions == []
@@ -74,13 +72,11 @@ def test_calibrated_pipeline_moves_and_clicks_end_to_end():
     calibration = _fitted_calibration()
     # make_landmarks() is centered/frontal => iris_vector (0,0,0,0) => predicted
     # point is _true_point((0,0,0,0)) == (960.0, 540.0), constant across frames.
-    frames = [
-        Frame(timestamp_s=t, landmarks=make_landmarks()) for t in (0.0, 0.2, 0.4, 0.6, 0.8, 1.0)
-    ]
+    frames = [Frame(timestamp_s=k / 30, landmarks=make_landmarks()) for k in range(31)]
     output = DryRunOutputAdapter(echo=None)
 
     def external_signals(timestamp_s: float) -> tuple[bool, bool]:
-        return False, timestamp_s >= 1.0  # confirm_keypress on the last frame
+        return False, timestamp_s >= 1.0 - 1e-9  # confirm_keypress on the last frame
 
     pipeline = Pipeline(
         Config(),
@@ -91,10 +87,12 @@ def test_calibrated_pipeline_moves_and_clicks_end_to_end():
     )
     result = pipeline.run()
 
-    assert result.frame_count == 6
-    assert result.total_moves == 6
+    assert result.frame_count == 31
+    assert result.total_moves == 31
     assert result.total_clicks == 1
-    assert ("click",) in output.actions
+    clicked = next(s for s in result.statuses if s.click_fired)
+    assert clicked is result.statuses[-1]
+    assert clicked.cursor_target_px == pytest.approx((960.0, 540.0))
     moves = [a for a in output.actions if a[0] == "move"]
     assert all(a == ("move", 960, 540) for a in moves)
 
