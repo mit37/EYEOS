@@ -33,8 +33,12 @@ input:
 output:
   backend: windows_sendinput
   kill_hotkey: esc
-  confirm_key: space   # optional: hold to confirm a click
+  confirm_key: f9      # optional: hold to confirm a click
 ```
+
+Pick a confirm key you never type with. The keyboard listener is global and doesn't
+swallow keys, so with `space` or a letter, typing in any app while a dwell holds
+clicks at your gaze point.
 
 ## 1. Calibrate and run, in one command
 
@@ -61,8 +65,19 @@ run` refuses to drive the cursor at all, by design.
 ## 2. Narrate while recording (about 2 minutes)
 
 1. Look around the screen. The cursor follows your gaze, and Gates 1, 2 and 4 are green.
-2. Look away from the camera or cover one eye. The cursor freezes and the Gate 1
-   light goes red.
+2. Look away in three ways. Each one changes a different light, or none:
+   - Lean out of the camera's view, or have a second person lean in. The Gate 1
+     light goes red ("expected exactly one face") and the cursor freezes.
+   - Keep looking at the screen and turn your head about 20° to one side. Gate 1
+     stays green; the Gate 2 light goes red ("head pose drifted ... — recalibrate",
+     past 15° from your calibration pose) and the cursor freezes until you turn back.
+   - Keep your head still and glance past the screen edge with your eyes only. No
+     light changes and the cursor pins to the screen edge: EyeOS doesn't catch this.
+     It is a known negative result (see README's Results).
+
+   Gate 1 also goes red when your eyes stay closed past the blink-hold grace window
+   (about 0.9 s). Don't show that while dwelling: closed eyes held for 0.4 s on a
+   dwelled target count as a blink-hold and click.
 3. Hold your gaze on one spot. The Gate 3 light goes green once the dwell time (0.8 s)
    is reached.
 4. On a dwelled target, hold a deliberate blink for at least 0.4 s, or press the

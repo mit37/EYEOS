@@ -55,6 +55,9 @@ output:
   kill_hotkey: "esc"
   # Key held to confirm a click (keypress/either modes). null = no confirm key, which
   # only blink_hold/either modes allow. Needs pynput and a non-dry_run backend.
+  # It is read globally and not swallowed: pressing it in ANY app while a dwell holds
+  # clicks at the gaze point. Use a key you never type with (e.g. f9), not space or a
+  # letter.
   confirm_key: null
 
 logging:
