@@ -125,3 +125,14 @@ def test_compute_metrics_on_a_small_generated_session(tmp_path):
     assert metrics["on_target_frame_count"] > 0
     assert metrics["looking_away_frame_count"] > 0
     assert metrics["just_reading_frame_count"] > 0
+
+
+def test_dwell_reachability_is_reported_next_to_the_false_click_rate():
+    metrics = compute_metrics(FIXTURE_PATH)
+
+    # Documented negative result: at the fixture's noise level dwell never holds on target,
+    # while the static just-reading hold satisfies it almost all the time.
+    assert metrics["on_target_dwell_satisfied_frames"] == 0
+    assert (
+        metrics["just_reading_dwell_satisfied_frames"] > 0.9 * metrics["just_reading_frame_count"]
+    )

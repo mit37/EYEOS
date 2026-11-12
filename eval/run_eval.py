@@ -104,6 +104,8 @@ def compute_metrics(
     looking_away_false_accepts = 0
     just_reading_total = 0
     just_reading_false_clicks = 0
+    on_target_dwell_frames = 0
+    just_reading_dwell_frames = 0
 
     for row, raw_pred, status in zip(rows, raw_preds, result.statuses, strict=True):
         segment = row.get("segment", "")
@@ -113,6 +115,7 @@ def compute_metrics(
         if segment == "on_target" and raw_pred is not None:
             target = (float(row["target_x"]), float(row["target_y"]))
             on_target_errors_raw.append(_dist(raw_pred, target))
+            on_target_dwell_frames += status.gate3_stability
             if filtered is not None:
                 on_target_errors_filtered.append(_dist(filtered, target))
 
@@ -141,6 +144,7 @@ def compute_metrics(
 
         if segment == "just_reading":
             just_reading_total += 1
+            just_reading_dwell_frames += status.gate3_stability
             if status.click_fired:
                 just_reading_false_clicks += 1
 
@@ -158,12 +162,22 @@ def compute_metrics(
         "gate_false_accept_rate": (
             looking_away_false_accepts / looking_away_total if looking_away_total else None
         ),
+        "on_target_dwell_satisfied_frames": on_target_dwell_frames,
+        "just_reading_dwell_satisfied_frames": just_reading_dwell_frames,
         "just_reading_frame_count": just_reading_total,
         "just_reading_false_click_count": just_reading_false_clicks,
         "click_false_trigger_rate": (
             just_reading_false_clicks / just_reading_total if just_reading_total else None
         ),
         "notes": {
+            "dwell_reachability": (
+                "how often Gate 3 (dwell) was satisfied. A false-click rate means little "
+                "without this: if dwell never holds on the noisy on-target gaze, no "
+                "intended click could fire either. At this fixture's injected noise the "
+                "filtered frame-to-frame jitter exceeds gates.dwell_jitter_px, so dwell "
+                "never holds on target; the noise level itself is an assumption, not a "
+                "measurement of real webcam noise."
+            ),
             "mean_angular_error_deg": (
                 "not measured: this synthetic fixture only has normalized image-plane "
                 "landmark offsets, no real screen size or viewing distance, so there is "
