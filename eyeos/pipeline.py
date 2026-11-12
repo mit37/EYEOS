@@ -35,6 +35,7 @@ def _no_external_signals(_timestamp_s: float) -> tuple[bool, bool]:
 @dataclass
 class PipelineRunResult:
     statuses: list[GateStatus] = field(default_factory=list)
+    killed: bool = False
 
     @property
     def frame_count(self) -> int:
@@ -60,6 +61,11 @@ class Pipeline:
         external_signals: ExternalSignals | None = None,
         on_status: Callable[[GateStatus], None] | None = None,
     ) -> None:
+        if output.moves_real_cursor and external_signals is None:
+            raise ValueError(
+                "refusing to drive the real cursor without a kill switch; "
+                "pass external_signals=build_key_signals(config) (eyeos.hotkeys)"
+            )
         self.config = config
         self.input_source = input_source
         self.output = output
@@ -76,6 +82,7 @@ class Pipeline:
 
         self._filter: OneEuroFilter2D | None = None
         self._blink_hold_start_s: float | None = None
+        self._kill_seen = False
 
     def _resolve_blink_gesture(
         self, timestamp_s: float, raw_eyes_open: bool
@@ -112,6 +119,7 @@ class Pipeline:
 
     def _frame_input(self, frame: Frame) -> FrameInput:
         kill_switch_pressed, confirm_keypress = self.external_signals(frame.timestamp_s)
+        self._kill_seen = self._kill_seen or kill_switch_pressed
 
         if frame.landmarks is None:
             self._blink_hold_start_s = None
@@ -180,10 +188,18 @@ class Pipeline:
         return status
 
     def run(self, max_frames: int | None = None) -> PipelineRunResult:
+        """Run until the source ends, ``max_frames`` is reached, or the kill switch trips.
+
+        The kill frame itself is still processed (Gate 4 fails, so nothing is emitted and
+        the log/overlay show why); then the session ends. Restart to resume.
+        """
         result = PipelineRunResult()
         with self.input_source:
             for i, frame in enumerate(self.input_source.frames()):
                 if max_frames is not None and i >= max_frames:
                     break
                 result.statuses.append(self._process_frame(frame))
+                if self._kill_seen:
+                    result.killed = True
+                    break
         return result

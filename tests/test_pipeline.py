@@ -9,8 +9,11 @@ from __future__ import annotations
 import csv
 from collections.abc import Iterator
 
+import pytest
+
 from eyeos.calibration import Calibration
 from eyeos.config import Config
+from eyeos.hotkeys import FakeKeySource, KeySignals
 from eyeos.input_sources import Frame, InputSource
 from eyeos.input_sources.synthetic import SyntheticInputSource
 from eyeos.landmarks import Point3D
@@ -205,3 +208,55 @@ def test_pipeline_runs_over_a_real_synthetic_csv_file(tmp_path):
     result = pipeline.run()
     assert result.frame_count == 6
     assert result.total_moves == 6
+
+
+# ---------------------------------------------------------------------------
+# Kill switch (PRD §1: "one hotkey kills it instantly")
+# ---------------------------------------------------------------------------
+
+
+class _KillAt(InputSource):
+    """Yields frames and taps the kill key while frame ``n`` is being delivered."""
+
+    def __init__(self, frames, source, n):
+        self._frames, self._source, self._n = frames, source, n
+
+    def frames(self):
+        for i, frame in enumerate(self._frames):
+            if i == self._n:
+                self._source.press("esc")
+            if i == self._n + 2:
+                self._source.release("esc")
+            yield frame
+
+
+def test_kill_hotkey_ends_the_session_and_nothing_is_emitted_after_it():
+    source = FakeKeySource()
+    keys = KeySignals("esc", source)
+    frames = [Frame(timestamp_s=i / 30, landmarks=make_landmarks()) for i in range(30)]
+    output = DryRunOutputAdapter(echo=None)
+    n = 10
+    pipeline = Pipeline(
+        Config(),
+        _KillAt(frames, source, n),
+        output,
+        calibration=_fitted_calibration(),
+        external_signals=keys,
+    )
+
+    result = pipeline.run()
+
+    assert result.killed
+    assert len(result.statuses) == n + 1
+    assert result.statuses[-1].reasons["gate4"] == "kill switch pressed"
+    assert result.statuses[-1].move_allowed is False
+    assert len([a for a in output.actions if a[0] == "move"]) == n
+    assert ("click",) not in output.actions
+
+
+def test_pipeline_refuses_a_real_cursor_backend_without_a_kill_switch():
+    class RealCursor(DryRunOutputAdapter):
+        moves_real_cursor = True
+
+    with pytest.raises(ValueError, match="kill switch"):
+        Pipeline(Config(), ListInputSource([]), RealCursor(echo=None))

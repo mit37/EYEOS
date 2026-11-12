@@ -11,6 +11,7 @@ import argparse
 import sys
 
 from eyeos.config import Config, load_config
+from eyeos.hotkeys import KeySignals, build_key_signals
 from eyeos.input_sources import InputSource
 from eyeos.logging_utils import SessionLogger
 from eyeos.output import OutputAdapter
@@ -36,6 +37,9 @@ def _build_input_source(config: Config) -> InputSource:
 
         return WebcamInputSource(device_index=config.input.device_index)
     raise ValueError(f"unknown input.source: {source!r}")
+
+
+OUTPUT_BACKENDS = ("dry_run", "windows_sendinput", "pynput")
 
 
 def _build_output(config: Config) -> OutputAdapter:
@@ -71,24 +75,49 @@ def build_arg_parser() -> argparse.ArgumentParser:
     return parser
 
 
+def _build_key_signals(config: Config) -> KeySignals:
+    return build_key_signals(config)
+
+
 def _run(args: argparse.Namespace) -> int:
     config = load_config(args.config)
-    input_source = _build_input_source(config)
-    output = _build_output(config)
-    logger = SessionLogger(args.log) if args.log else None
+    if config.output.backend not in OUTPUT_BACKENDS:
+        raise ValueError(f"unknown output.backend: {config.output.backend!r}")
 
-    pipeline = Pipeline(config, input_source, output, logger=logger)
+    # Any backend that can move the real cursor gets the kill switch first: if no
+    # keyboard backend can start, exit before an output adapter even exists.
+    keys: KeySignals | None = None
+    if config.output.backend != "dry_run":
+        try:
+            keys = _build_key_signals(config)
+        except RuntimeError as e:
+            print(
+                f"eyeos: refusing to drive the cursor without a kill switch: {e}", file=sys.stderr
+            )
+            return 2
+
+    output: OutputAdapter | None = None
+    logger: SessionLogger | None = None
     try:
+        input_source = _build_input_source(config)
+        output = _build_output(config)
+        logger = SessionLogger(args.log) if args.log else None
+        pipeline = Pipeline(config, input_source, output, logger=logger, external_signals=keys)
         result = pipeline.run(max_frames=args.max_frames)
     finally:
-        output.close()
+        if output is not None:
+            output.close()
         if logger is not None:
             logger.close()
+        if keys is not None:
+            keys.close()
 
     print(
         f"processed {result.frame_count} frames: "
         f"{result.total_moves} moves, {result.total_clicks} clicks"
     )
+    if result.killed:
+        print(f"kill switch ({config.output.kill_hotkey}) pressed: session ended")
     return 0
 
 

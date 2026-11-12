@@ -9,6 +9,8 @@ from eyeos.output import OutputAdapter
 
 
 class DryRunOutputAdapter(OutputAdapter):
+    moves_real_cursor = False
+
     def __init__(self, echo: Callable[[str], None] | None = print) -> None:
         self.actions: list[tuple[str, int, int] | tuple[str]] = []
         self._echo = echo
