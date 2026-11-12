@@ -867,3 +867,20 @@ def test_a_non_finite_timestamp_never_resets_the_click_rate_limit(bad_t):
     third, _t = dwell_and_click(t)
     assert third.click_fired is False
     assert "click limit reached" in third.reasons["gate4"]
+
+
+@pytest.mark.parametrize("t0", [0.0, 1 / 30, 100.0])
+def test_eyes_closed_as_long_as_open_always_restart_the_dwell(t0):
+    # A strict open/closed alternation: closed time equals open time, which is not
+    # "open more than closed", so the dwell never completes, whatever the clock offset.
+    m = machine()  # dwell_time_s=0.5
+    for k in range(4 * 30):
+        held = k % 2 == 1
+        status = m.step(
+            make_frame(
+                timestamp_s=t0 + k / 30,
+                gaze_held=held,
+                confirm_hold_s=0.0 if held else None,
+            )
+        )
+        assert status.gate3_stability is False

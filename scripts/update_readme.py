@@ -237,10 +237,12 @@ def inline(name: str, value: int, src: str) -> str:
 
 def config_value(name: str) -> str:
     """A configuration default quoted in README prose, by dotted name."""
-    from eyeos.pipeline import _BLINK_GESTURE_GRACE_S
+    from eyeos.pipeline import _BLINK_GESTURE_GRACE_S, _MIN_REOPEN_S
 
     if name == "pipeline.blink_gesture_grace_s":
         return f"{_BLINK_GESTURE_GRACE_S:g}"
+    if name == "pipeline.min_reopen_s":
+        return f"{_MIN_REOPEN_S:g}"
     section, _, field = name.partition(".")
     value = getattr(getattr(Config(), section, None), field, None)
     if not isinstance(value, (int, float)) or isinstance(value, bool):

@@ -25,6 +25,10 @@ from eyeos.output import OutputAdapter
 # eyes-away dropout. See Pipeline._resolve_blink_gesture's docstring for why this
 # exists at all.
 _BLINK_GESTURE_GRACE_S = 0.5
+# After a closure, the eyes count as open again only once they have stayed open this
+# long. A shorter glimpse (lid flutter while resting the eyes) is part of the closure:
+# it neither ends the blink-hold gesture nor counts as looking.
+_MIN_REOPEN_S = 0.1
 
 ExternalSignals = Callable[[float], tuple[bool, bool]]
 
@@ -83,6 +87,7 @@ class Pipeline:
 
         self._filter: OneEuroFilter2D | None = None
         self._blink_hold_start_s: float | None = None
+        self._reopen_since_s: float | None = None
         # The last point the gates emitted for an observed (eyes open, trusted) frame;
         # None once an observed frame fails any gate. Held frames reuse it.
         self._last_open_gaze: ScreenPoint | None = None
@@ -90,7 +95,7 @@ class Pipeline:
 
     def _resolve_blink_gesture(
         self, timestamp_s: float, raw_eyes_open: bool
-    ) -> tuple[bool, float | None]:
+    ) -> tuple[bool, float | None, bool]:
         """Turn a raw per-frame eye-openness reading into (visible_for_gate1, confirm_hold_s).
 
         PRD §2 wants a "blink-hold >= 400ms" click confirmation, but Gate 1 (PRD §2's
@@ -107,12 +112,26 @@ class Pipeline:
         blink and starts looking like the user genuinely looked away or closed their
         eyes — from then on it's reported honestly (not visible), so Gate 1 correctly
         freezes the cursor.
+
+        Returns ``(visible_for_gate1, confirm_hold_s, eyes_open)``. ``eyes_open`` is
+        False on closed frames and on the first ``_MIN_REOPEN_S`` of a reopening, which
+        still belong to the closure.
         """
         if raw_eyes_open:
-            self._blink_hold_start_s = None
-            return True, None
+            if self._blink_hold_start_s is None:
+                return True, None, True
+            if self._reopen_since_s is None:
+                self._reopen_since_s = timestamp_s
+            if timestamp_s - self._reopen_since_s >= _MIN_REOPEN_S - 1e-9:
+                self._blink_hold_start_s = None
+                self._reopen_since_s = None
+                return True, None, True
+            # Not open long enough yet: still part of the closure (below).
+        else:
+            self._reopen_since_s = None
         if self.config.gates.confirmation_mode == "keypress":
-            return False, None  # no blink gesture to wait for: closed eyes fail Gate 1 now
+            # No blink gesture to wait for: closed eyes fail Gate 1 now.
+            return False, None, False
 
         if self._blink_hold_start_s is None:
             self._blink_hold_start_s = timestamp_s
@@ -120,8 +139,8 @@ class Pipeline:
 
         max_hold_s = self.config.gates.confirmation_hold_s + _BLINK_GESTURE_GRACE_S
         if held_s <= max_hold_s:
-            return True, held_s
-        return False, None
+            return True, held_s, False
+        return False, None, False
 
     def _frame_input(self, frame: Frame) -> FrameInput:
         kill_switch_pressed, confirm_keypress = self.external_signals(frame.timestamp_s)
@@ -142,6 +161,7 @@ class Pipeline:
 
         if frame.landmarks is None:
             self._blink_hold_start_s = None
+            self._reopen_since_s = None
             self._last_open_gaze = None
             return FrameInput(
                 timestamp_s=frame.timestamp_s,
@@ -156,7 +176,7 @@ class Pipeline:
 
         landmarks = frame.landmarks
         raw_eyes_open = landmarks.both_irises_visible
-        visible_for_gate, confirm_hold_s = self._resolve_blink_gesture(
+        visible_for_gate, confirm_hold_s, eyes_open = self._resolve_blink_gesture(
             frame.timestamp_s, raw_eyes_open
         )
         features = extract_features(landmarks)
@@ -171,7 +191,7 @@ class Pipeline:
         head_pose = features.head_pose()
         gaze_point: ScreenPoint | None
         gaze_held = False
-        if raw_eyes_open:
+        if eyes_open:
             gaze_point = self._map_gaze(frame.timestamp_s, features)
         elif confirm_hold_s is not None:
             gaze_point, gaze_held = self._last_open_gaze, True

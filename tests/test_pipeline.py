@@ -795,3 +795,49 @@ def test_closed_eyes_past_the_grace_window_carry_no_gaze_and_never_reach_the_fil
     assert all(s.smoothed_gaze_px is None for s in past_grace)
     # Had closed-eye offsets reached the filter, reopening would drift in from elsewhere.
     assert {a for a in output.actions if a[0] == "move"} == {("move", 960, 540)}
+
+
+@pytest.mark.parametrize("fps", [15, 30, 60])
+def test_one_to_one_lid_flutter_clicks_at_most_once(fps):
+    hold = int(0.4 * fps) + 2
+    pattern = "c" * hold + "co" * 3 * fps + "c" * hold
+    result, _output = _run_frames(_flutter(pattern, fps=fps))
+    assert result.total_clicks <= 1
+
+
+@pytest.mark.parametrize("open_fraction", [0.3, 0.35, 0.4, 0.45])
+@pytest.mark.parametrize("seed", range(8))
+def test_random_lid_flutter_at_15_fps_clicks_at_most_once(open_fraction, seed):
+    # Random glimpses, but never open for more than 2 frames in a row (0.13 s at 15 fps):
+    # the eyes are never really reopened. A longer open run is a real reopening, and a
+    # dwell met then may click again; that is by design.
+    import random
+
+    rng = random.Random(seed)
+    pattern = ""
+    for _ in range(450):
+        glimpse = rng.random() < open_fraction and not pattern.endswith("oo")
+        pattern += "o" if glimpse else "c"
+    result, _output = _run_frames(_flutter(pattern, fps=15))
+    assert result.total_clicks <= 1
+
+
+@pytest.mark.parametrize("fps", [15, 30, 60])
+def test_blinks_at_an_earlier_target_do_not_spoil_the_next_click(fps):
+    # Reading at A with natural blinks, then a button at B: one natural blink there, a
+    # dwell, and a deliberate blink-hold must click B once.
+    at_a = lambda: _gaze_landmarks(960, 540)  # noqa: E731
+    at_b = lambda: _gaze_landmarks(1060, 540)  # noqa: E731
+    closed_b = lambda: _gaze_landmarks(1060, 540, closed=True)  # noqa: E731
+    closed_a = lambda: _gaze_landmarks(960, 540, closed=True)  # noqa: E731
+    spec = []
+    for _ in range(4):
+        spec += [(0.6, at_a), (0.1, closed_a)]
+    spec += [(0.4, at_b), (0.1, closed_b), (1.2, at_b), (0.5, closed_b), (0.3, at_b)]
+    frames = _seq(spec, fps=fps)
+
+    result, _output = _run_frames(frames)
+
+    assert result.total_clicks == 1
+    clicked = next(s for s in result.statuses if s.click_fired)
+    assert clicked.cursor_target_px == pytest.approx((1060.0, 540.0))

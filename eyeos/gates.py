@@ -229,8 +229,9 @@ class GateStateMachine:
             self._dwell_start_s += held
             self._dwell_held_s += held
             # Within one dwell the eyes must be open more than they are closed. Otherwise
-            # one-frame glimpses through a fluttering closure could add up to a dwell.
-            if self._dwell_held_s > frame.timestamp_s - self._dwell_start_s:
+            # short glimpses through a fluttering closure could add up to a dwell. (The
+            # tolerance keeps a tie from flipping on float rounding.)
+            if self._dwell_held_s >= frame.timestamp_s - self._dwell_start_s - 1e-9:
                 self._reset_dwell()
         self._dwell_paused_at_s = None
 
@@ -238,8 +239,10 @@ class GateStateMachine:
             self._dwell_anchor = frame.gaze_point_px
             self._dwell_start_s = frame.timestamp_s
         elif _distance(frame.gaze_point_px, self._dwell_anchor) > self.config.dwell_jitter_px:
+            # A new anchor is a new dwell: blinks during the old one don't count against it.
             self._dwell_anchor = frame.gaze_point_px
             self._dwell_start_s = frame.timestamp_s
+            self._dwell_held_s = 0.0
 
         satisfied = (frame.timestamp_s - self._dwell_start_s) >= self.config.dwell_time_s
         self._dwell_satisfied_when_observed = satisfied
