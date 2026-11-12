@@ -74,6 +74,8 @@ class GateStatus:
     cursor_target_px: ScreenPoint | None
     click_fired: bool
     reasons: dict[str, str] = field(default_factory=dict)
+    # The filtered gaze point fed to the gates, set even when movement is blocked.
+    smoothed_gaze_px: ScreenPoint | None = None
 
 
 def _distance(a: ScreenPoint, b: ScreenPoint) -> float:
@@ -242,4 +244,5 @@ class GateStateMachine:
             cursor_target_px=frame.gaze_point_px if move_allowed else None,
             click_fired=click_fired,
             reasons=reasons,
+            smoothed_gaze_px=frame.gaze_point_px,
         )

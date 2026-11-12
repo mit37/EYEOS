@@ -31,9 +31,9 @@ from eyeos.synthetic_format import row_to_frame
 
 ScreenPoint = tuple[float, float]
 
-# Frames to skip at the start of each on-target dwell block before counting jitter,
-# so the filter's settling lag after a target switch isn't counted as jitter.
-_JITTER_WARMUP_FRAMES = 5
+# Leading frames of each on-target block kept out of jitter pairs: frame 0 is the target
+# switch, where the filter output is still mid-step toward the new point.
+_JITTER_WARMUP_FRAMES = 1
 
 
 def _mean(xs: list[float]) -> float | None:
@@ -77,7 +77,9 @@ def raw_predictions(
     return preds
 
 
-def compute_metrics(path: Path) -> dict[str, Any]:
+def compute_metrics(
+    path: Path, jitter_warmup_frames: int = _JITTER_WARMUP_FRAMES
+) -> dict[str, Any]:
     rows = load_raw_rows(path)
     config = Config()  # screen defaults (1920x1080) match the fixture's ground truth
     calibration = build_calibration(rows, config.screen.width_px, config.screen.height_px)
@@ -105,34 +107,32 @@ def compute_metrics(path: Path) -> dict[str, Any]:
 
     for row, raw_pred, status in zip(rows, raw_preds, result.statuses, strict=True):
         segment = row.get("segment", "")
-        target_key = (row["target_x"], row["target_y"])
+        target_key = (row["target_x"], row["target_y"]) if segment == "on_target" else None
+        filtered = status.smoothed_gaze_px
 
         if segment == "on_target" and raw_pred is not None:
             target = (float(row["target_x"]), float(row["target_y"]))
             on_target_errors_raw.append(_dist(raw_pred, target))
-            if status.cursor_target_px is not None:
-                on_target_errors_filtered.append(_dist(status.cursor_target_px, target))
+            if filtered is not None:
+                on_target_errors_filtered.append(_dist(filtered, target))
 
-            same_block = target_key == prev_target_key
-            block_frame_index = block_frame_index + 1 if same_block else 0
-            # Skip each dwell block's first few frames for the jitter metric: right
-            # after a target switch the filter is still lagging toward the new point
-            # (settling, not jitter), which would otherwise swamp the steady-state
-            # jitter number — see the README's Results section for what this looks
-            # like if you don't skip it.
-            past_warmup = same_block and block_frame_index >= _JITTER_WARMUP_FRAMES
-            if past_warmup and prev_raw is not None:
-                jitter_raw.append(_dist(raw_pred, prev_raw))
-            if past_warmup and prev_filtered is not None and status.cursor_target_px is not None:
-                jitter_filtered.append(_dist(status.cursor_target_px, prev_filtered))
-            prev_raw = raw_pred
-            if status.cursor_target_px is not None:
-                prev_filtered = status.cursor_target_px
-            prev_target_key = target_key
+        if target_key is not None and target_key == prev_target_key:
+            block_frame_index += 1
         else:
-            prev_raw = prev_filtered = None
-            prev_target_key = None
             block_frame_index = 0
+            prev_raw = prev_filtered = None
+        # The earlier frame of the pair (block_frame_index - 1) must be past the warm-up.
+        if (
+            block_frame_index > jitter_warmup_frames
+            and raw_pred is not None
+            and prev_raw is not None
+            and filtered is not None
+            and prev_filtered is not None
+        ):
+            jitter_raw.append(_dist(raw_pred, prev_raw))
+            jitter_filtered.append(_dist(filtered, prev_filtered))
+        prev_raw, prev_filtered = raw_pred, filtered
+        prev_target_key = target_key
 
         if segment == "looking_away":
             looking_away_total += 1
@@ -148,6 +148,7 @@ def compute_metrics(path: Path) -> dict[str, Any]:
         "frame_count": len(rows),
         "calibration_validation_error_px": calibration.validation_error_px,
         "on_target_frame_count": len(on_target_errors_raw),
+        "on_target_frame_count_filtered": len(on_target_errors_filtered),
         "mean_pixel_error_raw_px": _mean(on_target_errors_raw),
         "mean_pixel_error_filtered_px": _mean(on_target_errors_filtered),
         "mean_angular_error_deg": None,
@@ -174,14 +175,23 @@ def compute_metrics(path: Path) -> dict[str, Any]:
                 "uses a 30s stand-in (300 frames at 10fps) to keep CI fast — scaled "
                 "down, not the real target length."
             ),
+            "mean_pixel_error": (
+                "raw is the calibration output; filtered is the One Euro output the gates "
+                "see (GateStatus.smoothed_gaze_px). Both are averaged over the same "
+                "on-target frames, including frames where the gates held the cursor still "
+                "(e.g. Gate 4's speed limit on each target switch)."
+            ),
             "steady_state_jitter": (
-                f"the first {_JITTER_WARMUP_FRAMES} frames of every on-target dwell "
-                "block are excluded from the jitter numbers: right after a target "
-                "switch the One Euro filter is still settling toward the new point, "
-                "and that lag isn't jitter. Including those frames makes the filtered "
-                "number look *worse* than the raw one (a real, reported effect — see "
-                "the README) even though the filter clearly reduces steady-state "
-                "jitter once it has settled."
+                "mean frame-to-frame displacement in px per frame (the committed fixture "
+                "runs at 10 fps), raw vs One Euro output, over the same pairs of "
+                "consecutive frames within one on-target block. Pairs that touch the "
+                f"first {jitter_warmup_frames} frame(s) of a block are left out: frame 0 "
+                "is the target switch, where the filter is still mid-step toward the new "
+                "point. An earlier version of this eval reported 88.6px filtered vs 42.5px "
+                "raw jitter and blamed filter settling. That was an eval bookkeeping bug, "
+                "now fixed, not a property of the filter: Gate 4 suppressed each block's "
+                "switch frame, so the block's second frame was compared with the previous "
+                "block's last cursor position."
             ),
         },
     }
