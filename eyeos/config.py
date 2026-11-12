@@ -48,6 +48,9 @@ class NoClickZone:
         return self.x_min <= x <= self.x_max and self.y_min <= y <= self.y_max
 
 
+CONFIRMATION_MODES = ("either", "blink_hold", "keypress")
+
+
 @dataclass(frozen=True)
 class GatesConfig:
     presence_confidence_threshold: float = 0.5
@@ -59,6 +62,8 @@ class GatesConfig:
     max_clicks_per_window: int = 5
     click_window_s: float = 10.0
     confirmation_hold_s: float = 0.4
+    # PRD §2: "a blink-hold >= 400 ms *or* a keypress, configurable".
+    confirmation_mode: str = "either"  # either | blink_hold | keypress
     no_click_zones: tuple[NoClickZone, ...] = ()
 
 
@@ -66,6 +71,7 @@ class GatesConfig:
 class OutputConfig:
     backend: str = "dry_run"
     kill_hotkey: str = "esc"
+    confirm_key: str | None = None
 
 
 @dataclass(frozen=True)
@@ -104,16 +110,30 @@ def load_config(path: str | Path | None) -> Config:
 
     output = _dc(OutputConfig, raw.get("output"))
     try:
-        parse_key_name(output.kill_hotkey)
+        kill_key = parse_key_name(output.kill_hotkey)
     except ValueError as e:
         raise ValueError(f"output.kill_hotkey: {e}") from e
+    if output.confirm_key is not None:
+        try:
+            confirm_key = parse_key_name(output.confirm_key)
+        except ValueError as e:
+            raise ValueError(f"output.confirm_key: {e}") from e
+        if confirm_key == kill_key:
+            raise ValueError("output.confirm_key must differ from output.kill_hotkey")
+
+    gates = GatesConfig(**gates_raw, no_click_zones=zones)
+    if gates.confirmation_mode not in CONFIRMATION_MODES:
+        raise ValueError(
+            f"gates.confirmation_mode must be one of {', '.join(CONFIRMATION_MODES)}, "
+            f"not {gates.confirmation_mode!r}"
+        )
 
     return Config(
         screen=_dc(ScreenConfig, raw.get("screen")),
         input=_dc(InputConfig, raw.get("input")),
         calibration=_dc(CalibrationConfig, raw.get("calibration")),
         filter=_dc(FilterConfig, raw.get("filter")),
-        gates=GatesConfig(**gates_raw, no_click_zones=zones),
+        gates=gates,
         output=output,
         logging=_dc(LoggingConfig, raw.get("logging")),
     )

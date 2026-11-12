@@ -85,3 +85,12 @@ def test_load_config_rejects_unknown_kill_hotkey(tmp_path):
     cfg_path.write_text("output:\n  kill_hotkey: ctrl+c\n")
     with pytest.raises(ValueError, match="output.kill_hotkey"):
         load_config(cfg_path)
+
+
+def test_build_key_signals_wires_the_configured_confirm_key(tmp_path):
+    cfg_path = tmp_path / "c.yaml"
+    cfg_path.write_text("output:\n  confirm_key: space\n")
+    source = FakeKeySource()
+    keys = build_key_signals(load_config(cfg_path), source=source)
+    source.press("space")
+    assert keys(0.0) == (False, True)

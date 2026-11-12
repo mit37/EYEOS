@@ -32,6 +32,9 @@ gates:
   max_clicks_per_window: 5
   click_window_s: 10.0
   confirmation_hold_s: 0.4
+  # How a click is confirmed: either | blink_hold | keypress (PRD §2).
+  # keypress also turns off the blink grace window, so closed eyes fail Gate 1 at once.
+  confirmation_mode: either
   no_click_zones:
     # Example: the Windows taskbar close-button area, on a 1920x1080 screen.
     - x_min: 1860
@@ -42,7 +45,10 @@ gates:
 output:
   # dry_run | windows_sendinput | pynput
   backend: dry_run
+  # One press stops the session (Gate 4). Needs pynput for any non-dry_run backend.
   kill_hotkey: "esc"
+  # Key held to confirm a click (keypress/either modes). null = no confirm key.
+  confirm_key: null
 
 logging:
   session_log_dir: logs

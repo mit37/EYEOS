@@ -7,6 +7,8 @@ has no clock of its own (see gates.py's module docstring), so controlling
 
 from __future__ import annotations
 
+import pytest
+
 from eyeos.calibration import CalibrationStatus
 from eyeos.config import GatesConfig, NoClickZone
 from eyeos.gates import FrameInput, GateStateMachine
@@ -509,3 +511,52 @@ def test_kill_switch_freezes_mid_session_and_recovers_after_release():
     recovered = m.step(make_frame(timestamp_s=t, gaze_point_px=(400.0, 300.0)))
     assert recovered.move_allowed is True
     assert recovered.gate3_stability is False  # has to dwell again from scratch
+
+
+# ---------------------------------------------------------------------------
+# Confirmation mode (PRD §2: blink-hold or keypress, configurable)
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    "mode, keypress, hold_s, fires",
+    [
+        ("either", True, None, True),
+        ("either", False, 0.4, True),
+        ("blink_hold", True, None, False),
+        ("blink_hold", False, 0.4, True),
+        ("keypress", True, None, True),
+        ("keypress", False, 0.4, False),
+    ],
+)
+def test_confirmation_mode_filters_signals(mode, keypress, hold_s, fires):
+    m = machine(make_config(confirmation_mode=mode))
+    t = _dwell_in(m)
+    status = m.step(
+        make_frame(
+            timestamp_s=t,
+            gaze_point_px=(500.0, 500.0),
+            confirm_keypress=keypress,
+            confirm_hold_s=hold_s,
+        )
+    )
+    assert status.click_fired is fires
+    if not fires:
+        assert "confirmation_mode" in status.reasons["click"]
+
+
+@pytest.mark.parametrize("mode", ["either", "blink_hold", "keypress"])
+def test_kill_switch_wins_in_every_confirmation_mode(mode):
+    m = machine(make_config(confirmation_mode=mode))
+    t = _dwell_in(m)
+    status = m.step(
+        make_frame(
+            timestamp_s=t,
+            gaze_point_px=(500.0, 500.0),
+            kill_switch_pressed=True,
+            confirm_keypress=True,
+            confirm_hold_s=0.5,
+        )
+    )
+    assert status.click_fired is False
+    assert status.gate4_kill_and_limits is False

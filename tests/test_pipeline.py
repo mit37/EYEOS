@@ -443,3 +443,30 @@ def test_a_nan_landmark_does_not_poison_the_filter_or_crash_the_run():
     assert result.statuses[15].cursor_target_px is None
     later = [s.cursor_target_px for s in result.statuses[16:]]
     assert later and all(p is not None and all(math.isfinite(c) for c in p) for p in later)
+
+
+def test_keypress_mode_has_no_blink_grace_and_only_keypresses_click():
+    from dataclasses import replace
+
+    base = Config()
+    config = replace(base, gates=replace(base.gates, confirmation_mode="keypress"))
+    frames = _blink_session(open_s=1.0, closed_s=0.6)
+    output = DryRunOutputAdapter(echo=None)
+    result = Pipeline(
+        config, ListInputSource(frames), output, calibration=_fitted_calibration()
+    ).run()
+
+    first_closed = 30
+    assert result.statuses[first_closed].gate1_presence is False
+    assert result.statuses[first_closed].reasons["gate1"] == "both irises not visible"
+    assert result.total_clicks == 0
+
+    frames = [Frame(timestamp_s=i / 30, landmarks=make_landmarks()) for i in range(40)]
+    result = Pipeline(
+        config,
+        ListInputSource(frames),
+        DryRunOutputAdapter(echo=None),
+        calibration=_fitted_calibration(),
+        external_signals=lambda t: (False, t >= 1.0),
+    ).run()
+    assert result.total_clicks == 1

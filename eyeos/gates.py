@@ -188,11 +188,15 @@ class GateStateMachine:
             )
         )
 
-        confirmed = frame.confirm_keypress or (
-            frame.confirm_hold_s is not None
-            and frame.confirm_hold_s >= self.config.confirmation_hold_s
+        mode = self.config.confirmation_mode
+        keypress = frame.confirm_keypress if mode in ("either", "keypress") else False
+        hold_s = frame.confirm_hold_s if mode in ("either", "blink_hold") else None
+        ignored = (frame.confirm_keypress and not keypress) or (
+            frame.confirm_hold_s is not None and hold_s is None
         )
-        confirmation_active = frame.confirm_keypress or frame.confirm_hold_s is not None
+
+        confirmed = keypress or (hold_s is not None and hold_s >= self.config.confirmation_hold_s)
+        confirmation_active = keypress or hold_s is not None
 
         click_fired = False
         if move_allowed and gate3 and confirmed and not self._awaiting_confirmation_release:
@@ -202,7 +206,11 @@ class GateStateMachine:
             reasons["click"] = "fired"
         elif not confirmation_active:
             self._awaiting_confirmation_release = False
-            reasons["click"] = "no confirmation gesture"
+            reasons["click"] = (
+                f"confirmation ignored (confirmation_mode={mode})"
+                if ignored
+                else "no confirmation gesture"
+            )
         elif self._awaiting_confirmation_release:
             reasons["click"] = "confirmation already used — release and re-confirm"
         else:

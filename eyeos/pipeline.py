@@ -110,6 +110,8 @@ class Pipeline:
         if raw_eyes_open:
             self._blink_hold_start_s = None
             return True, None
+        if self.config.gates.confirmation_mode == "keypress":
+            return False, None  # no blink gesture to wait for: closed eyes fail Gate 1 now
 
         if self._blink_hold_start_s is None:
             self._blink_hold_start_s = timestamp_s

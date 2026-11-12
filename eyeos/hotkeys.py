@@ -159,6 +159,12 @@ class KeySignals:
 
 
 def build_key_signals(config: Config, source: KeySource | None = None) -> KeySignals:
-    """Start listening for ``config.output.kill_hotkey``. Raises RuntimeError if no
-    keyboard backend can start, so callers can refuse to drive the real cursor."""
-    return KeySignals(config.output.kill_hotkey, source or PynputKeySource())
+    """Listen for ``config.output.kill_hotkey`` (and ``confirm_key``, if set).
+
+    Raises RuntimeError if no keyboard backend can start, so callers can refuse to
+    drive the real cursor."""
+    return KeySignals(
+        config.output.kill_hotkey,
+        source or PynputKeySource(),
+        confirm_key=config.output.confirm_key,
+    )

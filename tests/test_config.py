@@ -24,3 +24,21 @@ def test_partial_override_keeps_other_defaults(tmp_path):
     cfg = load_config(p)
     assert cfg.screen.width_px == 800
     assert cfg.screen.height_px == 1080
+
+
+def test_confirmation_mode_and_confirm_key_validation(tmp_path):
+    import pytest
+
+    p = tmp_path / "c.yaml"
+    p.write_text("gates:\n  confirmation_mode: keypress\noutput:\n  confirm_key: space\n")
+    cfg = load_config(p)
+    assert cfg.gates.confirmation_mode == "keypress"
+    assert cfg.output.confirm_key == "space"
+
+    p.write_text("gates:\n  confirmation_mode: wink\n")
+    with pytest.raises(ValueError, match="confirmation_mode"):
+        load_config(p)
+
+    p.write_text("output:\n  kill_hotkey: esc\n  confirm_key: Escape\n")
+    with pytest.raises(ValueError, match="must differ"):
+        load_config(p)
