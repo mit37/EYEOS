@@ -99,6 +99,8 @@ class GateStateMachine:
             )
         if not frame.both_irises_visible:
             return False, "both irises not visible"
+        if frame.confirm_hold_s is not None:
+            return True, f"ok (eyes closed {frame.confirm_hold_s:.2f}s: blink-hold grace)"
         return True, "ok"
 
     # -- gate 2 ---------------------------------------------------------------

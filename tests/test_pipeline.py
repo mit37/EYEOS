@@ -158,6 +158,8 @@ def test_blink_hold_within_grace_period_still_reports_visible_and_accumulates_ho
     # should still see "visible", so movement/dwell survive the blink.
     assert result.statuses[1].gate1_presence is True
     assert result.statuses[1].move_allowed is True
+    assert result.statuses[1].cursor_target_px == pytest.approx((960.0, 540.0))
+    assert "blink-hold grace" in result.statuses[1].reasons["gate1"]
 
 
 def test_prolonged_eye_closure_past_grace_is_reported_as_not_visible():
@@ -260,3 +262,100 @@ def test_pipeline_refuses_a_real_cursor_backend_without_a_kill_switch():
 
     with pytest.raises(ValueError, match="kill switch"):
         Pipeline(Config(), ListInputSource([]), RealCursor(echo=None))
+
+
+# ---------------------------------------------------------------------------
+# Blink-hold click end to end (30 fps): gaze must hold while the eyes are closed
+# ---------------------------------------------------------------------------
+
+_CLOSED = dict(
+    left_eye_top=Point3D(0.38, 0.400),
+    left_eye_bottom=Point3D(0.38, 0.401),
+    right_eye_top=Point3D(0.62, 0.400),
+    right_eye_bottom=Point3D(0.62, 0.401),
+)
+
+
+def _blink_session(open_s, closed_s, closed_overrides=None, fps=30, after_open_s=0.2):
+    closed_overrides = closed_overrides or _CLOSED
+    frames, t, dt = [], 0.0, 1.0 / fps
+    for _ in range(round(open_s * fps)):
+        frames.append(Frame(timestamp_s=t, landmarks=make_landmarks()))
+        t += dt
+    for _ in range(round(closed_s * fps)):
+        frames.append(Frame(timestamp_s=t, landmarks=make_landmarks(**closed_overrides)))
+        t += dt
+    for _ in range(round(after_open_s * fps)):
+        frames.append(Frame(timestamp_s=t, landmarks=make_landmarks()))
+        t += dt
+    return frames
+
+
+def _run_frames(frames, config=None):
+    output = DryRunOutputAdapter(echo=None)
+    pipeline = Pipeline(
+        config or Config(), ListInputSource(frames), output, calibration=_fitted_calibration()
+    )
+    return pipeline.run(), output
+
+
+def test_deliberate_blink_hold_after_dwell_clicks_once_at_the_dwelled_point():
+    result, output = _run_frames(_blink_session(open_s=1.0, closed_s=0.5))
+
+    assert result.total_clicks == 1
+    clicked = next(s for s in result.statuses if s.click_fired)
+    assert clicked.cursor_target_px == pytest.approx((960.0, 540.0))
+    assert all(a == ("move", 960, 540) for a in output.actions if a[0] == "move")
+
+
+def test_cursor_never_moves_on_closed_eye_landmarks():
+    # Upper lid drops onto a still-centred iris: the closed-eye offset is garbage.
+    lid_down = dict(
+        left_eye_top=Point3D(0.38, 0.418),
+        left_eye_bottom=Point3D(0.38, 0.420),
+        right_eye_top=Point3D(0.62, 0.418),
+        right_eye_bottom=Point3D(0.62, 0.420),
+    )
+    result, output = _run_frames(_blink_session(1.0, 0.9, closed_overrides=lid_down))
+
+    moves = [a for a in output.actions if a[0] == "move"]
+    assert moves and all(a == ("move", 960, 540) for a in moves)
+
+
+def test_short_natural_blinks_do_not_break_the_dwell():
+    frames, t, dt = [], 0.0, 1.0 / 30
+    blink_starts = (0.5, 1.2, 1.9, 2.6)
+    while t < 3.0:
+        closed = any(b <= t < b + 0.1 for b in blink_starts)
+        lm = make_landmarks(**_CLOSED) if closed else make_landmarks()
+        frames.append(Frame(timestamp_s=t, landmarks=lm))
+        t += dt
+
+    result, output = _run_frames(frames)
+
+    assert result.total_clicks == 0
+    assert all(a == ("move", 960, 540) for a in output.actions if a[0] == "move")
+    assert result.statuses[-1].gate3_stability is True
+
+
+def test_blink_hold_cannot_click_inside_a_no_click_zone():
+    from dataclasses import replace
+
+    from eyeos.config import NoClickZone
+
+    config = Config()
+    config = replace(
+        config, gates=replace(config.gates, no_click_zones=(NoClickZone(0, 0, 1920, 40),))
+    )
+    lid_down = dict(
+        left_eye_top=Point3D(0.38, 0.418),
+        left_eye_bottom=Point3D(0.38, 0.420),
+        right_eye_top=Point3D(0.62, 0.418),
+        right_eye_bottom=Point3D(0.62, 0.420),
+    )
+    result, output = _run_frames(_blink_session(1.0, 0.9, closed_overrides=lid_down), config)
+
+    for status in result.statuses:
+        if status.click_fired:
+            x, y = status.cursor_target_px
+            assert not (0 <= x <= 1920 and 0 <= y <= 40)

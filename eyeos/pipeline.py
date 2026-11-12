@@ -12,9 +12,9 @@ from dataclasses import dataclass, field
 
 from eyeos.calibration import Calibration
 from eyeos.config import Config
-from eyeos.features import extract_features
+from eyeos.features import FeatureVector, extract_features
 from eyeos.filtering import OneEuroFilter2D
-from eyeos.gates import FrameInput, GateStateMachine, GateStatus
+from eyeos.gates import FrameInput, GateStateMachine, GateStatus, HeadPose, ScreenPoint
 from eyeos.input_sources import Frame, InputSource
 from eyeos.logging_utils import SessionLogger
 from eyeos.output import OutputAdapter
@@ -82,6 +82,8 @@ class Pipeline:
 
         self._filter: OneEuroFilter2D | None = None
         self._blink_hold_start_s: float | None = None
+        self._last_open_gaze: ScreenPoint | None = None
+        self._last_open_head_pose: HeadPose | None = None
         self._kill_seen = False
 
     def _resolve_blink_gesture(
@@ -123,6 +125,8 @@ class Pipeline:
 
         if frame.landmarks is None:
             self._blink_hold_start_s = None
+            self._last_open_gaze = None
+            self._last_open_head_pose = None
             return FrameInput(
                 timestamp_s=frame.timestamp_s,
                 face_count=0,
@@ -135,41 +139,55 @@ class Pipeline:
             )
 
         landmarks = frame.landmarks
+        raw_eyes_open = landmarks.both_irises_visible
+        visible_for_gate, confirm_hold_s = self._resolve_blink_gesture(
+            frame.timestamp_s, raw_eyes_open
+        )
         features = extract_features(landmarks)
 
-        raw_point = None
-        if self.calibration is not None and self.calibration.is_fitted:
-            raw_point = self.calibration.predict(features)
-
-        smoothed_point = None
-        if raw_point is not None:
-            if self._filter is None:
-                self._filter = OneEuroFilter2D(
-                    frame.timestamp_s,
-                    raw_point,
-                    min_cutoff=self.config.filter.min_cutoff,
-                    beta=self.config.filter.beta,
-                    d_cutoff=self.config.filter.d_cutoff,
-                )
-                smoothed_point = raw_point
-            else:
-                smoothed_point = self._filter(frame.timestamp_s, raw_point)
-
-        visible_for_gate, confirm_hold_s = self._resolve_blink_gesture(
-            frame.timestamp_s, landmarks.both_irises_visible
-        )
+        # Closed-eye iris offsets divide by a near-zero lid gap, so they are never mapped
+        # to the screen or fed to the filter. During a blink-hold the gaze holds where
+        # the eyes were last open (that is where the click must land); past the grace
+        # window there is no gaze at all.
+        gaze_point: ScreenPoint | None
+        if raw_eyes_open:
+            gaze_point = self._map_gaze(frame.timestamp_s, features)
+            head_pose = features.head_pose()
+            self._last_open_gaze = gaze_point
+            self._last_open_head_pose = head_pose
+        elif confirm_hold_s is not None:
+            gaze_point = self._last_open_gaze
+            head_pose = self._last_open_head_pose or features.head_pose()
+        else:
+            gaze_point = None
+            head_pose = features.head_pose()
 
         return FrameInput(
             timestamp_s=frame.timestamp_s,
             face_count=landmarks.face_count,
             detection_confidence=landmarks.detection_confidence,
             both_irises_visible=visible_for_gate,
-            gaze_point_px=smoothed_point,
-            head_pose_deg=features.head_pose(),
+            gaze_point_px=gaze_point,
+            head_pose_deg=head_pose,
             kill_switch_pressed=kill_switch_pressed,
             confirm_hold_s=confirm_hold_s,
             confirm_keypress=confirm_keypress,
         )
+
+    def _map_gaze(self, timestamp_s: float, features: FeatureVector) -> ScreenPoint | None:
+        if self.calibration is None or not self.calibration.is_fitted:
+            return None
+        raw_point = self.calibration.predict(features)
+        if self._filter is None:
+            self._filter = OneEuroFilter2D(
+                timestamp_s,
+                raw_point,
+                min_cutoff=self.config.filter.min_cutoff,
+                beta=self.config.filter.beta,
+                d_cutoff=self.config.filter.d_cutoff,
+            )
+            return raw_point
+        return self._filter(timestamp_s, raw_point)
 
     def _process_frame(self, frame: Frame) -> GateStatus:
         frame_input = self._frame_input(frame)
