@@ -1,8 +1,9 @@
 """``eyeos run`` — runs the full pipeline against a config file, dry-run by default.
 
-Without a fitted calibration, Gate 2 correctly refuses to move the cursor (no
-calibration exists yet) — that's expected on a first run; the safety gates and their
-logged reasons are still fully exercised. See docs/DEMO.md for the calibration step.
+Without ``--calibrate`` there is no calibration, so Gate 2 correctly refuses to move
+the cursor; the safety gates and their logged reasons are still fully exercised.
+``--calibrate`` shows the 9-dot screen first and fits on the same camera stream the
+session then runs on; ``--overlay`` shows the four gate lights. Both need a display.
 """
 
 from __future__ import annotations
@@ -12,11 +13,14 @@ import sys
 from datetime import datetime, timezone
 from pathlib import Path
 
+from eyeos.calibration_session import calibrate_interactively
+from eyeos.calibration_ui import CalibrationUI
 from eyeos.config import Config, load_config
 from eyeos.hotkeys import KeySignals, build_key_signals
 from eyeos.input_sources import InputSource
 from eyeos.logging_utils import SessionLogger
 from eyeos.output import OutputAdapter
+from eyeos.overlay import GateOverlay
 from eyeos.pipeline import Pipeline
 
 
@@ -78,6 +82,14 @@ def build_arg_parser() -> argparse.ArgumentParser:
         help="session log path (default: <logging.session_log_dir>/session-<UTC time>.jsonl)",
     )
     run.add_argument("--no-log", action="store_true", help="don't write a session log")
+    run.add_argument(
+        "--calibrate",
+        action="store_true",
+        help="run the 9-dot calibration screen first, on the same camera stream (needs a display)",
+    )
+    run.add_argument(
+        "--overlay", action="store_true", help="show the four gate lights live (needs a display)"
+    )
 
     return parser
 
@@ -116,15 +128,39 @@ def _run(args: argparse.Namespace) -> int:
             return 2
 
     log_path = _session_log_path(args, config)
+    input_source: InputSource | None = None
     output: OutputAdapter | None = None
     logger: SessionLogger | None = None
+    overlay: GateOverlay | None = None
     try:
         input_source = _build_input_source(config)
+        frames = iter(input_source.frames())
+        calibration = None
+        if args.calibrate:
+            calibration = calibrate_interactively(config, frames, CalibrationUI)
+            if calibration is None:
+                print("eyeos: calibration cancelled", file=sys.stderr)
+                return 1
+            print(f"calibration validation error: {calibration.validation_error_px:.1f} px")
+        if args.overlay:
+            overlay = GateOverlay()
         output = _build_output(config)
         logger = SessionLogger(log_path) if log_path is not None else None
-        pipeline = Pipeline(config, input_source, output, logger=logger, external_signals=keys)
-        result = pipeline.run(max_frames=args.max_frames)
+        pipeline = Pipeline(
+            config,
+            input_source,
+            output,
+            calibration=calibration,
+            logger=logger,
+            external_signals=keys,
+            on_status=overlay.update if overlay is not None else None,
+        )
+        result = pipeline.run(max_frames=args.max_frames, frames=frames)
     finally:
+        if input_source is not None:
+            input_source.close()
+        if overlay is not None:
+            overlay.close()
         if output is not None:
             output.close()
         if logger is not None:

@@ -8,7 +8,7 @@ CSV — only the source/backend objects passed to the constructor differ.
 from __future__ import annotations
 
 import math
-from collections.abc import Callable
+from collections.abc import Callable, Iterator
 from dataclasses import dataclass, field
 
 from eyeos.calibration import Calibration
@@ -223,15 +223,21 @@ class Pipeline:
 
         return status
 
-    def run(self, max_frames: int | None = None) -> PipelineRunResult:
+    def run(
+        self, max_frames: int | None = None, frames: Iterator[Frame] | None = None
+    ) -> PipelineRunResult:
         """Run until the source ends, ``max_frames`` is reached, or the kill switch trips.
 
         The kill frame itself is still processed (Gate 4 fails, so nothing is emitted and
         the log/overlay show why); then the session ends. Restart to resume.
+
+        ``frames`` lets a caller that already started reading the source (e.g. an
+        in-process calibration) continue on the same stream instead of reopening it.
         """
         result = PipelineRunResult()
         with self.input_source:
-            for i, frame in enumerate(self.input_source.frames()):
+            stream = frames if frames is not None else self.input_source.frames()
+            for i, frame in enumerate(stream):
                 if max_frames is not None and i >= max_frames:
                     break
                 result.statuses.append(self._process_frame(frame))
