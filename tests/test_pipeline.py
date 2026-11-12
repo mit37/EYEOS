@@ -715,3 +715,20 @@ def test_a_non_finite_timestamp_fails_closed_without_crashing(bad_t, position):
     assert "not finite" in result.statuses[index].reasons["gate1"]
     assert result.statuses[-1].move_allowed  # later valid frames still pass
     assert {a for a in output.actions if a[0] == "move"} == {("move", 960, 540)}
+
+
+def test_closed_eyes_past_the_grace_window_carry_no_gaze_and_never_reach_the_filter():
+    lid_down = dict(
+        left_eye_top=Point3D(0.38, 0.418),
+        left_eye_bottom=Point3D(0.38, 0.420),
+        right_eye_top=Point3D(0.62, 0.418),
+        right_eye_bottom=Point3D(0.62, 0.420),
+    )
+    frames = _blink_session(1.0, 1.5, closed_overrides=lid_down, after_open_s=0.5)
+    result, output = _run_frames(frames)
+
+    past_grace = [s for s in result.statuses if s.reasons["gate1"] == "both irises not visible"]
+    assert len(past_grace) >= 10
+    assert all(s.smoothed_gaze_px is None for s in past_grace)
+    # Had closed-eye offsets reached the filter, reopening would drift in from elsewhere.
+    assert {a for a in output.actions if a[0] == "move"} == {("move", 960, 540)}

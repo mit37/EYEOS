@@ -13,6 +13,8 @@ from pathlib import Path
 import pytest
 from packaging.requirements import Requirement
 
+from eyeos.config import GatesConfig
+from eyeos.gates import GateStateMachine
 from eyeos.input_sources import Frame
 from eyeos.input_sources._mediapipe_common import landmarks_from_mediapipe
 from eyeos.input_sources.synthetic import SyntheticInputSource
@@ -294,4 +296,21 @@ def test_gate1_threshold_reaches_mediapipe_detection_and_tracking(
     [mesh] = fake_mp.face_meshes
     assert mesh.kwargs["min_detection_confidence"] == 0.9
     assert mesh.kwargs["min_tracking_confidence"] == 0.9
-    assert all(f.landmarks.detection_confidence <= 0.9 for f in frames)
+    # Exactly the enforced floor: lower would fail Gate 1 on every live frame.
+    assert [f.landmarks.detection_confidence for f in frames] == pytest.approx([0.9, 0.9])
+    gates = GateStateMachine(GatesConfig(presence_confidence_threshold=0.9))
+    assert all(gates.step(_gate_input(f)).gate1_presence for f in frames)
+
+
+def _gate_input(frame):
+    from eyeos.gates import FrameInput
+
+    lm = frame.landmarks
+    return FrameInput(
+        timestamp_s=frame.timestamp_s,
+        face_count=lm.face_count,
+        detection_confidence=lm.detection_confidence,
+        both_irises_visible=True,
+        gaze_point_px=None,
+        head_pose_deg=(0.0, 0.0, 0.0),
+    )

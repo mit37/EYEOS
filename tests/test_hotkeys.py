@@ -94,3 +94,98 @@ def test_build_key_signals_wires_the_configured_confirm_key(tmp_path):
     keys = build_key_signals(load_config(cfg_path), source=source)
     source.press("space")
     assert keys(0.0) == (False, True)
+
+
+# ---------------------------------------------------------------------------
+# The real PynputKeySource, against a fake ``pynput`` module
+# ---------------------------------------------------------------------------
+
+
+class _FakeListener:
+    def __init__(self, on_press=None, on_release=None, fail_with=None):
+        self.on_press, self.on_release = on_press, on_release
+        self.started = self.stopped = False
+        self._fail_with = fail_with
+
+    def start(self):
+        if self._fail_with is not None:
+            raise self._fail_with
+        self.started = True
+
+    def stop(self):
+        self.stopped = True
+
+
+def _install_fake_pynput(monkeypatch, fail_with=None):
+    """pynput reports named keys as Key members (with .name) and printable keys as
+    KeyCode objects (with .char); these stand-ins have just those attributes."""
+    import types
+
+    listeners = []
+
+    def listener(on_press=None, on_release=None):
+        made = _FakeListener(on_press, on_release, fail_with)
+        listeners.append(made)
+        return made
+
+    pynput = types.ModuleType("pynput")
+    pynput.keyboard = types.SimpleNamespace(Listener=listener)
+    monkeypatch.setitem(sys.modules, "pynput", pynput)
+    return listeners
+
+
+def _key(name):
+    import types
+
+    return types.SimpleNamespace(name=name)
+
+
+def _keycode(char):
+    import types
+
+    return types.SimpleNamespace(char=char)
+
+
+@pytest.mark.parametrize(
+    "kill_hotkey, event",
+    [("esc", _key("esc")), ("F12", _key("f12")), ("q", _keycode("Q"))],
+)
+def test_real_pynput_source_delivers_the_kill_key(monkeypatch, tmp_path, kill_hotkey, event):
+    listeners = _install_fake_pynput(monkeypatch)
+    cfg_path = tmp_path / "c.yaml"
+    cfg_path.write_text(f"output:\n  kill_hotkey: {kill_hotkey}\n")
+
+    keys = build_key_signals(load_config(cfg_path))
+    (listener,) = listeners
+    assert listener.started
+
+    listener.on_press(_key("shift"))  # not a key EyeOS knows: ignored
+    listener.on_press(_keycode(None))  # a KeyCode with no character: ignored
+    listener.on_press(_keycode("x"))
+    assert not keys.killed
+
+    listener.on_press(event)
+    listener.on_release(event)
+    assert keys.killed  # latched after release
+
+    keys.close()
+    assert listener.stopped
+
+
+def test_real_pynput_source_reports_the_confirm_key_while_held(monkeypatch, tmp_path):
+    listeners = _install_fake_pynput(monkeypatch)
+    cfg_path = tmp_path / "c.yaml"
+    cfg_path.write_text("output:\n  confirm_key: space\n")
+    keys = build_key_signals(load_config(cfg_path))
+    (listener,) = listeners
+
+    listener.on_press(_key("space"))
+    assert keys(0.0) == (False, True)
+    listener.on_release(_key("space"))
+    assert keys(0.0) == (False, False)
+
+
+def test_real_pynput_listener_that_cannot_start_raises_with_install_hint(monkeypatch):
+    _install_fake_pynput(monkeypatch, fail_with=OSError("no input permission"))
+    with pytest.raises(RuntimeError, match="no input permission"):
+        PynputKeySource().start(lambda _k: None, lambda _k: None)

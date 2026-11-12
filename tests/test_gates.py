@@ -138,19 +138,18 @@ def test_gate2_fails_at_validation_error_boundary():
     assert status.gate2_calibration is False
 
 
-def test_gate2_fails_when_calibration_was_not_validated():
+@pytest.mark.parametrize("error", [math.inf, math.nan])  # nan >= 60 is False: fail open
+def test_gate2_fails_when_calibration_was_not_validated(error):
     m = machine(calibrated=False)
     m.set_calibration(
-        CalibrationStatus(
-            exists=True, validation_error_px=math.inf, calibration_head_pose=(0, 0, 0)
-        )
+        CalibrationStatus(exists=True, validation_error_px=error, calibration_head_pose=(0, 0, 0))
     )
     status = m.step(make_frame())
     assert status.gate2_calibration is False
     assert status.move_allowed is False
     assert "not validated" in status.reasons["gate2"]
     assert "recalibrate" in status.reasons["gate2"]
-    assert "inf" not in status.reasons["gate2"]
+    assert "inf" not in status.reasons["gate2"] and "nan" not in status.reasons["gate2"]
 
 
 def test_gate2_fails_when_head_pose_drifted_too_far():
