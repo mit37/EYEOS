@@ -31,7 +31,7 @@ wired sub-gates. See the README's Design decisions section.
 
 Cursor speed is the average speed from the last position actually emitted to the
 current gaze, so a frozen frame or a dropout cannot reset it. A large jump keeps gate 4
-failing until that average is within the limit (about 0.43 s for 1700 px at 4000 px/s),
+failing until that average is within the limit (about distance / max_cursor_speed_px_s),
 then the cursor relocates in one step. The emitted cursor is never rate-limited toward
 the gaze: a cursor still in transit could click somewhere the zone check never looked.
 """

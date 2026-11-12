@@ -120,9 +120,7 @@ def _looking_away_rows(
 def results_table(m: dict[str, Any], facts: dict[str, Any]) -> str:
     n_target = m["on_target_frame_count"]
     per_dot = facts["calibration_frames"] / facts["calibration_dots"]
-    dwell_tag = (
-        " (**negative result**, see below)" if m["on_target_dwell_satisfied_frames"] == 0 else ""
-    )
+    dwell_tag = " (**negative result**, see below)" if _dwell_rarely_holds(m) else ""
     rows = [
         ("Metric", "Value"),
         ("---", "---"),
@@ -176,12 +174,27 @@ def results_table(m: dict[str, Any], facts: dict[str, Any]) -> str:
     return "\n".join(f"| {a} | {b} |" for a, b in rows)
 
 
+def _dwell_rarely_holds(m: dict[str, Any]) -> bool:
+    """Clicking isn't usable if the dwell holds on fewer than half the on-target frames."""
+    return bool(m["on_target_dwell_satisfied_frames"] < m["on_target_frame_count"] / 2)
+
+
 def results_notes(m: dict[str, Any]) -> str:
     """The note under the Results table, built from the same numbers it describes."""
     gates = Config().gates
     jitter = m["steady_state_jitter_filtered_px"]
     compared = "larger than" if jitter > gates.dwell_jitter_px else "within"
-    if m["on_target_dwell_satisfied_frames"] == 0:
+    held, total = m["on_target_dwell_satisfied_frames"], m["on_target_frame_count"]
+    if 0 < held and _dwell_rarely_holds(m):
+        return (
+            f"**Negative result: the dwell rarely holds on the noisy on-target gaze** ({held} of"
+            f" {total} frames). At the fixture's injected noise (σ = {NOISE_SIGMA:g} in"
+            f" iris-offset units), the filtered frame-to-frame jitter ({jitter:.1f} px) is"
+            f" {compared} Gate 3's {gates.dwell_jitter_px:g} px dwell radius, so an intended"
+            " click is unreliable. Whether real webcam noise is above or below this level is"
+            " **not measured**."
+        )
+    if held == 0:
         return (
             "**Negative result: no intended click could fire on the noisy on-target gaze.** At"
             f" the fixture's injected noise (σ = {NOISE_SIGMA:g} in iris-offset units), the"
@@ -221,6 +234,28 @@ def inline(name: str, value: int, src: str) -> str:
     return new
 
 
+def config_value(name: str) -> str:
+    """A configuration default quoted in README prose, by dotted name."""
+    from eyeos.pipeline import _BLINK_GESTURE_GRACE_S
+
+    if name == "pipeline.blink_gesture_grace_s":
+        return f"{_BLINK_GESTURE_GRACE_S:g}"
+    section, _, field = name.partition(".")
+    value = getattr(getattr(Config(), section, None), field, None)
+    if not isinstance(value, (int, float)) or isinstance(value, bool):
+        raise RuntimeError(f"README.md quotes an unknown config value: {name}")
+    return f"{value:g}"
+
+
+def config_values(src: str) -> str:
+    """Fill every ``<!-- cfg:section.field -->N<!-- /cfg -->`` from the defaults."""
+    return re.sub(
+        r"<!-- cfg:([\w.]+) -->[^<]*<!-- /cfg -->",
+        lambda m: f"<!-- cfg:{m.group(1)} -->{config_value(m.group(1))}<!-- /cfg -->",
+        src,
+    )
+
+
 def render(text: str) -> str:
     metrics = compute_metrics(FIXTURE)
     facts = fixture_facts(load_raw_rows(FIXTURE))
@@ -232,6 +267,7 @@ def render(text: str) -> str:
     text = region("results-notes", results_notes(metrics), text)
     text = inline("test-count", total, text)
     text = inline("gate-test-count", gates, text)
+    text = config_values(text)
     return text
 
 

@@ -59,7 +59,7 @@ def test_negative_result_tags_follow_the_numbers():
         "mean_pixel_error_filtered_px": 15.0,
         "steady_state_jitter_raw_px": 12.0,
         "steady_state_jitter_filtered_px": 8.0,
-        "on_target_dwell_satisfied_frames": 40,
+        "on_target_dwell_satisfied_frames": 60,
         "looking_away_by_mode": {"eyes_off_screen": {"frames": 10, "false_accepts": 0}},
         "just_reading_dwell_satisfied_frames": 290,
         "just_reading_frame_count": 300,
@@ -69,4 +69,36 @@ def test_negative_result_tags_follow_the_numbers():
 
     assert "negative result" not in update_readme.results_table(metrics, facts)
     assert "Negative result" not in update_readme.results_notes(metrics)
-    assert "held on 40 of 90" in update_readme.results_notes(metrics)
+    assert "held on 60 of 90" in update_readme.results_notes(metrics)
+
+    # Holding on 1 frame in 90 is still not usable clicking: still a negative result.
+    rare = dict(metrics, on_target_dwell_satisfied_frames=1)
+    assert "negative result" in update_readme.results_table(rare, facts)
+    assert "Negative result: the dwell rarely holds" in update_readme.results_notes(rare)
+    assert "(1 of 90 frames)" in update_readme.results_notes(rare)
+
+
+def test_the_labels_change_with_the_fixture():
+    metrics = update_readme.compute_metrics(update_readme.FIXTURE)
+    facts = dict(
+        update_readme.fixture_facts(generate_rows()),
+        calibration_frames=36,
+        fps=15.0,
+        just_reading_s=20.0,
+        head_turned_yaw_deg=33.0,
+    )
+    table = update_readme.results_table(metrics, facts)
+    for label in ("36 calibration frames, 4 per dot", "at 15 fps", "20 s synthetic", "~33°"):
+        assert label in table
+
+
+def test_config_values_quoted_in_prose_are_filled_from_the_defaults():
+    from eyeos.config import Config
+
+    stale = "a gap over <!-- cfg:gates.max_frame_gap_s -->9.9<!-- /cfg --> s"
+    want = Config().gates.max_frame_gap_s
+    assert update_readme.config_values(stale) == (
+        f"a gap over <!-- cfg:gates.max_frame_gap_s -->{want:g}<!-- /cfg --> s"
+    )
+    with pytest.raises(RuntimeError, match="unknown config value: gates.no_such_setting"):
+        update_readme.config_values("<!-- cfg:gates.no_such_setting -->1<!-- /cfg -->")
