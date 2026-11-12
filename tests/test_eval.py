@@ -139,3 +139,22 @@ def test_dwell_reachability_is_reported_next_to_the_false_click_rate():
     assert (
         metrics["just_reading_dwell_satisfied_frames"] > 0.9 * metrics["just_reading_frame_count"]
     )
+
+
+def test_looking_away_covers_gate2_and_off_screen_modes_with_per_mode_rates():
+    metrics = compute_metrics(FIXTURE_PATH)
+    by_mode = metrics["looking_away_by_mode"]
+
+    assert set(by_mode) == {
+        "two_faces",
+        "low_confidence",
+        "no_face",
+        "head_turned",
+        "eyes_off_screen",
+    }
+    for mode in ("two_faces", "low_confidence", "no_face", "head_turned"):
+        assert by_mode[mode]["false_accepts"] == 0, mode
+    # Documented negative result: an eyes-only glance past the screen edge passes every gate.
+    assert by_mode["eyes_off_screen"] == {"frames": 10, "false_accepts": 10}
+    # The aggregate stays over the Gate-1 modes only, as the README row says.
+    assert metrics["looking_away_frame_count"] == 30

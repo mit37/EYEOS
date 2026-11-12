@@ -60,6 +60,28 @@ def _rate(count: int, total: int) -> str:
     return f"**{count / total:.1f}** ({count} / {total})"
 
 
+_AWAY_MODE_LABELS = {
+    "two_faces": "two faces (Gate 1)",
+    "low_confidence": "low detection confidence (Gate 1; only possible on synthetic input)",
+    "no_face": "no face (Gate 1)",
+    "head_turned": "head turned ~21° away (Gate 2's pose check)",
+    "eyes_off_screen": (
+        "eyes glancing past the screen edge, head still — **negative result**: no gate"
+        " covers this by design, the cursor pins to the screen edge"
+    ),
+}
+
+
+def _looking_away_rows(by_mode: dict[str, dict[str, int]]) -> list[tuple[str, str]]:
+    return [
+        (
+            f"Gate false-accept rate, looking away: {_AWAY_MODE_LABELS.get(mode, mode)}",
+            _rate(stats["false_accepts"], stats["frames"]),
+        )
+        for mode, stats in by_mode.items()
+    ]
+
+
 def results_table(m: dict[str, Any]) -> str:
     n_target = m["on_target_frame_count"]
     rows = [
@@ -95,14 +117,7 @@ def results_table(m: dict[str, Any]) -> str:
             "Gate 3 dwell satisfied on noisy on-target frames (**negative result**, see below)",
             f"{m['on_target_dwell_satisfied_frames']} / {n_target}",
         ),
-        (
-            "Gate false-accept rate, looking-away frames (2 faces / low confidence / no face —"
-            " all Gate-1 cases; low confidence can only occur on synthetic input)",
-            _rate(
-                round(m["gate_false_accept_rate"] * m["looking_away_frame_count"]),
-                m["looking_away_frame_count"],
-            ),
-        ),
+        *_looking_away_rows(m["looking_away_by_mode"]),
         (
             "Click false-trigger rate, 30 s synthetic steady-gaze hold with no blinks, saccades"
             " or confirmation input — 0 by construction; checks only that an unconfirmed dwell"

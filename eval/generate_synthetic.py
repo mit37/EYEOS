@@ -15,7 +15,8 @@ The session simulates, in order:
    iris offset, so run_eval.py has something for the One Euro filter to smooth and a
    noisy-vs-calibrated pixel error to report.
 3. ``looking_away`` -- three failure modes in turn (two faces, low confidence, no
-   face at all) that Gate 1 must reject, for the gate false-accept-rate metric.
+   face at all) that Gate 1 must reject, for the gate false-accept-rate metric; two
+   more modes (head turned away, eyes off screen) are appended at the very end.
 4. ``just_reading`` -- a long steady, in-calibration, never-confirmed gaze hold, for
    the click false-trigger-rate metric (target: 0 clicks).
 
@@ -39,7 +40,7 @@ from eyeos.synthetic_format import CSV_FIELDNAMES, landmarks_to_row
 SCREEN_W, SCREEN_H = 1920.0, 1080.0
 DT = 0.1  # 10 fps
 
-FIELDNAMES = [*CSV_FIELDNAMES, "target_x", "target_y", "segment"]
+FIELDNAMES = [*CSV_FIELDNAMES, "target_x", "target_y", "segment", "away_mode"]
 
 # A frontal, centered eye/face geometry, held fixed for every synthetic frame — only
 # the iris offset (within each eye box) and face_count/detection_confidence vary.
@@ -53,6 +54,7 @@ def make_landmarks(
     offset_y: float,
     face_count: int = 1,
     detection_confidence: float = 0.9,
+    nose_x: float = 0.50,
 ) -> FaceLandmarks:
     """A frontal face with both irises offset by (offset_x, offset_y) — the same
     offset units features.py's extract_features() reads back out (roughly -1..1 =
@@ -74,7 +76,7 @@ def make_landmarks(
         right_eye_outer=Point3D(0.66, 0.40),
         right_eye_top=Point3D(0.62, 0.38),
         right_eye_bottom=Point3D(0.62, 0.42),
-        nose_tip=Point3D(0.50, 0.50),
+        nose_tip=Point3D(nose_x, 0.50),
         chin=Point3D(0.50, 0.70),
         forehead=Point3D(0.50, 0.30),
         left_face_edge=Point3D(0.30, 0.50),
@@ -89,12 +91,17 @@ def offset_for_target(target_x: float, target_y: float) -> tuple[float, float]:
 
 
 def make_row(
-    t: float, landmarks: FaceLandmarks | None, target: tuple[float, float] | None, segment: str
+    t: float,
+    landmarks: FaceLandmarks | None,
+    target: tuple[float, float] | None,
+    segment: str,
+    away_mode: str = "",
 ) -> dict[str, str]:
     row = landmarks_to_row(t, landmarks)
     row["target_x"] = repr(target[0]) if target else ""
     row["target_y"] = repr(target[1]) if target else ""
     row["segment"] = segment
+    row["away_mode"] = away_mode
     return row
 
 
@@ -129,20 +136,31 @@ def generate_rows(seed: int = 20260925) -> list[dict[str, str]]:
 
     # 3. Looking away: three failure modes Gate 1 must catch.
     for _ in range(10):
-        rows.append(make_row(t, make_landmarks(0.0, 0.0, face_count=2), None, "looking_away"))
+        lm = make_landmarks(0.0, 0.0, face_count=2)
+        rows.append(make_row(t, lm, None, "looking_away", "two_faces"))
         t += DT
     for _ in range(10):
-        rows.append(
-            make_row(t, make_landmarks(0.0, 0.0, detection_confidence=0.2), None, "looking_away")
-        )
+        lm = make_landmarks(0.0, 0.0, detection_confidence=0.2)
+        rows.append(make_row(t, lm, None, "looking_away", "low_confidence"))
         t += DT
     for _ in range(10):
-        rows.append(make_row(t, None, None, "looking_away"))
+        rows.append(make_row(t, None, None, "looking_away", "no_face"))
         t += DT
 
     # 4. Just reading: long steady in-calibration hold, never confirmed.
     for _ in range(300):
         rows.append(make_row(t, make_landmarks(0.0, 0.0), (960.0, 540.0), "just_reading"))
+        t += DT
+
+    # 5. More looking away, appended last so the seeded segments above are unchanged.
+    # Head turned ~21 deg away (Gate 2's pose check should catch it), then the head
+    # still but the eyes glancing past the screen edge (no gate covers this by design).
+    for _ in range(10):
+        lm = make_landmarks(0.0, 0.0, nose_x=0.57)
+        rows.append(make_row(t, lm, None, "looking_away", "head_turned"))
+        t += DT
+    for _ in range(10):
+        rows.append(make_row(t, make_landmarks(1.2, 0.0), None, "looking_away", "eyes_off_screen"))
         t += DT
 
     return rows

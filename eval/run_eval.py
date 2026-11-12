@@ -31,6 +31,8 @@ from eyeos.synthetic_format import row_to_frame
 
 ScreenPoint = tuple[float, float]
 
+GATE1_AWAY_MODES = ("two_faces", "low_confidence", "no_face")
+
 # Leading frames of each on-target block kept out of jitter pairs: frame 0 is the target
 # switch, where the filter output is still mid-step toward the new point.
 _JITTER_WARMUP_FRAMES = 1
@@ -102,6 +104,7 @@ def compute_metrics(
 
     looking_away_total = 0
     looking_away_false_accepts = 0
+    looking_away_by_mode: dict[str, dict[str, int]] = {}
     just_reading_total = 0
     just_reading_false_clicks = 0
     on_target_dwell_frames = 0
@@ -138,9 +141,14 @@ def compute_metrics(
         prev_target_key = target_key
 
         if segment == "looking_away":
-            looking_away_total += 1
-            if status.move_allowed:
-                looking_away_false_accepts += 1
+            mode = row.get("away_mode") or "unlabelled"
+            stats = looking_away_by_mode.setdefault(mode, {"frames": 0, "false_accepts": 0})
+            stats["frames"] += 1
+            stats["false_accepts"] += int(status.move_allowed)
+            if mode in GATE1_AWAY_MODES:
+                looking_away_total += 1
+                if status.move_allowed:
+                    looking_away_false_accepts += 1
 
         if segment == "just_reading":
             just_reading_total += 1
@@ -158,6 +166,7 @@ def compute_metrics(
         "mean_angular_error_deg": None,
         "steady_state_jitter_raw_px": _mean(jitter_raw),
         "steady_state_jitter_filtered_px": _mean(jitter_filtered),
+        "looking_away_by_mode": looking_away_by_mode,
         "looking_away_frame_count": looking_away_total,
         "gate_false_accept_rate": (
             looking_away_false_accepts / looking_away_total if looking_away_total else None
@@ -170,6 +179,13 @@ def compute_metrics(
             just_reading_false_clicks / just_reading_total if just_reading_total else None
         ),
         "notes": {
+            "looking_away": (
+                "looking_away_frame_count and gate_false_accept_rate aggregate the Gate-1 "
+                "modes only (two faces, low confidence, no face). looking_away_by_mode adds "
+                "a head turned ~21 deg away (Gate 2's pose check) and eyes glancing past "
+                "the screen edge with the head still. No gate covers the last one by "
+                "design: the gaze is clamped to the screen edge and the cursor follows it."
+            ),
             "dwell_reachability": (
                 "how often Gate 3 (dwell) was satisfied. A false-click rate means little "
                 "without this: if dwell never holds on the noisy on-target gaze, no "
