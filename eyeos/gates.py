@@ -6,11 +6,13 @@ All timing comes from ``FrameInput.timestamp_s``, which the caller controls — 
 no wall-clock read anywhere in this module, so tests drive it with an entirely fake
 clock just by choosing timestamps.
 
-    1. Presence    -- one face, confidence >= threshold, both irises visible.
+    1. Presence    -- one face, confidence >= threshold, both irises visible, and a
+                      live clock (finite, advancing, no gap > max_frame_gap_s).
                       Fails -> cursor frozen.
     2. Calibration -- a calibration exists, its error < X px, pose within Y deg.
                       Fails -> "recalibrate"; cursor frozen.
-    3. Stability   -- gaze has stayed in the same region for the dwell time.
+    3. Stability   -- gaze has stayed in the same region for the dwell time, counting
+                      only observed frames (not ``gaze_held`` ones).
                       Fails -> no click (movement still OK).
     4. Kill/limits -- kill hotkey up; cursor speed and click rate within limits;
                       not a no-click zone. Fails -> all output stops.
@@ -62,6 +64,9 @@ class FrameInput:
     confirm_hold_s: float | None = None
     # Instantaneous confirmation (e.g. a keypress) this frame.
     confirm_keypress: bool = False
+    # True when gaze_point_px was carried over from an earlier frame (eyes closed or
+    # lids partly closed) rather than observed in this one. Gate 3 doesn't count it.
+    gaze_held: bool = False
 
 
 @dataclass(frozen=True)
@@ -88,6 +93,8 @@ class GateStateMachine:
         self._calibration = CalibrationStatus.none()
         self._dwell_anchor: ScreenPoint | None = None
         self._dwell_start_s: float | None = None
+        self._dwell_paused_at_s: float | None = None
+        self._dwell_satisfied_when_observed = False
         self._click_timestamps: list[float] = []
         self._awaiting_confirmation_release = False
         self._last_emitted_px: ScreenPoint | None = None
@@ -101,9 +108,17 @@ class GateStateMachine:
     def _gate1(self, frame: FrameInput) -> tuple[bool, str]:
         # A clock that doesn't advance makes every timing check (dwell, speed, blink-hold)
         # meaningless, so it fails closed rather than pinning the cursor silently.
+        if not math.isfinite(frame.timestamp_s):
+            return False, "timestamp is not finite"
         last_t = self._last_frame_timestamp_s
         if last_t is not None and not frame.timestamp_s > last_t:
             return False, f"timestamp not advancing (t={frame.timestamp_s:.3f} <= {last_t:.3f})"
+        # A stalled camera must not count as observed dwell or blink-hold time.
+        if last_t is not None and frame.timestamp_s - last_t > self.config.max_frame_gap_s:
+            return False, (
+                f"frame gap {frame.timestamp_s - last_t:.2f}s exceeds "
+                f"{self.config.max_frame_gap_s:.2f}s"
+            )
         if not math.isfinite(frame.detection_confidence):
             return False, "detection confidence is not a number"
         if frame.face_count != 1:
@@ -182,7 +197,21 @@ class GateStateMachine:
         if not eligible or frame.gaze_point_px is None:
             self._dwell_anchor = None
             self._dwell_start_s = None
+            self._dwell_paused_at_s = None
+            self._dwell_satisfied_when_observed = False
             return False
+
+        if frame.gaze_held:
+            # A held point is not an observation. Gate 3 keeps the answer from the last
+            # observed frame, and the held time doesn't count toward the dwell, so a
+            # glance followed by closed eyes can't satisfy it.
+            if self._dwell_start_s is not None and self._dwell_paused_at_s is None:
+                self._dwell_paused_at_s = frame.timestamp_s
+            return self._dwell_satisfied_when_observed
+
+        if self._dwell_paused_at_s is not None and self._dwell_start_s is not None:
+            self._dwell_start_s += frame.timestamp_s - self._dwell_paused_at_s
+        self._dwell_paused_at_s = None
 
         if self._dwell_anchor is None or self._dwell_start_s is None:
             self._dwell_anchor = frame.gaze_point_px
@@ -191,7 +220,9 @@ class GateStateMachine:
             self._dwell_anchor = frame.gaze_point_px
             self._dwell_start_s = frame.timestamp_s
 
-        return (frame.timestamp_s - self._dwell_start_s) >= self.config.dwell_time_s
+        satisfied = (frame.timestamp_s - self._dwell_start_s) >= self.config.dwell_time_s
+        self._dwell_satisfied_when_observed = satisfied
+        return satisfied
 
     def step(self, frame: FrameInput) -> GateStatus:
         reasons: dict[str, str] = {}
@@ -241,14 +272,20 @@ class GateStateMachine:
             reasons["click"] = "not all conditions met"
 
         # Trim the click-rate window so it never grows unbounded over a long session.
-        self._click_timestamps = [
-            t for t in self._click_timestamps if frame.timestamp_s - t < self.config.click_window_s
-        ]
+        # A non-finite timestamp is never stored and never used to trim.
+        if math.isfinite(frame.timestamp_s):
+            self._click_timestamps = [
+                t
+                for t in self._click_timestamps
+                if frame.timestamp_s - t < self.config.click_window_s
+            ]
 
         if move_allowed and frame.gaze_point_px is not None:
             self._last_emitted_px = frame.gaze_point_px
             self._last_emitted_timestamp_s = frame.timestamp_s
-        if self._last_frame_timestamp_s is None or frame.timestamp_s > self._last_frame_timestamp_s:
+        if math.isfinite(frame.timestamp_s) and (
+            self._last_frame_timestamp_s is None or frame.timestamp_s > self._last_frame_timestamp_s
+        ):
             self._last_frame_timestamp_s = frame.timestamp_s
 
         return GateStatus(

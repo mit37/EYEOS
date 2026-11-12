@@ -15,7 +15,7 @@ from eyeos.calibration import Calibration
 from eyeos.config import Config
 from eyeos.features import FeatureVector, extract_features
 from eyeos.filtering import OneEuroFilter2D
-from eyeos.gates import FrameInput, GateStateMachine, GateStatus, HeadPose, ScreenPoint
+from eyeos.gates import FrameInput, GateStateMachine, GateStatus, ScreenPoint
 from eyeos.input_sources import Frame, InputSource
 from eyeos.landmarks import FaceLandmarks
 from eyeos.logging_utils import SessionLogger
@@ -94,8 +94,9 @@ class Pipeline:
 
         self._filter: OneEuroFilter2D | None = None
         self._blink_hold_start_s: float | None = None
+        # The last point the gates emitted for an observed (eyes open, trusted) frame;
+        # None once an observed frame fails any gate. Held frames reuse it.
         self._last_open_gaze: ScreenPoint | None = None
-        self._last_open_head_pose: HeadPose | None = None
         self._aperture_baseline: float | None = None
         self._last_trusted_or_closed_s: float | None = None
         self._kill_seen = False
@@ -139,10 +140,22 @@ class Pipeline:
         kill_switch_pressed, confirm_keypress = self.external_signals(frame.timestamp_s)
         self._kill_seen = self._kill_seen or kill_switch_pressed
 
+        if not math.isfinite(frame.timestamp_s):
+            # Gate 1 rejects it. Touch no timing state and don't feed the filter.
+            return FrameInput(
+                timestamp_s=frame.timestamp_s,
+                face_count=frame.landmarks.face_count if frame.landmarks else 0,
+                detection_confidence=0.0,
+                both_irises_visible=False,
+                gaze_point_px=None,
+                head_pose_deg=(0.0, 0.0, 0.0),
+                kill_switch_pressed=kill_switch_pressed,
+                confirm_keypress=confirm_keypress,
+            )
+
         if frame.landmarks is None:
             self._blink_hold_start_s = None
             self._last_open_gaze = None
-            self._last_open_head_pose = None
             self._last_trusted_or_closed_s = None
             return FrameInput(
                 timestamp_s=frame.timestamp_s,
@@ -163,31 +176,28 @@ class Pipeline:
         features = extract_features(landmarks)
 
         # Closed-eye iris offsets divide by a near-zero lid gap, so they are never mapped
-        # to the screen or fed to the filter. During a blink-hold the gaze holds where
-        # the eyes were last open (that is where the click must land); past the grace
-        # window there is no gaze at all. Partly closed lids (the frames on the way into
-        # and out of a blink) hold the gaze the same way, briefly.
+        # to the screen or fed to the filter. During a blink-hold the gaze holds the last
+        # point the gates emitted while the eyes were open (that is where the click must
+        # land); past the grace window there is no gaze at all. Partly closed lids (the
+        # frames on the way into and out of a blink) hold it the same way, briefly. A
+        # held point is marked as such, so Gate 3 doesn't count it as dwell. The head
+        # pose is always this frame's: it doesn't depend on the lids, and Gate 2 must
+        # still see a head turn mid-blink.
+        head_pose = features.head_pose()
         gaze_point: ScreenPoint | None
+        gaze_held = False
         if raw_eyes_open and self._lids_partly_closed(frame.timestamp_s, landmarks):
-            gaze_point = self._last_open_gaze
-            head_pose = features.head_pose()
+            gaze_point, gaze_held = self._last_open_gaze, True
         elif raw_eyes_open:
             gaze_point = self._map_gaze(frame.timestamp_s, features)
-            head_pose = features.head_pose()
-            self._last_open_gaze = gaze_point
-            self._last_open_head_pose = head_pose
             self._last_trusted_or_closed_s = frame.timestamp_s
         elif confirm_hold_s is not None:
-            gaze_point = self._last_open_gaze
-            head_pose = self._last_open_head_pose or features.head_pose()
+            gaze_point, gaze_held = self._last_open_gaze, True
             self._last_trusted_or_closed_s = frame.timestamp_s
         else:
-            # Past the grace window the held gaze is stale: drop it, so the reopening
-            # frames that follow carry no gaze until a trusted frame arrives.
+            # Past the grace window (or in keypress mode) there is no gaze, and the
+            # held point is dropped after gating (see _process_frame).
             gaze_point = None
-            head_pose = features.head_pose()
-            self._last_open_gaze = None
-            self._last_open_head_pose = None
             self._last_trusted_or_closed_s = frame.timestamp_s
 
         return FrameInput(
@@ -200,6 +210,7 @@ class Pipeline:
             kill_switch_pressed=kill_switch_pressed,
             confirm_hold_s=confirm_hold_s,
             confirm_keypress=confirm_keypress,
+            gaze_held=gaze_held,
         )
 
     def _lids_partly_closed(self, timestamp_s: float, landmarks: FaceLandmarks) -> bool:
@@ -257,6 +268,10 @@ class Pipeline:
     def _process_frame(self, frame: Frame) -> GateStatus:
         frame_input = self._frame_input(frame)
         status = self.gates.step(frame_input)
+        if not frame_input.gaze_held:
+            # Only a point the gates allowed may be held through a later blink. A frame
+            # they rejected (a second face, a blocked jump, a lost face) drops it.
+            self._last_open_gaze = status.cursor_target_px if status.move_allowed else None
 
         if status.move_allowed and status.cursor_target_px is not None:
             x, y = status.cursor_target_px

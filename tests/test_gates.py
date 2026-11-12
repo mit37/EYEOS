@@ -32,6 +32,8 @@ def make_config(**overrides) -> GatesConfig:
         max_clicks_per_window=2,
         click_window_s=5.0,
         confirmation_hold_s=0.4,
+        # These tests pick sparse timestamps freely; the gap check has its own tests.
+        max_frame_gap_s=10.0,
         no_click_zones=(NoClickZone(1800, 0, 1920, 50),),
     )
     defaults.update(overrides)
@@ -708,4 +710,83 @@ def test_non_finite_inputs_fail_closed(overrides, gate):
         t += 0.1
         assert getattr(status, gate) is False
         assert status.move_allowed is False
+        assert status.click_fired is False
+
+
+@pytest.mark.parametrize("bad_t", [math.nan, math.inf, -math.inf])
+def test_a_non_finite_timestamp_fails_gate1_and_is_never_stored(bad_t):
+    m = machine()
+    first = m.step(make_frame(timestamp_s=bad_t, confirm_keypress=True))
+    assert first.gate1_presence is False
+    assert first.reasons["gate1"] == "timestamp is not finite"
+    assert first.click_fired is False
+
+    m.step(make_frame(timestamp_s=1.0))
+    assert m.step(make_frame(timestamp_s=bad_t)).gate1_presence is False
+    # The bad value was never stored, so the clock is still judged against 1.0.
+    assert m.step(make_frame(timestamp_s=1.1)).gate1_presence is True
+
+
+# ---------------------------------------------------------------------------
+# A frame gap (camera stall) is not observed time
+# ---------------------------------------------------------------------------
+
+
+def test_a_frame_gap_fails_gate1_and_restarts_the_dwell():
+    m = machine(make_config(max_frame_gap_s=0.25))
+    t = 0.0
+    for _ in range(4):  # 0.3 s of dwell, short of 0.5 s
+        m.step(make_frame(timestamp_s=t))
+        t += 0.1
+    gap = m.step(make_frame(timestamp_s=t + 0.4, confirm_keypress=True))
+
+    assert gap.gate1_presence is False
+    assert gap.reasons["gate1"].startswith("frame gap 0.50s")
+    assert gap.click_fired is False
+    # Without the gap check this frame would sit 0.8 s into the dwell and click.
+    after = m.step(make_frame(timestamp_s=t + 0.5, confirm_keypress=True))
+    assert after.gate1_presence is True
+    assert after.gate3_stability is False
+    assert after.click_fired is False
+
+
+# ---------------------------------------------------------------------------
+# A held gaze point (eyes closed, lids partly closed) is not observed dwell
+# ---------------------------------------------------------------------------
+
+
+def test_held_frames_neither_advance_nor_reset_the_dwell():
+    m = machine()  # dwell_time_s=0.5
+    m.step(make_frame(timestamp_s=0.0))
+    m.step(make_frame(timestamp_s=0.1))
+    for k in range(2, 12):  # a full second of held frames, t = 0.2 .. 1.1
+        t = k / 10
+        held = m.step(make_frame(timestamp_s=t, gaze_held=True, confirm_hold_s=t - 0.2))
+        assert held.gate3_stability is False
+        assert held.click_fired is False
+
+    # Observation resumes at 1.2 s with 0.2 s of dwell behind it, not 1.2 s, so the
+    # 0.5 s dwell is reached at 1.5 s.
+    assert [m.step(make_frame(timestamp_s=k / 10)).gate3_stability for k in range(12, 16)] == [
+        False,
+        False,
+        False,
+        True,
+    ]
+
+
+def test_a_dwell_observed_before_the_hold_carries_through_it():
+    m = machine()  # dwell_time_s=0.5
+    for k in range(7):  # 0.6 s observed: satisfied
+        m.step(make_frame(timestamp_s=k / 10))
+    held = m.step(make_frame(timestamp_s=0.7, gaze_held=True, confirm_hold_s=0.4))
+    assert held.gate3_stability is True
+    assert held.click_fired is True
+
+
+def test_a_held_frame_never_starts_a_dwell():
+    m = machine()
+    for k in range(10):
+        status = m.step(make_frame(timestamp_s=k / 10, gaze_held=True, confirm_hold_s=k / 10))
+        assert status.gate3_stability is False
         assert status.click_fired is False

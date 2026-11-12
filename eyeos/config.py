@@ -64,6 +64,9 @@ class GatesConfig:
     confirmation_hold_s: float = 0.4
     # PRD §2: "a blink-hold >= 400 ms *or* a keypress, configurable".
     confirmation_mode: str = "either"  # either | blink_hold | keypress
+    # A longer gap between frames (a camera stall) fails Gate 1 for that frame and
+    # restarts the dwell, so the gap never counts as observed time.
+    max_frame_gap_s: float = 0.25
     no_click_zones: tuple[NoClickZone, ...] = ()
 
 
@@ -142,6 +145,8 @@ def load_config(path: str | Path | None) -> Config:
     gates = GatesConfig(**gates_raw, no_click_zones=zones)
     if not 0.0 <= gates.presence_confidence_threshold <= 1.0:
         raise ValueError("gates.presence_confidence_threshold must be between 0 and 1")
+    if not gates.max_frame_gap_s > 0:
+        raise ValueError("gates.max_frame_gap_s must be positive")
     if gates.confirmation_mode not in CONFIRMATION_MODES:
         raise ValueError(
             f"gates.confirmation_mode must be one of {', '.join(CONFIRMATION_MODES)}, "

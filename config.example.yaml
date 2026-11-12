@@ -37,6 +37,8 @@ gates:
   # How a click is confirmed: either | blink_hold | keypress (PRD §2).
   # keypress also turns off the blink grace window, so closed eyes fail Gate 1 at once.
   confirmation_mode: either
+  # A longer gap between frames (a camera stall) fails Gate 1 for that frame.
+  max_frame_gap_s: 0.25
   no_click_zones:
     # Example: the Windows taskbar close-button area, on a 1920x1080 screen.
     - x_min: 1860

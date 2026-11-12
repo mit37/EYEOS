@@ -7,6 +7,7 @@ CSV fixture instead of a real video, since this container has no camera/video de
 from __future__ import annotations
 
 import csv
+import math
 from collections.abc import Iterator
 
 import pytest
@@ -137,29 +138,26 @@ def test_dropout_frame_freezes_and_does_not_crash():
 
 
 def test_blink_hold_within_grace_period_still_reports_visible_and_accumulates_hold():
-    frames = [
-        Frame(timestamp_s=0.0, landmarks=make_landmarks()),
-        Frame(
-            timestamp_s=0.3,
-            landmarks=make_landmarks(
-                left_eye_top=Point3D(0.38, 0.400),
-                left_eye_bottom=Point3D(0.38, 0.401),
-                right_eye_top=Point3D(0.62, 0.400),
-                right_eye_bottom=Point3D(0.62, 0.401),
-            ),
-        ),
-    ]
+    closed = make_landmarks(
+        left_eye_top=Point3D(0.38, 0.400),
+        left_eye_bottom=Point3D(0.38, 0.401),
+        right_eye_top=Point3D(0.62, 0.400),
+        right_eye_bottom=Point3D(0.62, 0.401),
+    )
+    # Eyes open for 0.1 s, then closed for 0.3 s, at 30 fps.
+    frames = [Frame(timestamp_s=k / 30, landmarks=make_landmarks()) for k in range(3)]
+    frames += [Frame(timestamp_s=(3 + k) / 30, landmarks=closed) for k in range(10)]
     output = DryRunOutputAdapter(echo=None)
     pipeline = Pipeline(
         Config(), ListInputSource(frames), output, calibration=_fitted_calibration()
     )
-    result = pipeline.run()
+    last = pipeline.run().statuses[-1]
     # A 0.3s closed-eye stretch is within confirmation_hold_s(0.4) + grace(0.5): Gate 1
     # should still see "visible", so movement/dwell survive the blink.
-    assert result.statuses[1].gate1_presence is True
-    assert result.statuses[1].move_allowed is True
-    assert result.statuses[1].cursor_target_px == pytest.approx((960.0, 540.0))
-    assert "blink-hold grace" in result.statuses[1].reasons["gate1"]
+    assert last.gate1_presence is True
+    assert last.move_allowed is True
+    assert last.cursor_target_px == pytest.approx((960.0, 540.0))
+    assert "eyes closed 0.30s: blink-hold grace" in last.reasons["gate1"]
 
 
 def test_prolonged_eye_closure_past_grace_is_reported_as_not_visible():
@@ -343,22 +341,17 @@ def test_blink_hold_cannot_click_inside_a_no_click_zone():
 
     from eyeos.config import NoClickZone
 
-    config = Config()
-    config = replace(
-        config, gates=replace(config.gates, no_click_zones=(NoClickZone(0, 0, 1920, 40),))
-    )
-    lid_down = dict(
-        left_eye_top=Point3D(0.38, 0.418),
-        left_eye_bottom=Point3D(0.38, 0.420),
-        right_eye_top=Point3D(0.62, 0.418),
-        right_eye_bottom=Point3D(0.62, 0.420),
-    )
-    result, output = _run_frames(_blink_session(1.0, 0.9, closed_overrides=lid_down), config)
+    def run_with(zones):
+        config = Config()
+        config = replace(config, gates=replace(config.gates, no_click_zones=zones))
+        return _run_frames(_blink_session(open_s=1.0, closed_s=0.5), config)
 
-    for status in result.statuses:
-        if status.click_fired:
-            x, y = status.cursor_target_px
-            assert not (0 <= x <= 1920 and 0 <= y <= 40)
+    # Without a zone this dwell + blink-hold clicks once at (960, 540)...
+    assert run_with(())[0].total_clicks == 1
+    # ...and with a zone around that point it never clicks, nor moves there.
+    result, output = run_with((NoClickZone(900, 500, 1000, 600),))
+    assert result.total_clicks == 0
+    assert not [a for a in output.actions if a[0] == "move"]
 
 
 # ---------------------------------------------------------------------------
@@ -583,3 +576,142 @@ def test_a_sustained_squint_is_trusted_again_after_the_hold():
     ]
     assert moved, "the cursor never followed the squinting gaze"
     assert moved[0] >= squint_start + 0.3 - 1e-9
+
+
+# ---------------------------------------------------------------------------
+# Held gaze (eyes closed, lids partly closed) is not an observation
+# ---------------------------------------------------------------------------
+
+
+def _gaze_landmarks(px, py, closed=False, **overrides):
+    """Landmarks whose iris offset _fitted_calibration() maps to (px, py)."""
+    dx, dy = px - 960, py - 540
+    det = 800 * 650 - 30 * 10
+    a = (dx * 650 - 30 * dy) / det
+    b = (800 * dy - 10 * dx) / det
+    lm = dict(
+        left_iris_center=Point3D(0.38 + 0.04 * a, 0.40 + 0.02 * b),
+        right_iris_center=Point3D(0.62 + 0.04 * a, 0.40 + 0.02 * b),
+    )
+    if closed:
+        lm.update(_CLOSED)
+    lm.update(overrides)
+    return make_landmarks(**lm)
+
+
+def _seq(spec, fps=30):
+    """(duration_s, landmark factory or None for a lost face) segments at 30 fps."""
+    frames, t = [], 0.0
+    for duration_s, factory in spec:
+        for _ in range(round(duration_s * fps)):
+            frames.append(Frame(timestamp_s=t, landmarks=factory() if factory else None))
+            t += 1.0 / fps
+    return frames
+
+
+def _targets_while_eyes_closed(frames, result):
+    return {
+        s.cursor_target_px
+        for f, s in zip(frames, result.statuses, strict=True)
+        if s.cursor_target_px is not None and not (f.landmarks and f.landmarks.both_irises_visible)
+    }
+
+
+@pytest.mark.parametrize("open_frames", [1, 2, 3])
+def test_eyes_closed_time_never_counts_toward_the_dwell(open_frames):
+    # A glance of a few frames at B, then the eyes close for 0.87 s (inside the grace
+    # window). The 0.8 s dwell was never observed with open eyes, so nothing may click.
+    b = (1500.0, 300.0)
+    frames = _seq(
+        [
+            (1.0, lambda: _gaze_landmarks(960, 540)),
+            (2.0, None),  # face lost long enough for Gate 4's speed average to allow B
+            (open_frames / 30, lambda: _gaze_landmarks(*b)),
+            (0.87, lambda: _gaze_landmarks(*b, closed=True)),
+            (0.3, lambda: _gaze_landmarks(*b)),
+        ]
+    )
+    result, _output = _run_frames(frames)
+    assert result.total_clicks == 0
+
+
+def test_blink_hold_holds_nothing_after_a_frame_gate1_rejected():
+    # Dwelling at A, one frame with a second face in view (MediaPipe's first face may
+    # not be the user's), then the user's eyes close.
+    frames = _seq(
+        [
+            (1.0, lambda: _gaze_landmarks(960, 540)),
+            (1 / 30, lambda: _gaze_landmarks(1060, 600, face_count=2)),
+            (0.6, lambda: _gaze_landmarks(1060, 600, closed=True)),
+        ]
+    )
+    result, output = _run_frames(frames)
+
+    assert result.total_clicks == 0
+    assert {a for a in output.actions if a[0] == "move"} == {("move", 960, 540)}
+    assert _targets_while_eyes_closed(frames, result) <= {(960.0, 540.0)}
+
+
+def test_blink_hold_never_relocates_to_a_point_gate4_blocked():
+    # A 300 px jump that Gate 4's speed limit blocks, then the eyes close: the cursor
+    # must not move there (or click there) with the eyes shut.
+    frames = _seq(
+        [
+            (1.0, lambda: _gaze_landmarks(960, 540)),
+            (2 / 30, lambda: _gaze_landmarks(1260, 540)),
+            (0.85, lambda: _gaze_landmarks(1260, 540, closed=True)),
+        ]
+    )
+    result, _output = _run_frames(frames)
+
+    assert result.total_clicks == 0
+    assert _targets_while_eyes_closed(frames, result) <= {(960.0, 540.0)}
+
+
+def test_a_head_turn_during_a_blink_hold_fails_gate2():
+    turned = dict(nose_tip=Point3D(0.60, 0.50))  # about 25 deg of yaw
+    frames = _seq(
+        [
+            (1.0, lambda: _gaze_landmarks(960, 540)),
+            (0.5, lambda: _gaze_landmarks(960, 540, closed=True, **turned)),
+        ]
+    )
+    result, _output = _run_frames(frames)
+
+    assert result.total_clicks == 0
+    assert not result.statuses[-1].gate2_calibration
+
+
+def test_a_camera_stall_does_not_count_as_dwell_or_blink_hold():
+    # Three open frames at B, one closed frame, a 0.85 s stall, one more closed frame.
+    b = (1100.0, 540.0)
+    frames = _seq(
+        [
+            (1.0, lambda: _gaze_landmarks(960, 540)),
+            (2.0, None),
+            (3 / 30, lambda: _gaze_landmarks(*b)),
+            (1 / 30, lambda: _gaze_landmarks(*b, closed=True)),
+        ]
+    )
+    t = frames[-1].timestamp_s + 0.85
+    frames += [Frame(t + k / 30, _gaze_landmarks(*b, closed=True)) for k in range(3)]
+
+    result, _output = _run_frames(frames)
+
+    assert result.total_clicks == 0
+    assert "frame gap" in result.statuses[-3].reasons["gate1"]
+
+
+@pytest.mark.parametrize("bad_t", [math.nan, math.inf])
+@pytest.mark.parametrize("position", ["first", "middle"])
+def test_a_non_finite_timestamp_fails_closed_without_crashing(bad_t, position):
+    frames = _seq([(1.0, lambda: _gaze_landmarks(960, 540))])
+    index = 0 if position == "first" else 15
+    frames[index] = Frame(bad_t, frames[index].landmarks)
+
+    result, output = _run_frames(frames)
+
+    assert not result.statuses[index].gate1_presence
+    assert "not finite" in result.statuses[index].reasons["gate1"]
+    assert result.statuses[-1].move_allowed  # later valid frames still pass
+    assert {a for a in output.actions if a[0] == "move"} == {("move", 960, 540)}
