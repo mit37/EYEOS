@@ -12,8 +12,8 @@ clock just by choosing timestamps.
                       Fails -> "recalibrate"; cursor frozen.
     3. Stability   -- gaze has stayed in the same region for the dwell time.
                       Fails -> no click (movement still OK).
-    4. Kill/limits -- kill hotkey up; speed/click-rate within limits; not a
-                      no-click zone. Fails -> all output stops.
+    4. Kill/limits -- kill hotkey up; cursor speed and click rate within limits;
+                      not a no-click zone. Fails -> all output stops.
 
 Movement needs gates 1, 2, 4. Click needs all four plus a confirmation.
 
@@ -25,6 +25,12 @@ stricter than a typical UI would need, but this project's whole pitch is a
 conservative, legible safety model, and "one bundled gate, one clear reason" is easier
 to reason about (and to log, and to show as one overlay light) than four independently
 wired sub-gates. See the README's Design decisions section.
+
+Cursor speed is the average speed from the last position actually emitted to the
+current gaze, so a frozen frame or a dropout cannot reset it. A large jump keeps gate 4
+failing until that average is within the limit (about 0.43 s for 1700 px at 4000 px/s),
+then the cursor relocates in one step. The emitted cursor is never rate-limited toward
+the gaze: a cursor still in transit could click somewhere the zone check never looked.
 """
 
 from __future__ import annotations
@@ -82,8 +88,8 @@ class GateStateMachine:
         self._dwell_start_s: float | None = None
         self._click_timestamps: list[float] = []
         self._awaiting_confirmation_release = False
-        self._prev_gaze_point: ScreenPoint | None = None
-        self._prev_timestamp_s: float | None = None
+        self._last_emitted_px: ScreenPoint | None = None
+        self._last_emitted_timestamp_s: float | None = None
 
     def set_calibration(self, status: CalibrationStatus) -> None:
         self._calibration = status
@@ -130,12 +136,12 @@ class GateStateMachine:
         speed_px_s = 0.0
         if (
             frame.gaze_point_px is not None
-            and self._prev_gaze_point is not None
-            and self._prev_timestamp_s is not None
+            and self._last_emitted_px is not None
+            and self._last_emitted_timestamp_s is not None
         ):
-            dt = frame.timestamp_s - self._prev_timestamp_s
+            dt = frame.timestamp_s - self._last_emitted_timestamp_s
             if dt > 0:
-                speed_px_s = _distance(frame.gaze_point_px, self._prev_gaze_point) / dt
+                speed_px_s = _distance(frame.gaze_point_px, self._last_emitted_px) / dt
         if speed_px_s > self.config.max_cursor_speed_px_s:
             return False, f"cursor speed {speed_px_s:.0f}px/s exceeds limit"
 
@@ -223,8 +229,9 @@ class GateStateMachine:
             t for t in self._click_timestamps if frame.timestamp_s - t < self.config.click_window_s
         ]
 
-        self._prev_gaze_point = frame.gaze_point_px
-        self._prev_timestamp_s = frame.timestamp_s
+        if move_allowed and frame.gaze_point_px is not None:
+            self._last_emitted_px = frame.gaze_point_px
+            self._last_emitted_timestamp_s = frame.timestamp_s
 
         return GateStatus(
             gate1_presence=gate1,

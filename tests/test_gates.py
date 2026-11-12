@@ -7,6 +7,7 @@ has no clock of its own (see gates.py's module docstring), so controlling
 
 from __future__ import annotations
 
+import itertools
 import math
 
 import pytest
@@ -202,6 +203,90 @@ def test_gate4_passes_when_cursor_speed_within_limit():
     # 100px in 0.1s = 1000px/s, under the 2000px/s test limit.
     status = m.step(make_frame(timestamp_s=0.1, gaze_point_px=(100.0, 0.0)))
     assert status.gate4_kill_and_limits is True
+
+
+FPS = 30.0
+SPEED_LIMIT_PX_S = 4000.0
+POINT_A = (100.0, 500.0)
+POINT_B = (1800.0, 500.0)  # 1700px from POINT_A, outside the test no-click zone
+
+
+def _speed_machine() -> GateStateMachine:
+    return machine(make_config(max_cursor_speed_px_s=SPEED_LIMIT_PX_S))
+
+
+def _settle_at_a(m: GateStateMachine, frames: int = 5) -> int:
+    for i in range(frames):
+        assert m.step(make_frame(timestamp_s=i / FPS, gaze_point_px=POINT_A)).move_allowed
+    return frames
+
+
+def test_gate4_persistent_jump_waits_until_average_speed_since_last_emit_is_within_limit():
+    m = _speed_machine()
+    i = _settle_at_a(m)
+    emitted = [((i - 1) / FPS, POINT_A)]
+    max_jump_frames = math.ceil(1700.0 / SPEED_LIMIT_PX_S * FPS) + 1
+    reached_at = None
+    for k in range(1, max_jump_frames + 1):
+        t = i / FPS
+        status = m.step(make_frame(timestamp_s=t, gaze_point_px=POINT_B))
+        last_t, last_px = emitted[-1]
+        within_limit = math.dist(POINT_B, last_px) / (t - last_t) <= SPEED_LIMIT_PX_S
+        assert status.gate4_kill_and_limits is within_limit
+        if status.move_allowed:
+            emitted.append((t, status.cursor_target_px))
+            reached_at = k
+            break
+        assert "cursor speed" in status.reasons["gate4"]
+        i += 1
+
+    assert reached_at is not None, "cursor never relocated: the speed gate deadlocked"
+    assert reached_at > 1, "a 1700px jump went straight through the speed limit"
+    for (t0, p0), (t1, p1) in itertools.pairwise(emitted):
+        assert math.dist(p0, p1) / (t1 - t0) <= SPEED_LIMIT_PX_S
+
+
+def test_gate4_speed_is_checked_on_the_first_frame_after_a_dropout():
+    m = _speed_machine()
+    i = _settle_at_a(m)
+    m.step(make_frame(timestamp_s=i / FPS, face_count=0, gaze_point_px=None))
+    status = m.step(make_frame(timestamp_s=(i + 1) / FPS, gaze_point_px=POINT_B))
+    assert status.gate4_kill_and_limits is False
+    assert "cursor speed" in status.reasons["gate4"]
+    assert status.move_allowed is False
+
+
+def test_gate4_blocks_a_glitch_after_a_dropout_and_allows_the_return():
+    m = _speed_machine()
+    i = _settle_at_a(m)
+    m.step(make_frame(timestamp_s=i / FPS, face_count=0, gaze_point_px=None))
+    glitch = m.step(make_frame(timestamp_s=(i + 1) / FPS, gaze_point_px=POINT_B))
+    back = m.step(make_frame(timestamp_s=(i + 2) / FPS, gaze_point_px=POINT_A))
+    assert glitch.move_allowed is False
+    assert back.move_allowed is True
+    assert back.cursor_target_px == POINT_A
+
+
+def test_gate4_one_frame_spike_is_blocked_and_the_return_is_allowed():
+    m = _speed_machine()
+    i = _settle_at_a(m)
+    spike = m.step(make_frame(timestamp_s=i / FPS, gaze_point_px=POINT_B))
+    back = m.step(make_frame(timestamp_s=(i + 1) / FPS, gaze_point_px=POINT_A))
+    assert spike.move_allowed is False
+    assert back.move_allowed is True
+
+
+def test_gate4_short_gate1_freeze_does_not_reset_the_speed_reference():
+    m = _speed_machine()
+    i = _settle_at_a(m)
+    frozen = m.step(
+        make_frame(timestamp_s=i / FPS, detection_confidence=0.1, gaze_point_px=POINT_B)
+    )
+    assert frozen.gate1_presence is False
+    status = m.step(make_frame(timestamp_s=(i + 1) / FPS, gaze_point_px=POINT_B))
+    assert status.gate4_kill_and_limits is False
+    assert "cursor speed" in status.reasons["gate4"]
+    assert status.move_allowed is False
 
 
 def test_gate4_fails_inside_no_click_zone():
