@@ -213,11 +213,25 @@ def _run(args: argparse.Namespace) -> int:
 
 
 def main(argv: list[str] | None = None) -> int:
+    """Run the CLI. Errors propagate as exceptions (for tests and programmatic use)."""
     args = build_arg_parser().parse_args(argv)
     if args.command == "run":
         return _run(args)
     raise ValueError(f"unknown command: {args.command!r}")  # pragma: no cover
 
 
+def console_main(argv: list[str] | None = None) -> int:
+    """The ``eyeos`` command: like main(), but a config, input or OS error is printed
+    as one line instead of a traceback. Every resource is already closed by then."""
+    try:
+        return main(argv)
+    except KeyboardInterrupt:
+        print("eyeos: interrupted", file=sys.stderr)
+        return 130
+    except (RuntimeError, ValueError, OSError) as e:
+        print(f"eyeos: error: {e}", file=sys.stderr)
+        return 2
+
+
 if __name__ == "__main__":
-    sys.exit(main())
+    sys.exit(console_main())

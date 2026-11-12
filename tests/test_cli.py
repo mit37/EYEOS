@@ -455,3 +455,41 @@ def test_every_resource_is_closed_even_if_one_close_raises(tmp_path, monkeypatch
 
     assert set(closed) == {"input", "overlay", "output", "logger", "keys"}
     assert not keyboard.running
+
+
+def test_the_eyeos_command_prints_errors_as_one_line(tmp_path, capsys, monkeypatch):
+    from eyeos.cli import console_main
+    from tests.fake_capture import FakeCv2, FakeMediapipe, install_fakes
+
+    install_fakes(monkeypatch, cv2=FakeCv2(), mediapipe=FakeMediapipe())
+    config_path = _video_config(tmp_path, f"  video_path: {tmp_path / 'missing.mp4'}\n")
+
+    assert console_main(["run", "--config", str(config_path), "--no-log"]) == 2
+    err = capsys.readouterr().err
+    assert err.startswith("eyeos: error: video file not found")
+    assert "Traceback" not in err
+
+    assert console_main(["run", "--config", str(tmp_path / "nope.yaml")]) == 2
+    assert "eyeos: error:" in capsys.readouterr().err
+
+
+def test_the_eyeos_command_reports_ctrl_c_cleanly(tmp_path, capsys, monkeypatch):
+    import eyeos.cli as cli
+
+    def interrupted(_args):
+        raise KeyboardInterrupt
+
+    monkeypatch.setattr(cli, "_run", interrupted)
+    assert cli.console_main(["run", "--config", str(_synthetic_config(tmp_path))]) == 130
+    assert capsys.readouterr().err == "eyeos: interrupted\n"
+
+
+def test_the_installed_command_is_console_main():
+    from pathlib import Path
+
+    tomllib = pytest.importorskip("tomllib")  # Python 3.11+
+
+    pyproject = tomllib.loads(
+        (Path(__file__).resolve().parent.parent / "pyproject.toml").read_text()
+    )
+    assert pyproject["project"]["scripts"]["eyeos"] == "eyeos.cli:console_main"

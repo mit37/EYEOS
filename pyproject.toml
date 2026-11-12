@@ -25,7 +25,7 @@ dev = [
 ]
 
 [project.scripts]
-eyeos = "eyeos.cli:main"
+eyeos = "eyeos.cli:console_main"
 
 [tool.setuptools.packages.find]
 include = ["eyeos*"]
