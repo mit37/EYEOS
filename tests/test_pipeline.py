@@ -592,18 +592,41 @@ def test_looking_down_with_narrowed_lids_then_confirming_never_clicks_the_old_ta
     assert keys_pipeline.run().total_clicks == 0
 
 
-@pytest.mark.parametrize("every", [13, 15, 20])
-def test_eyelid_flutter_in_a_long_closure_clicks_at_most_once(every):
-    # Dwell on A, then 30 s of closed eyes with a 30%-open frame every few frames. The
-    # eyes are never really reopened, so one blink-hold click at most.
-    frames = _seq([(1.0, lambda: _gaze_landmarks(960, 300))])
+def _flutter(pattern, fps=30):
+    """1 s dwelling on A, then one frame per character: 'c' closed, 'o' a one-frame
+    glimpse with the lids 30% open (Gate 1 counts that as open)."""
+    frames = _seq([(1.0, lambda: _gaze_landmarks(960, 300))], fps=fps)
     t0 = frames[-1].timestamp_s
-    for k in range(1, 901):
-        lids = _lids(0.3) if k % every == 0 else _lids(0.025)
+    for k, ch in enumerate(pattern, start=1):
+        lids = _lids(0.3) if ch == "o" else _lids(0.025)
         lm = _gaze_landmarks(960, 300, **{n: v for n, v in lids.items() if n.endswith("_eye_top")})
-        frames.append(Frame(t0 + k / 30, lm))
+        frames.append(Frame(t0 + k / fps, lm))
+    return frames
 
-    result, _output = _run_frames(frames)
+
+@pytest.mark.parametrize(
+    "pattern",
+    [
+        ("c" * 12 + "o") * 70,  # closed stretches just under confirmation_hold_s
+        "c" * 14 + ("c" * 9 + "o") * 30 + "c" * 14,  # click, flutter, then a long closure
+        ("c" * 4 + "o") * 150 + "c" * 14,
+        ("c" * 14 + "o") * 60,
+    ],
+    ids=["under-hold", "click-flutter-click", "dense", "every-15"],
+)
+def test_eyelid_flutter_in_a_long_closure_clicks_at_most_once(pattern):
+    # The eyes are never really reopened, so one blink-hold click at most.
+    result, _output = _run_frames(_flutter(pattern))
+    assert result.total_clicks <= 1
+
+
+@pytest.mark.parametrize("seed", range(6))
+def test_random_eyelid_flutter_clicks_at_most_once(seed):
+    import random
+
+    rng = random.Random(seed)
+    pattern = "".join("o" if rng.random() < 0.25 else "c" for _ in range(900))
+    result, _output = _run_frames(_flutter(pattern))
     assert result.total_clicks <= 1
 
 

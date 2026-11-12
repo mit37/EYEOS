@@ -95,6 +95,7 @@ class GateStateMachine:
         self._dwell_anchor: ScreenPoint | None = None
         self._dwell_start_s: float | None = None
         self._dwell_paused_at_s: float | None = None
+        self._dwell_held_s = 0.0
         self._dwell_satisfied_when_observed = False
         self._click_timestamps: list[float] = []
         self._awaiting_confirmation_release = False
@@ -198,6 +199,7 @@ class GateStateMachine:
         self._dwell_anchor = None
         self._dwell_start_s = None
         self._dwell_paused_at_s = None
+        self._dwell_held_s = 0.0
         self._dwell_satisfied_when_observed = False
 
     def _update_dwell(self, frame: FrameInput, eligible: bool) -> bool:
@@ -223,7 +225,13 @@ class GateStateMachine:
             return satisfied
 
         if self._dwell_paused_at_s is not None and self._dwell_start_s is not None:
-            self._dwell_start_s += frame.timestamp_s - self._dwell_paused_at_s
+            held = frame.timestamp_s - self._dwell_paused_at_s
+            self._dwell_start_s += held
+            self._dwell_held_s += held
+            # Within one dwell the eyes must be open more than they are closed. Otherwise
+            # one-frame glimpses through a fluttering closure could add up to a dwell.
+            if self._dwell_held_s > frame.timestamp_s - self._dwell_start_s:
+                self._reset_dwell()
         self._dwell_paused_at_s = None
 
         if self._dwell_anchor is None or self._dwell_start_s is None:

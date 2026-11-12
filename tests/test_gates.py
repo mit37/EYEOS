@@ -780,23 +780,27 @@ def test_a_frame_gap_fails_gate1_and_restarts_the_dwell():
 
 
 def test_held_frames_neither_advance_nor_reset_the_dwell():
+    # Timestamps in eighths of a second, so the sums are exact.
     m = machine()  # dwell_time_s=0.5, confirmation_hold_s=0.4
-    m.step(make_frame(timestamp_s=0.0))
-    m.step(make_frame(timestamp_s=0.1))
-    for k in range(2, 5):  # a natural 0.3 s blink, t = 0.2 .. 0.4
-        t = k / 10
-        held = m.step(make_frame(timestamp_s=t, gaze_held=True, confirm_hold_s=t - 0.2))
-        assert held.gate3_stability is False
-        assert held.click_fired is False
+    for k in range(3):  # observed 0 .. 0.25 s
+        m.step(make_frame(timestamp_s=k / 8))
+    held = m.step(make_frame(timestamp_s=3 / 8, gaze_held=True, confirm_hold_s=0.0))
+    assert held.gate3_stability is False
+    assert held.click_fired is False
+    # The 1/8 s blink counts neither way: 0.375 s observed at 0.5, 0.5 s at 0.625.
+    assert m.step(make_frame(timestamp_s=4 / 8)).gate3_stability is False
+    assert m.step(make_frame(timestamp_s=5 / 8)).gate3_stability is True
 
-    # Observation resumes at 0.5 s with 0.2 s of dwell behind it, not 0.5 s, so the
-    # 0.5 s dwell is reached at 0.8 s.
-    assert [m.step(make_frame(timestamp_s=k / 10)).gate3_stability for k in range(5, 9)] == [
-        False,
-        False,
-        False,
-        True,
-    ]
+
+def test_a_dwell_restarts_when_the_eyes_were_closed_longer_than_open():
+    m = machine()  # dwell_time_s=0.5
+    m.step(make_frame(timestamp_s=0.0))
+    m.step(make_frame(timestamp_s=1 / 8))  # open until the first closed frame: 1/4 s
+    for k in range(2, 5):  # closed 3/8 s: longer than the eyes were open
+        m.step(make_frame(timestamp_s=k / 8, gaze_held=True, confirm_hold_s=(k - 2) / 8))
+    # The dwell starts over at 5/8 s, so it is met at 9/8 s, not 7/8 s.
+    statuses = [m.step(make_frame(timestamp_s=k / 8)) for k in range(5, 10)]
+    assert [s.gate3_stability for s in statuses] == [False, False, False, False, True]
 
 
 def test_a_confirm_length_closure_that_does_not_click_ends_the_dwell():
