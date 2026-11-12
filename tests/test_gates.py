@@ -7,6 +7,8 @@ has no clock of its own (see gates.py's module docstring), so controlling
 
 from __future__ import annotations
 
+import math
+
 import pytest
 
 from eyeos.calibration import CalibrationStatus
@@ -131,6 +133,21 @@ def test_gate2_fails_at_validation_error_boundary():
     )
     status = m.step(make_frame())
     assert status.gate2_calibration is False
+
+
+def test_gate2_fails_when_calibration_was_not_validated():
+    m = machine(calibrated=False)
+    m.set_calibration(
+        CalibrationStatus(
+            exists=True, validation_error_px=math.inf, calibration_head_pose=(0, 0, 0)
+        )
+    )
+    status = m.step(make_frame())
+    assert status.gate2_calibration is False
+    assert status.move_allowed is False
+    assert "not validated" in status.reasons["gate2"]
+    assert "recalibrate" in status.reasons["gate2"]
+    assert "inf" not in status.reasons["gate2"]
 
 
 def test_gate2_fails_when_head_pose_drifted_too_far():

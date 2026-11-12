@@ -140,7 +140,8 @@ class Calibration:
     def _leave_one_out_rms_error(self) -> float:
         n = len(self._samples)
         if n < MIN_SAMPLES_TO_FIT + 1:
-            return 0.0
+            # Not validated must never read as perfect: Gate 2 fails closed on inf.
+            return math.inf
         squared_errors = []
         for held_out in range(n):
             train = [s for i, s in enumerate(self._samples) if i != held_out]

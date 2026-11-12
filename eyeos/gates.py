@@ -107,6 +107,8 @@ class GateStateMachine:
     def _gate2(self, frame: FrameInput) -> tuple[bool, str]:
         if not self._calibration.exists:
             return False, "no calibration for this session — recalibrate"
+        if not math.isfinite(self._calibration.validation_error_px):
+            return False, "calibration not validated (too few samples) — recalibrate"
         if self._calibration.validation_error_px >= self.config.calibration_max_error_px:
             return False, (
                 f"calibration error {self._calibration.validation_error_px:.1f}px >= "
