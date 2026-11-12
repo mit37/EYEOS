@@ -67,9 +67,11 @@ run` refuses to drive the cursor at all, by design.
    is reached.
 4. On a dwelled target, hold a deliberate blink for at least 0.4 s, or press the
    confirm key. A click fires where you were looking.
-5. Press **Esc** (the kill hotkey) mid-movement. The Gate 4 light goes red, nothing
-   more is emitted, and the session ends: the terminal prints "kill switch (esc)
-   pressed: session ended".
+5. Press **Esc** (the kill hotkey) mid-movement. The session ends on the next frame:
+   the overlay window closes at once, nothing more is emitted, and the terminal
+   prints "kill switch (esc) pressed: session ended". The overlay closes too fast to
+   show a red Gate 4 light; the last line of the session log records Gate 4 failing
+   with "kill switch pressed".
 
 Expect to struggle with step 3 if the gaze is noisy. The synthetic eval suggests
 the 20 px dwell radius (`gates.dwell_jitter_px`) may be too tight for webcam noise
