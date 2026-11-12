@@ -5,13 +5,17 @@ Both real-camera input sources only differ in how they open a ``cv2.VideoCapture
 frame and converting the result to a ``FaceLandmarks`` — is identical, so it lives
 here once.
 
-``opencv-python`` and ``mediapipe`` are optional dependencies (``pip install
-eyeos[webcam]``) and are imported lazily, inside ``frames()``, specifically so that
-importing this module — and therefore ``eyeos.input_sources.webcam`` /
+OpenCV (``opencv-contrib-python``) and ``mediapipe`` are optional dependencies (``pip
+install eyeos[webcam]``) and are imported lazily, inside ``frames()``, specifically so
+that importing this module — and therefore ``eyeos.input_sources.webcam`` /
 ``eyeos.input_sources.video_file`` — never fails just because those packages aren't
-installed. Only actually *using* one of these sources requires them. That's why they
-are not exercised in this project's CI: see docs/PLAN.md's "Cloud-instance
-constraints".
+installed. Only actually *using* one of these sources requires them. CI runs these
+sources only against the fake modules in tests/fake_capture.py: see docs/PLAN.md's
+"Cloud-instance constraints".
+
+FaceMesh is MediaPipe's legacy Solutions API, which mediapipe 0.10.30 and later no
+longer ship, so the ``webcam`` extra pins ``mediapipe<0.10.30`` (wheels for Python
+3.10-3.12 only).
 """
 
 from __future__ import annotations
@@ -25,8 +29,13 @@ from eyeos.input_sources._mediapipe_common import landmarks_from_mediapipe
 from eyeos.landmarks import FaceLandmarks
 
 _MISSING_DEPS_MESSAGE = (
-    "{cls} needs opencv-python and mediapipe, which aren't installed. "
-    "Install them with: pip install 'eyeos[webcam]'"
+    "{cls} needs OpenCV and MediaPipe, which aren't installed. "
+    "Install them with: pip install 'eyeos[webcam]' (Python 3.10-3.12)"
+)
+_NO_SOLUTIONS_API_MESSAGE = (
+    "{cls} needs MediaPipe's legacy Solutions API (mediapipe<0.10.30); installed "
+    "mediapipe {version} doesn't have it. Reinstall with: pip install 'eyeos[webcam]' "
+    "(Python 3.10-3.12)"
 )
 
 
@@ -51,15 +60,22 @@ class _OpenCVMediaPipeSource(InputSource):
             import mediapipe as mp
         except ImportError as e:
             raise RuntimeError(_MISSING_DEPS_MESSAGE.format(cls=type(self).__name__)) from e
+        if not hasattr(mp, "solutions"):
+            raise RuntimeError(
+                _NO_SOLUTIONS_API_MESSAGE.format(
+                    cls=type(self).__name__, version=getattr(mp, "__version__", None) or "?"
+                )
+            )
 
         self._cv2 = cv2
-        self._cap = self._open_capture(cv2)
+        # FaceMesh first: if it fails, no capture has been opened yet.
         self._face_mesh = mp.solutions.face_mesh.FaceMesh(
             static_image_mode=False,
             max_num_faces=self.max_num_faces,
             refine_landmarks=True,  # required for the iris landmarks (468, 473)
             min_detection_confidence=self.min_detection_confidence,
         )
+        self._cap = self._open_capture(cv2)
 
     def _to_landmarks(self, result: Any) -> FaceLandmarks | None:
         faces = result.multi_face_landmarks or []
@@ -72,9 +88,9 @@ class _OpenCVMediaPipeSource(InputSource):
         )
 
     def frames(self) -> Iterator[Frame]:
-        self._open()
-        cv2 = self._cv2
         try:
+            self._open()
+            cv2 = self._cv2
             while True:
                 ok, frame_bgr = self._cap.read()
                 if not ok:

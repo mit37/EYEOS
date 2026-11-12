@@ -13,7 +13,7 @@ authors = [{ name = "Mitansh" }]
 dependencies = ["numpy>=1.24", "PyYAML>=6.0"]
 
 [project.optional-dependencies]
-webcam = ["opencv-python>=4.8", "mediapipe>=0.10"]
+webcam = ["opencv-contrib-python>=4.8", "mediapipe>=0.10,<0.10.30"]
 windows-fallback = ["pynput>=1.7"]
 dev = [
     "pytest>=7.4",

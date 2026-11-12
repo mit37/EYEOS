@@ -1,14 +1,17 @@
 """Input sources: the synthetic CSV reader (fully exercised) and the camera/video
-sources (only their guarded-missing-dependency path — this container has neither
-opencv-python nor mediapipe installed, matching the "no webcam in the cloud"
-constraint in docs/PLAN.md).
+sources. This container has neither OpenCV nor MediaPipe installed, matching the "no
+webcam in the cloud" constraint in docs/PLAN.md, so the camera/video sources are tested
+on their missing-dependency path and against the fakes in tests/fake_capture.py.
 """
 
 from __future__ import annotations
 
 import csv
+import types
+from pathlib import Path
 
 import pytest
+from packaging.requirements import Requirement
 
 from eyeos.input_sources import Frame
 from eyeos.input_sources._mediapipe_common import landmarks_from_mediapipe
@@ -17,6 +20,7 @@ from eyeos.input_sources.video_file import VideoFileInputSource
 from eyeos.input_sources.webcam import WebcamInputSource
 from eyeos.landmarks import FaceLandmarks, Point3D
 from eyeos.synthetic_format import CSV_FIELDNAMES, landmarks_to_row, row_to_frame
+from tests.fake_capture import FakeCv2, FakeMediapipe, install_fakes
 
 SAMPLE_LANDMARKS = FaceLandmarks(
     face_count=1,
@@ -139,11 +143,111 @@ def test_landmarks_from_mediapipe_indexes_the_right_points():
 
 
 def test_webcam_source_raises_clear_error_without_opencv_mediapipe():
-    with pytest.raises(RuntimeError, match="opencv-python and mediapipe"):
+    with pytest.raises(RuntimeError, match="needs OpenCV and MediaPipe"):
         next(iter(WebcamInputSource(device_index=0).frames()))
 
 
 def test_video_file_source_raises_clear_error_without_opencv_mediapipe(tmp_path):
     missing = tmp_path / "does_not_matter.mp4"
-    with pytest.raises(RuntimeError, match="opencv-python and mediapipe"):
+    with pytest.raises(RuntimeError, match="needs OpenCV and MediaPipe"):
         next(iter(VideoFileInputSource(missing).frames()))
+
+
+# ---------------------------------------------------------------------------
+# Webcam / video-file sources: MediaPipe without the Solutions API, and cleanup
+# ---------------------------------------------------------------------------
+
+
+def _video_file_source(tmp_path):
+    video = tmp_path / "clip.mp4"
+    video.touch()
+    return VideoFileInputSource(video)
+
+
+def _webcam_source(tmp_path):
+    return WebcamInputSource(device_index=0)
+
+
+CAPTURE_SOURCES = pytest.mark.parametrize(
+    "make_source", [_video_file_source, _webcam_source], ids=["video_file", "webcam"]
+)
+
+
+@CAPTURE_SOURCES
+@pytest.mark.parametrize(
+    "mediapipe, shown_version",
+    [
+        (types.ModuleType("mediapipe"), "?"),
+        (FakeMediapipe(solutions=False, version="1.2.3"), "1.2.3"),
+    ],
+    ids=["bare", "1.2.3"],
+)
+def test_source_raises_clear_error_when_mediapipe_lacks_solutions_api(
+    make_source, mediapipe, shown_version, tmp_path, monkeypatch
+):
+    fake_cv2 = FakeCv2(n_frames=3)
+    install_fakes(monkeypatch, cv2=fake_cv2, mediapipe=mediapipe)
+
+    with pytest.raises(RuntimeError, match=r"Solutions API|mediapipe<0\.10\.30") as excinfo:
+        next(iter(make_source(tmp_path).frames()))
+
+    message = str(excinfo.value)
+    assert f"installed mediapipe {shown_version} " in message
+    assert "aren't installed" not in message
+    assert all(cap.release_calls == 1 for cap in fake_cv2.captures)
+
+
+@CAPTURE_SOURCES
+def test_face_mesh_failure_leaves_no_capture_open(make_source, tmp_path, monkeypatch):
+    fake_cv2 = FakeCv2(n_frames=3)
+    fake_mp = FakeMediapipe(face_mesh_error=RuntimeError("face mesh model failed to load"))
+    install_fakes(monkeypatch, cv2=fake_cv2, mediapipe=fake_mp)
+
+    with pytest.raises(RuntimeError, match="face mesh model failed to load"):
+        next(iter(make_source(tmp_path).frames()))
+
+    assert all(cap.release_calls == 1 for cap in fake_cv2.captures)
+
+
+@CAPTURE_SOURCES
+def test_capture_open_failure_closes_face_mesh(make_source, tmp_path, monkeypatch):
+    fake_mp = FakeMediapipe()
+    install_fakes(monkeypatch, cv2=FakeCv2(opened=False), mediapipe=fake_mp)
+
+    with pytest.raises(RuntimeError, match="could not open"):
+        next(iter(make_source(tmp_path).frames()))
+
+    assert all(mesh.close_calls == 1 for mesh in fake_mp.face_meshes)
+
+
+@CAPTURE_SOURCES
+def test_full_read_releases_capture_and_closes_face_mesh_once(make_source, tmp_path, monkeypatch):
+    fake_cv2 = FakeCv2(n_frames=3)
+    fake_mp = FakeMediapipe()
+    install_fakes(monkeypatch, cv2=fake_cv2, mediapipe=fake_mp)
+
+    frames = list(make_source(tmp_path).frames())
+
+    assert len(frames) == 3
+    assert all(f.landmarks is not None for f in frames)
+    [cap] = fake_cv2.captures
+    [mesh] = fake_mp.face_meshes
+    assert cap.release_calls == 1
+    assert mesh.close_calls == 1
+    assert mesh.kwargs["refine_landmarks"] is True
+
+
+def test_webcam_extra_pins_a_mediapipe_with_the_solutions_api():
+    tomllib = pytest.importorskip("tomllib")
+    pyproject = Path(__file__).resolve().parents[1] / "pyproject.toml"
+    with open(pyproject, "rb") as f:
+        extra = tomllib.load(f)["project"]["optional-dependencies"]["webcam"]
+    requirements = {r.name: r for r in map(Requirement, extra)}
+
+    # mediapipe itself depends on opencv-contrib-python; opencv-python would share its cv2/.
+    assert "opencv-python" not in requirements
+    assert "opencv-contrib-python" in requirements
+    mediapipe = requirements["mediapipe"].specifier
+    assert mediapipe.contains("0.10.21")
+    assert not mediapipe.contains("0.10.30")
+    assert not mediapipe.contains("1.2.3")
