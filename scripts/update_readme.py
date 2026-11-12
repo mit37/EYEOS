@@ -185,11 +185,12 @@ def results_notes(m: dict[str, Any]) -> str:
     jitter = m["steady_state_jitter_filtered_px"]
     compared = "larger than" if jitter > gates.dwell_jitter_px else "within"
     held, total = m["on_target_dwell_satisfied_frames"], m["on_target_frame_count"]
+    sigma = f"σ = {NOISE_SIGMA:g} in the generator's offset units"
     if 0 < held and _dwell_rarely_holds(m):
         return (
             f"**Negative result: the dwell rarely holds on the noisy on-target gaze** ({held} of"
-            f" {total} frames). At the fixture's injected noise (σ = {NOISE_SIGMA:g} in"
-            f" iris-offset units), the filtered frame-to-frame jitter ({jitter:.1f} px) is"
+            f" {total} frames). At the fixture's injected noise ({sigma}), the filtered"
+            f" frame-to-frame jitter ({jitter:.1f} px) is"
             f" {compared} Gate 3's {gates.dwell_jitter_px:g} px dwell radius, so an intended"
             " click is unreliable. Whether real webcam noise is above or below this level is"
             " **not measured**."
@@ -197,7 +198,7 @@ def results_notes(m: dict[str, Any]) -> str:
     if held == 0:
         return (
             "**Negative result: no intended click could fire on the noisy on-target gaze.** At"
-            f" the fixture's injected noise (σ = {NOISE_SIGMA:g} in iris-offset units), the"
+            f" the fixture's injected noise ({sigma}), the"
             f" filtered frame-to-frame jitter ({jitter:.1f} px) is {compared} Gate 3's"
             f" {gates.dwell_jitter_px:g} px dwell radius. So the"
             f" {gates.dwell_time_s:g} s dwell never holds on target, and no click of any kind"
@@ -207,7 +208,7 @@ def results_notes(m: dict[str, Any]) -> str:
             " clicking is usable. That trade-off needs a real recording to settle."
         )
     return (
-        f"At the fixture's injected noise (σ = {NOISE_SIGMA:g} in iris-offset units), Gate 3's"
+        f"At the fixture's injected noise ({sigma}), Gate 3's"
         f" {gates.dwell_time_s:g} s dwell within {gates.dwell_jitter_px:g} px held on"
         f" {m['on_target_dwell_satisfied_frames']} of {m['on_target_frame_count']} noisy"
         " on-target frames."
