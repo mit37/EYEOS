@@ -17,9 +17,12 @@ class VideoFileInputSource(_OpenCVMediaPipeSource):
         path: str | Path,
         min_detection_confidence: float = 0.5,
         max_num_faces: int = 2,
+        min_tracking_confidence: float = 0.5,
     ) -> None:
         super().__init__(
-            min_detection_confidence=min_detection_confidence, max_num_faces=max_num_faces
+            min_detection_confidence=min_detection_confidence,
+            max_num_faces=max_num_faces,
+            min_tracking_confidence=min_tracking_confidence,
         )
         self.path = Path(path)
 

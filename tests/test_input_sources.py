@@ -276,3 +276,20 @@ def test_video_file_keeps_the_container_timestamps(tmp_path, monkeypatch):
     stamps = [f.timestamp_s for f in _video_file_source(tmp_path).frames()]
 
     assert stamps == pytest.approx([0.0, 0.04, 0.08, 0.12])
+
+
+@CAPTURE_SOURCES
+def test_gate1_threshold_reaches_mediapipe_detection_and_tracking(
+    make_source, tmp_path, monkeypatch
+):
+    fake_mp = FakeMediapipe()
+    install_fakes(monkeypatch, cv2=FakeCv2(n_frames=2), mediapipe=fake_mp)
+    source = make_source(tmp_path)
+    source.min_detection_confidence = source.min_tracking_confidence = 0.9
+
+    frames = list(source.frames())
+
+    [mesh] = fake_mp.face_meshes
+    assert mesh.kwargs["min_detection_confidence"] == 0.9
+    assert mesh.kwargs["min_tracking_confidence"] == 0.9
+    assert all(f.landmarks.detection_confidence <= 0.9 for f in frames)

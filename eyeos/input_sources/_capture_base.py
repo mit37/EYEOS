@@ -40,8 +40,14 @@ _NO_SOLUTIONS_API_MESSAGE = (
 
 
 class _OpenCVMediaPipeSource(InputSource):
-    def __init__(self, min_detection_confidence: float = 0.5, max_num_faces: int = 2) -> None:
+    def __init__(
+        self,
+        min_detection_confidence: float = 0.5,
+        max_num_faces: int = 2,
+        min_tracking_confidence: float = 0.5,
+    ) -> None:
         self.min_detection_confidence = min_detection_confidence
+        self.min_tracking_confidence = min_tracking_confidence
         self.max_num_faces = max_num_faces
         self._cap: Any = None
         self._face_mesh: Any = None
@@ -74,6 +80,9 @@ class _OpenCVMediaPipeSource(InputSource):
             max_num_faces=self.max_num_faces,
             refine_landmarks=True,  # required for the iris landmarks (468, 473)
             min_detection_confidence=self.min_detection_confidence,
+            # With static_image_mode=False, tracking (not detection) confidence decides
+            # every frame after the first, so Gate 1's threshold must reach both.
+            min_tracking_confidence=self.min_tracking_confidence,
         )
         self._cap = self._open_capture(cv2)
 
@@ -85,10 +94,13 @@ class _OpenCVMediaPipeSource(InputSource):
         faces = result.multi_face_landmarks or []
         if not faces:
             return None
-        # The legacy Solutions API doesn't expose a per-face confidence score;
-        # Gate 1's face_count check (not confidence) is what catches multi-face frames.
+        # The legacy Solutions API has no per-face score. Gate 1's threshold is enforced
+        # inside MediaPipe (min_detection/tracking_confidence): a face below it never
+        # comes back, so it reaches Gate 1 as face_count=0. Report the enforced floor.
         return landmarks_from_mediapipe(
-            faces[0].landmark, face_count=len(faces), detection_confidence=1.0
+            faces[0].landmark,
+            face_count=len(faces),
+            detection_confidence=min(self.min_detection_confidence, self.min_tracking_confidence),
         )
 
     def frames(self) -> Iterator[Frame]:

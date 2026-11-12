@@ -201,3 +201,19 @@ def test_cli_no_log_writes_nothing(tmp_path):
 
     assert main(["run", "--config", str(config_path), "--no-log"]) == 0
     assert not log_dir.exists()
+
+
+@pytest.mark.parametrize("source", ["webcam", "video_file"])
+def test_cli_forwards_gate1_threshold_to_live_sources(tmp_path, source):
+    from eyeos.cli import _build_input_source
+    from eyeos.config import load_config
+
+    config_path = tmp_path / "config.yaml"
+    config_path.write_text(
+        f"input:\n  source: {source}\n  video_path: {tmp_path / 'clip.mp4'}\n"
+        "gates:\n  presence_confidence_threshold: 0.9\n"
+    )
+    built = _build_input_source(load_config(config_path))
+
+    assert built.min_detection_confidence == 0.9
+    assert built.min_tracking_confidence == 0.9

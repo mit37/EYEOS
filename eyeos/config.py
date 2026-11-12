@@ -126,6 +126,8 @@ def load_config(path: str | Path | None) -> Config:
         raise ValueError("calibration.points: PRD §3 fixes a 9-point calibration")
 
     gates = GatesConfig(**gates_raw, no_click_zones=zones)
+    if not 0.0 <= gates.presence_confidence_threshold <= 1.0:
+        raise ValueError("gates.presence_confidence_threshold must be between 0 and 1")
     if gates.confirmation_mode not in CONFIRMATION_MODES:
         raise ValueError(
             f"gates.confirmation_mode must be one of {', '.join(CONFIRMATION_MODES)}, "

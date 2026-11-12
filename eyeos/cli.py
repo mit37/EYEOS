@@ -37,11 +37,21 @@ def _build_input_source(config: Config) -> InputSource:
 
         if not config.input.video_path:
             raise ValueError("input.source is 'video_file' but input.video_path is not set")
-        return VideoFileInputSource(config.input.video_path)
+        threshold = config.gates.presence_confidence_threshold
+        return VideoFileInputSource(
+            config.input.video_path,
+            min_detection_confidence=threshold,
+            min_tracking_confidence=threshold,
+        )
     if source == "webcam":
         from eyeos.input_sources.webcam import WebcamInputSource
 
-        return WebcamInputSource(device_index=config.input.device_index)
+        threshold = config.gates.presence_confidence_threshold
+        return WebcamInputSource(
+            device_index=config.input.device_index,
+            min_detection_confidence=threshold,
+            min_tracking_confidence=threshold,
+        )
     raise ValueError(f"unknown input.source: {source!r}")
 
 

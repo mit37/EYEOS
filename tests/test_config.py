@@ -51,3 +51,12 @@ def test_calibration_points_must_be_nine(tmp_path):
     p.write_text("calibration:\n  points: 8\n")
     with pytest.raises(ValueError, match="calibration.points"):
         load_config(p)
+
+
+def test_presence_confidence_threshold_must_be_a_probability(tmp_path):
+    import pytest
+
+    p = tmp_path / "c.yaml"
+    p.write_text("gates:\n  presence_confidence_threshold: 1.5\n")
+    with pytest.raises(ValueError, match="presence_confidence_threshold"):
+        load_config(p)
