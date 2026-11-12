@@ -26,7 +26,11 @@ class Point3D:
 
 @dataclass(frozen=True)
 class FaceLandmarks:
-    """One frame's worth of face geometry, already reduced to the points EyeOS needs."""
+    """One frame's worth of face geometry, already reduced to the points EyeOS needs.
+
+    x and y share one unit (the frame's height), so distances and angles mean the
+    same in both directions; see input_sources/_mediapipe_common.py.
+    """
 
     face_count: int
     detection_confidence: float

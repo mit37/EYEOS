@@ -24,6 +24,7 @@ N_FACE_MESH_LANDMARKS = 478  # 468 mesh points + 10 iris points with refine_land
 class FakeImage:
     color: str  # "bgr" straight from read(), "rgb" after cvtColor
     index: int
+    shape: tuple[int, ...] | None = None  # (height, width, channels), like a numpy image
 
 
 class FakeVideoCapture:
@@ -35,12 +36,14 @@ class FakeVideoCapture:
         opened: bool,
         fps: float,
         pos_msec: float | Callable[[int], float] | None,
+        frame_shape: tuple[int, ...] | None = None,
     ) -> None:
         self.source = source
         self.n_frames = n_frames
         self.opened = opened
         self.fps = fps
         self.pos_msec = pos_msec
+        self.frame_shape = frame_shape
         self.frames_read = 0
         self.release_calls = 0
         self.calls: list[str] = []
@@ -54,7 +57,7 @@ class FakeVideoCapture:
         if not self.opened or self.release_calls or self.frames_read >= self.n_frames:
             return False, None
         self.frames_read += 1
-        return True, FakeImage("bgr", self.frames_read - 1)
+        return True, FakeImage("bgr", self.frames_read - 1, self.frame_shape)
 
     def get(self, prop: int) -> float:
         self.calls.append("get")
@@ -86,12 +89,14 @@ class FakeCv2(types.ModuleType):
         opened: bool = True,
         fps: float = 30.0,
         pos_msec: float | Callable[[int], float] | None = None,
+        frame_shape: tuple[int, ...] | None = None,
     ) -> None:
         super().__init__("cv2")
         self.n_frames = n_frames
         self.opened = opened
         self.fps = fps
         self.pos_msec = pos_msec
+        self.frame_shape = frame_shape
         self.captures: list[FakeVideoCapture] = []
 
     def VideoCapture(self, source: object) -> FakeVideoCapture:
@@ -101,13 +106,14 @@ class FakeCv2(types.ModuleType):
             opened=self.opened,
             fps=self.fps,
             pos_msec=self.pos_msec,
+            frame_shape=self.frame_shape,
         )
         self.captures.append(cap)
         return cap
 
     def cvtColor(self, image: FakeImage, code: int) -> FakeImage:
         assert code == self.COLOR_BGR2RGB and image.color == "bgr"
-        return FakeImage("rgb", image.index)
+        return FakeImage("rgb", image.index, image.shape)
 
 
 def fake_face(x: float = 0.5, y: float = 0.5, z: float = 0.0) -> types.SimpleNamespace:

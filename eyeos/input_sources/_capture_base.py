@@ -90,7 +90,7 @@ class _OpenCVMediaPipeSource(InputSource):
         """Timestamp of the frame just read. Video files: the container's position."""
         return float(self._cap.get(self._cv2.CAP_PROP_POS_MSEC)) / 1000.0
 
-    def _to_landmarks(self, result: Any) -> FaceLandmarks | None:
+    def _to_landmarks(self, result: Any, aspect: float = 1.0) -> FaceLandmarks | None:
         faces = result.multi_face_landmarks or []
         if not faces:
             return None
@@ -101,6 +101,7 @@ class _OpenCVMediaPipeSource(InputSource):
             faces[0].landmark,
             face_count=len(faces),
             detection_confidence=min(self.min_detection_confidence, self.min_tracking_confidence),
+            aspect=aspect,
         )
 
     def frames(self) -> Iterator[Frame]:
@@ -114,7 +115,10 @@ class _OpenCVMediaPipeSource(InputSource):
                 timestamp_s = self._frame_timestamp_s()
                 frame_rgb = cv2.cvtColor(frame_bgr, cv2.COLOR_BGR2RGB)
                 result = self._face_mesh.process(frame_rgb)
-                yield Frame(timestamp_s=timestamp_s, landmarks=self._to_landmarks(result))
+                yield Frame(
+                    timestamp_s=timestamp_s,
+                    landmarks=self._to_landmarks(result, _aspect(frame_rgb)),
+                )
         finally:
             self.close()
 
@@ -125,3 +129,11 @@ class _OpenCVMediaPipeSource(InputSource):
         if self._face_mesh is not None:
             self._face_mesh.close()
             self._face_mesh = None
+
+
+def _aspect(image: Any) -> float:
+    """Width / height of an OpenCV image (an array of shape (height, width, ...))."""
+    shape = getattr(image, "shape", None)
+    if not shape or len(shape) < 2 or not shape[0]:
+        return 1.0
+    return float(shape[1]) / float(shape[0])

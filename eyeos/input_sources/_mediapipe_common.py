@@ -47,12 +47,19 @@ def landmarks_from_mediapipe(
     face_landmarks: list[_LandmarkLike],
     face_count: int,
     detection_confidence: float,
+    aspect: float = 1.0,
 ) -> FaceLandmarks:
-    """Build a FaceLandmarks from one face's worth of raw MediaPipe landmarks."""
+    """Build a FaceLandmarks from one face's worth of raw MediaPipe landmarks.
+
+    MediaPipe divides x by the frame's width and y by its height, so on a non-square
+    frame the two axes have different units, and a head roll turns into a rotation
+    plus a shear. ``aspect`` (width / height) rescales x so both axes share the
+    height's unit, which every angle and projection in features.py relies on.
+    """
 
     def pt(index: int) -> Point3D:
         lm = face_landmarks[index]
-        return Point3D(x=lm.x, y=lm.y, z=lm.z)
+        return Point3D(x=lm.x * aspect, y=lm.y, z=lm.z)
 
     return FaceLandmarks(
         face_count=face_count,

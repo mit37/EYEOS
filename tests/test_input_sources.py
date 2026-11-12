@@ -22,7 +22,7 @@ from eyeos.input_sources.video_file import VideoFileInputSource
 from eyeos.input_sources.webcam import WebcamInputSource
 from eyeos.landmarks import FaceLandmarks, Point3D
 from eyeos.synthetic_format import CSV_FIELDNAMES, landmarks_to_row, row_to_frame
-from tests.fake_capture import FakeCv2, FakeMediapipe, install_fakes
+from tests.fake_capture import FakeCv2, FakeMediapipe, fake_face, install_fakes
 
 SAMPLE_LANDMARKS = FaceLandmarks(
     face_count=1,
@@ -314,3 +314,64 @@ def _gate_input(frame):
         gaze_point_px=None,
         head_pose_deg=(0.0, 0.0, 0.0),
     )
+
+
+@CAPTURE_SOURCES
+def test_landmarks_are_rescaled_to_one_unit_on_a_wide_frame(make_source, tmp_path, monkeypatch):
+    # MediaPipe's x is a fraction of the width, y of the height. On a 1280x720 frame
+    # x must be scaled by 16/9 so a head roll stays a rotation (see features.py).
+    install_fakes(
+        monkeypatch,
+        cv2=FakeCv2(n_frames=1, frame_shape=(720, 1280, 3)),
+        mediapipe=FakeMediapipe(),
+    )
+    [frame] = list(make_source(tmp_path).frames())
+    raw = fake_face().landmark[468]
+    assert frame.landmarks.left_iris_center.x == pytest.approx(raw.x * 1280 / 720)
+    assert frame.landmarks.left_iris_center.y == pytest.approx(raw.y)
+
+
+def test_rolled_face_on_a_wide_frame_keeps_its_iris_offsets_and_true_roll():
+    import math
+    import types
+
+    from eyeos.features import extract_features
+    from eyeos.input_sources._mediapipe_common import landmarks_from_mediapipe
+    from tests.test_features import make_landmarks
+
+    # Take a face in pixel space, roll it 8 deg, then normalise it the way MediaPipe
+    # does for a 1280x720 frame (x / 1280, y / 720).
+    width, height = 1280, 720
+    face = make_landmarks(left_iris_center=Point3D(0.39, 0.41))
+    names = [n for n in face.__dataclass_fields__ if isinstance(getattr(face, n), Point3D)]
+
+    def normalised(roll_deg):
+        c, s_ = math.cos(math.radians(roll_deg)), math.sin(math.radians(roll_deg))
+        points = [None] * 478
+        indices = {
+            "left_iris_center": 468,
+            "right_iris_center": 473,
+            "left_eye_inner": 133,
+            "left_eye_outer": 33,
+            "left_eye_top": 159,
+            "left_eye_bottom": 145,
+            "right_eye_inner": 362,
+            "right_eye_outer": 263,
+            "right_eye_top": 386,
+            "right_eye_bottom": 374,
+            "nose_tip": 1,
+            "chin": 152,
+            "forehead": 10,
+            "left_face_edge": 234,
+            "right_face_edge": 454,
+        }
+        for name in names:
+            p = getattr(face, name)
+            x, y = p.x * height - 360, p.y * height - 360  # pixels, about the centre
+            px, py = c * x - s_ * y + 640, s_ * x + c * y + 360
+            points[indices[name]] = types.SimpleNamespace(x=px / width, y=py / height, z=0.0)
+        return landmarks_from_mediapipe(points, 1, 0.9, aspect=width / height)
+
+    upright, rolled = extract_features(normalised(0)), extract_features(normalised(8))
+    assert rolled.iris_vector() == pytest.approx(upright.iris_vector(), abs=1e-9)
+    assert rolled.roll_deg - upright.roll_deg == pytest.approx(8.0)
