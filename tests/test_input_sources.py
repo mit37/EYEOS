@@ -217,7 +217,9 @@ def test_capture_open_failure_closes_face_mesh(make_source, tmp_path, monkeypatc
     with pytest.raises(RuntimeError, match="could not open"):
         next(iter(make_source(tmp_path).frames()))
 
-    assert all(mesh.close_calls == 1 for mesh in fake_mp.face_meshes)
+    # FaceMesh is built before the capture is opened, so exactly one exists to close.
+    assert len(fake_mp.face_meshes) == 1
+    assert fake_mp.face_meshes[0].close_calls == 1
 
 
 @CAPTURE_SOURCES
