@@ -177,8 +177,10 @@ class Pipeline:
             )
 
         if frame.landmarks is None:
-            self._blink_hold_start_s = None
-            self._reopen_since_s = None
+            # A lost face breaks the run of closed frames (no blink-hold across it) but
+            # doesn't end a closure: only eyes open for _MIN_REOPEN_S do that, so a
+            # tracking dropout can't turn lid flutter into observed looking.
+            self._closed_run_start_s = None
             self._last_open_gaze = None
             return FrameInput(
                 timestamp_s=frame.timestamp_s,
@@ -197,10 +199,6 @@ class Pipeline:
         visible_for_gate, confirm_hold_s, eyes_open = self._resolve_blink_gesture(
             frame.timestamp_s, raw_eyes_open
         )
-        if raw_eyes_open and not eyes_open:
-            # The eyes have just reopened and may already be on another point: a key
-            # pressed now must not confirm the point held from before the blink.
-            confirm_keypress = False
 
         # Closed-eye landmarks are never mapped to the screen or fed to the filter: the
         # iris estimate under a closed lid is MediaPipe's guess. During a blink-hold the

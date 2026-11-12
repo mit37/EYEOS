@@ -268,14 +268,19 @@ class GateStateMachine:
         )
 
         mode = self.config.confirmation_mode
-        keypress = frame.confirm_keypress if mode in ("either", "keypress") else False
+        key_down = frame.confirm_keypress if mode in ("either", "keypress") else False
         hold_s = frame.confirm_hold_s if mode in ("either", "blink_hold") else None
-        ignored = (frame.confirm_keypress and not keypress) or (
+        ignored = (frame.confirm_keypress and not key_down) or (
             frame.confirm_hold_s is not None and hold_s is None
         )
 
+        # A key confirms only what the eyes are observed on now: not a point held through
+        # a blink or a reopening, where the eyes may already be somewhere else. While it
+        # is down it still counts as the active gesture, so holding it through a blink
+        # is not a release.
+        keypress = key_down and not frame.gaze_held
         confirmed = keypress or (hold_s is not None and hold_s >= self.config.confirmation_hold_s)
-        confirmation_active = keypress or hold_s is not None
+        confirmation_active = key_down or hold_s is not None
 
         click_fired = False
         if move_allowed and gate3 and confirmed and not self._awaiting_confirmation_release:

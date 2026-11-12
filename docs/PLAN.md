@@ -71,7 +71,7 @@ Restated from `PRD.md` §8, per `STANDARDS.md` §6 step 1.
   - Camera errors during `--calibrate` were swallowed.
 
   Each fix came with a test that failed before it, and each was re-reviewed.
-- **Review rounds 3-7 (2026-11-12).** The first fix for the half-closed-lid bug was
+- **Review rounds 3-8 (2026-11-12).** The first fix for the half-closed-lid bug was
   itself wrong, and is recorded here as a negative result.
   - That fix held the gaze while the lids were under 80% of their usual opening.
     Looking down narrows the lids, so a confirm key pressed just after looking away
@@ -96,6 +96,11 @@ Restated from `PRD.md` §8, per `STANDARDS.md` §6 step 1.
     the gaze-moved check was replaced by ignoring the confirm key during the
     debounce. One fail-closed gap is left and documented: very frequent dropouts
     right after a blink can keep Gate 1 failing.
+  - Round 8 found that muting the key during the reopening counted as a release (a
+    key held through a blink clicked twice), that a key pressed mid-blink clicked the
+    point held from before it, and that a lost-face frame reset closure tracking. A
+    key now confirms only on observed open-eye frames while its up/down state still
+    drives the release latch, and a lost face no longer ends a closure.
   - The blink path is the part of EyeOS that most needs real recordings: each round
     found a new noise pattern, and none of the thresholds is tuned on real data.
   - Eye openness is now judged in each eye's own frame, so it holds at any head

@@ -982,3 +982,68 @@ def test_keypress_mode_tolerates_one_frame_iris_dropouts():
         external_signals=lambda t: (False, t >= 1.85),
     ).run()
     assert result.total_clicks == 1
+
+
+def _run_with_key(frames, key_down, mode="either"):
+    from dataclasses import replace
+
+    base = Config()
+    config = replace(base, gates=replace(base.gates, confirmation_mode=mode))
+    output = DryRunOutputAdapter(echo=None)
+    result = Pipeline(
+        config,
+        ListInputSource(frames),
+        output,
+        calibration=_fitted_calibration(),
+        external_signals=lambda t: (False, key_down(t)),
+    ).run()
+    return result
+
+
+@pytest.mark.parametrize("mode", ["either", "keypress"])
+@pytest.mark.parametrize("fps", [15, 30, 60])
+def test_a_confirm_key_held_through_a_blink_clicks_once(mode, fps):
+    frames = _seq(
+        [
+            (1.0, lambda: _gaze_landmarks(960, 540)),
+            (0.2, lambda: _gaze_landmarks(960, 540, closed=True)),
+            (1.5, lambda: _gaze_landmarks(960, 540)),
+        ],
+        fps=fps,
+    )
+    result = _run_with_key(frames, lambda t: t >= 0.9, mode)
+    assert result.total_clicks == 1
+
+
+@pytest.mark.parametrize("mode", ["either", "keypress"])
+@pytest.mark.parametrize("fps", [30, 60])
+def test_a_key_pressed_on_a_closed_frame_never_clicks_the_point_held_from_before(mode, fps):
+    # Dwell on A, blink while the gaze moves to B, key down from the last closed frame.
+    frames = _seq(
+        [
+            (1.0, lambda: _gaze_landmarks(960, 540)),
+            (2 / 30, lambda: _gaze_landmarks(1060, 540, closed=True)),
+            (0.5, lambda: _gaze_landmarks(1060, 540)),
+        ],
+        fps=fps,
+    )
+    reopened = next(
+        f.timestamp_s for f in frames if f.timestamp_s > 1.0 and f.landmarks.both_irises_visible
+    )
+    result = _run_with_key(frames, lambda t: reopened - 1 / fps - 1e-9 <= t <= reopened + 0.1, mode)
+    assert result.total_clicks == 0
+
+
+@pytest.mark.parametrize("fps, unit", [(15, "co"), (30, "coo"), (60, "ccoooo")])
+def test_a_lost_face_frame_does_not_turn_lid_flutter_into_looking(fps, unit):
+    hold = "c" * (int(0.4 * fps) + 2)
+    flutter = unit * (fps // len(unit))
+    frames = _flutter(hold + flutter, fps=fps)
+    t = frames[-1].timestamp_s
+    frames.append(Frame(t + 1 / fps, None))
+    tail = _flutter(unit * (2 * fps // len(unit)) + hold, fps=fps)[round(fps) :]
+    offset = t + 2 / fps - tail[0].timestamp_s
+    frames += [Frame(f.timestamp_s + offset, f.landmarks) for f in tail]
+
+    result, _output = _run_frames(frames)
+    assert result.total_clicks == 1
