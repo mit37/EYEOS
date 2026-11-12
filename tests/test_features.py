@@ -218,3 +218,27 @@ def test_head_pose_delta_deg_is_max_abs_per_axis():
 def test_head_pose_delta_deg_zero_for_identical_poses():
     a = (3.0, -2.0, 1.0)
     assert head_pose_delta_deg(a, a) == 0.0
+
+
+@pytest.mark.parametrize("roll", [0, 30, 60, 75, 85, 88, 90, 95, 135, 180, -60])
+def test_eye_openness_is_judged_the_same_at_any_head_roll(roll):
+    import math
+
+    def rotated(p, angle, about=(0.5, 0.4)):
+        c, s = math.cos(angle), math.sin(angle)
+        x, y = p.x - about[0], p.y - about[1]
+        return Point3D(about[0] + c * x - s * y, about[1] + s * x + c * y)
+
+    def rolled(lm):
+        names = [n for n in lm.__dataclass_fields__ if isinstance(getattr(lm, n), Point3D)]
+        return make_landmarks(**{n: rotated(getattr(lm, n), math.radians(roll)) for n in names})
+
+    # Closed lids whose two points are not quite one above the other, as real ones aren't.
+    closed = make_landmarks(
+        left_eye_top=Point3D(0.3816, 0.400),
+        left_eye_bottom=Point3D(0.3800, 0.401),
+        right_eye_top=Point3D(0.6216, 0.400),
+        right_eye_bottom=Point3D(0.6200, 0.401),
+    )
+    assert rolled(make_landmarks()).both_irises_visible is True
+    assert rolled(closed).both_irises_visible is False

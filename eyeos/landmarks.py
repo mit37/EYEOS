@@ -6,14 +6,16 @@ downstream (``features.py``, calibration, gates) only ever sees this type, so it
 needs to know MediaPipe's landmark index numbering or care whether the frame came from
 a real camera or a fixture file.
 
-Points are normalized image coordinates: x, y in [0, 1] with (0, 0) at the top-left of
-the frame, matching MediaPipe's convention. z is relative depth (MediaPipe units,
-smaller = closer to the camera) and is currently unused by ``features.py`` but kept for
-future work.
+Points are image coordinates in units of the frame's height, with (0, 0) at the
+top-left: y runs from 0 to 1 and x from 0 to width / height. MediaPipe reports x as a
+fraction of the width, so the MediaPipe sources rescale it; synthetic CSVs are taken
+to be in this unit already. z is relative depth (MediaPipe units, smaller = closer to
+the camera) and is currently unused by ``features.py`` but kept for future work.
 """
 
 from __future__ import annotations
 
+import math
 from dataclasses import dataclass
 
 
@@ -64,14 +66,28 @@ class FaceLandmarks:
         own width. Below that, a blink or a near-closed eye is producing noise, not a
         gaze signal.
         """
-        left_gap = abs(self.left_eye_top.y - self.left_eye_bottom.y)
-        left_width = abs(self.left_eye_outer.x - self.left_eye_inner.x)
-        right_gap = abs(self.right_eye_top.y - self.right_eye_bottom.y)
-        right_width = abs(self.right_eye_outer.x - self.right_eye_inner.x)
         min_open_ratio = 0.05
-        left_open = left_width > 0 and (left_gap / left_width) >= min_open_ratio
-        right_open = right_width > 0 and (right_gap / right_width) >= min_open_ratio
-        return left_open and right_open
+        left = _open_ratio(
+            self.left_eye_top, self.left_eye_bottom, self.left_eye_outer, self.left_eye_inner
+        )
+        right = _open_ratio(
+            self.right_eye_top, self.right_eye_bottom, self.right_eye_inner, self.right_eye_outer
+        )
+        return left >= min_open_ratio and right >= min_open_ratio
+
+
+def _open_ratio(top: Point3D, bottom: Point3D, corner_a: Point3D, corner_b: Point3D) -> float:
+    """The lid gap across the eye's corner line, divided by the eye's width along it.
+
+    Measured in the eye's own frame, so it means the same at any head roll: a plain
+    y gap over an x width only works for an upright face.
+    """
+    axis_x, axis_y = corner_b.x - corner_a.x, corner_b.y - corner_a.y
+    width = math.hypot(axis_x, axis_y)
+    if width <= 0:
+        return 0.0
+    gap_x, gap_y = top.x - bottom.x, top.y - bottom.y
+    return abs(gap_x * axis_y - gap_y * axis_x) / (width * width)
 
 
 # The 15 named points, in the same order as FaceLandmarks' constructor fields (after
