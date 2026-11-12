@@ -58,8 +58,21 @@ Restated from `PRD.md` §8, per `STANDARDS.md` §6 step 1.
   - blink-hold clicks could not fire;
   - the README's jitter "negative result" was an eval bug.
 
-  They were fixed in individual commits. Owner-only items (tag, repo description and
-  topics, branch protection) and hardware verification are still open.
+  They were fixed in individual commits.
+- **Review of the hardening (2026-11-12).** A second multi-agent review, of the
+  hardening diff itself, found more real bugs, each with a repro. Among them:
+  - Gate 3's dwell kept building while the eyes were closed, so a glance followed by
+    a closure clicked.
+  - The blink-hold gaze could come from frames the gates had rejected.
+  - Lids partway through a blink threw the cursor off target.
+  - Camera stalls and NaN timestamps were not handled.
+  - Closing the calibration window counted as a finished calibration.
+  - Closing the overlay crashed the cleanup.
+  - Camera errors during `--calibrate` were swallowed.
+
+  Each fix came with a test that failed before it, and each was re-reviewed.
+- Still open: the owner-only items (tag, repo description and topics, branch
+  protection) and hardware verification.
 
 ## Cloud-instance constraints (PRD §7, STANDARDS §6.4)
 
@@ -86,8 +99,12 @@ is therefore behind an interface and tested only against a fake:
   tkinter (`tests/fake_tk.py`), and both no-display modes raise a clear `RuntimeError`.
   The first push of `claude/new-session-cawn9l` showed why both modes matter: the guard
   only handled `ImportError`, the only mode this container produces, and GitHub's
-  runners (tkinter installed, no `$DISPLAY`) hit the unguarded `TclError`. Neither
-  module has been shown on a real screen.
+  runners (tkinter installed, no `$DISPLAY`) hit the unguarded `TclError`.
+  - During the review, both windows also ran on real Tk 8.6 under Xvfb, a virtual X
+    display, from a separate Python 3.12 environment. Those were ad-hoc repro scripts:
+    closing the calibration window, closing the overlay, and a camera that fails
+    before or during calibration.
+  - That is not part of CI, and neither window has been shown on a physical screen.
 - **Eval.** The README numbers come from a generated synthetic landmark sequence
   (`eval/fixtures/`, made by `eval/generate_synthetic.py`). Real-session numbers are
   marked "not measured", pending recordings, and so is the PRD's 5-minute reading
