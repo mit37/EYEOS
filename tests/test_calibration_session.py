@@ -82,7 +82,7 @@ def test_collect_dot_features_skips_settle_frames_and_unusable_frames():
 
     assert features is not None
     assert features.left_iris_x == pytest.approx(0.2)
-    assert features.left_iris_y == pytest.approx(-0.1)
+    assert features.left_iris_y == pytest.approx(-0.05)  # offset_y in eye half-widths
 
 
 def test_collect_dot_features_gives_up_when_too_few_usable_frames():

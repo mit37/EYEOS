@@ -48,7 +48,7 @@ FIELDNAMES = [*CSV_FIELDNAMES, "target_x", "target_y", "segment", "away_mode"]
 # the iris offset (within each eye box) and face_count/detection_confidence vary.
 _LEFT_EYE_CENTER = (0.38, 0.40)
 _RIGHT_EYE_CENTER = (0.62, 0.40)
-_HALF_W = 0.04  # eye half-width; the lids sit 0.02 above and below the corner line
+_HALF_W, _HALF_H = 0.04, 0.02  # eye half-width; lids 0.02 above and below the corners
 
 
 def make_landmarks(
@@ -58,18 +58,21 @@ def make_landmarks(
     detection_confidence: float = 0.9,
     nose_x: float = 0.50,
 ) -> FaceLandmarks:
-    """A frontal face with both irises offset by (offset_x, offset_y) — the same
-    offset units features.py's extract_features() reads back out (roughly -1..1 =
-    fully toward one eye corner)."""
+    """A frontal face with both irises offset by (offset_x, offset_y), each roughly
+    -1..1 (fully toward one corner, or one lid). extract_features() reads offset_x
+    back unchanged and offset_y as half of it (it measures in eye half-widths); the
+    calibration absorbs that scale."""
     return FaceLandmarks(
         face_count=face_count,
         detection_confidence=detection_confidence,
-        # Both offsets are in units of the eye's half-width, as features.py measures them.
+        # Vertical travel stays inside the lids (offset_y * half-height), so the iris is
+        # never drawn outside the eye opening. features.py measures both offsets in
+        # half-widths, so it reads offset_y back as offset_y * _HALF_H / _HALF_W.
         left_iris_center=Point3D(
-            _LEFT_EYE_CENTER[0] + offset_x * _HALF_W, _LEFT_EYE_CENTER[1] + offset_y * _HALF_W
+            _LEFT_EYE_CENTER[0] + offset_x * _HALF_W, _LEFT_EYE_CENTER[1] + offset_y * _HALF_H
         ),
         right_iris_center=Point3D(
-            _RIGHT_EYE_CENTER[0] + offset_x * _HALF_W, _RIGHT_EYE_CENTER[1] + offset_y * _HALF_W
+            _RIGHT_EYE_CENTER[0] + offset_x * _HALF_W, _RIGHT_EYE_CENTER[1] + offset_y * _HALF_H
         ),
         left_eye_inner=Point3D(0.42, 0.40),
         left_eye_outer=Point3D(0.34, 0.40),

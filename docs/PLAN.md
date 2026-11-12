@@ -71,6 +71,19 @@ Restated from `PRD.md` §8, per `STANDARDS.md` §6 step 1.
   - Camera errors during `--calibrate` were swallowed.
 
   Each fix came with a test that failed before it, and each was re-reviewed.
+- **Rounds 3 and 4 of review (2026-11-12).** The first fix for the half-closed-lid
+  bug was itself wrong, and is recorded here as a negative result.
+  - That fix held the gaze while the lids were under 80% of their usual opening.
+    Looking down narrows the lids, so a confirm key pressed just after looking away
+    clicked the target the gaze had left. Lid flutter also kept the hold alive
+    without limit.
+  - It was replaced by the root-cause fix: iris offsets and roll are now measured
+    from the eye corners, in one unit on both axes, so lid movement can't move the
+    gaze. A click now uses the dwell up, and a confirm-length closure ends it.
+  - Further fixes in these rounds: MediaPipe's per-axis normalisation broke roll on
+    16:9 frames; the iris axes flipped at 90 deg of roll; Ctrl+C during calibration
+    was misreported; bad YAML gave a traceback; and README config values could go
+    stale.
 - Still open: the owner-only items (tag, repo description and topics, branch
   protection) and hardware verification.
 
