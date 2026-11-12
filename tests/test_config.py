@@ -77,3 +77,27 @@ def test_unknown_config_keys_get_a_readable_error(tmp_path, yaml_text, key):
     p.write_text(yaml_text)
     with pytest.raises(ValueError, match=key.replace(".", r"\.")):
         load_config(p)
+
+
+def test_a_misspelled_no_click_zone_key_is_named(tmp_path):
+    cfg = tmp_path / "c.yaml"
+    cfg.write_text("gates:\n  no_click_zones:\n    - {x_min: 0, y_min: 0, x_max: 10, ymax: 10}\n")
+    with pytest.raises(ValueError, match=r"gates\.no_click_zones\[0\]\.ymax"):
+        load_config(cfg)
+
+
+@pytest.mark.parametrize(
+    "text, message",
+    [
+        ("output: esc\n", "output must be a mapping"),
+        ("gates: 5\n", "gates must be a mapping"),
+        ("- a\n- b\n", "config must be a mapping"),
+        ("gates:\n  no_click_zones: {x_min: 0}\n", "no_click_zones must be a list"),
+        ("gates:\n  no_click_zones:\n    - 7\n", r"no_click_zones\[0\] must be a mapping"),
+    ],
+)
+def test_a_section_that_is_not_a_mapping_is_reported(tmp_path, text, message):
+    cfg = tmp_path / "c.yaml"
+    cfg.write_text(text)
+    with pytest.raises(ValueError, match=message):
+        load_config(cfg)

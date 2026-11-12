@@ -93,7 +93,9 @@ class Config:
     logging: LoggingConfig = field(default_factory=LoggingConfig)
 
 
-def _check_keys(section: str, data: dict[str, Any], cls: type) -> None:
+def _check_keys(section: str, data: Any, cls: type) -> None:
+    if not isinstance(data, dict):
+        raise ValueError(f"{section} must be a mapping of keys, got {type(data).__name__}")
     known = {f.name for f in fields(cls)}
     unknown = sorted(set(data) - known)
     if unknown:
@@ -114,15 +116,20 @@ def load_config(path: str | Path | None) -> Config:
 
     ``path=None`` returns the all-defaults Config (useful for tests).
     """
-    raw: dict[str, Any] = {}
+    raw: Any = {}
     if path is not None:
         text = Path(path).read_text()
         raw = yaml.safe_load(text) or {}
 
     _check_keys("config", raw, Config)
-    gates_raw = dict(raw.get("gates") or {})
+    gates_raw = raw.get("gates") or {}
     _check_keys("gates", gates_raw, GatesConfig)
+    gates_raw = dict(gates_raw)
     zones_raw = gates_raw.pop("no_click_zones", []) or []
+    if not isinstance(zones_raw, list):
+        raise ValueError("gates.no_click_zones must be a list of zones")
+    for i, zone in enumerate(zones_raw):
+        _check_keys(f"gates.no_click_zones[{i}]", zone, NoClickZone)
     zones = tuple(NoClickZone(**z) for z in zones_raw)
 
     output = _dc(OutputConfig, raw.get("output"), "output")
