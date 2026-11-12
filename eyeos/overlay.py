@@ -4,6 +4,10 @@ has — ``tkinter`` itself may or may not be installed (it isn't in this project
 build container; it is, but with no ``$DISPLAY``, on GitHub's own runners). Both failure
 modes raise a clear RuntimeError; the drawing logic is tested against a fake tkinter
 (tests/fake_tk.py) but has never been shown on a real screen here; see docs/PLAN.md.
+
+Closing the window (its close button, Alt+F4) only hides the lights. The session keeps
+running, and the kill hotkey (or the end of the input) still ends it; the session log
+still records every gate decision.
 """
 
 from __future__ import annotations
@@ -36,6 +40,10 @@ class GateOverlay:
                 "$DISPLAY / desktop session here). Run it on a machine with a "
                 "desktop session."
             ) from e
+        self._closed = False
+        # Tk's default close handler destroys the window, and the next update() would
+        # then raise TclError and end the session. Stop drawing instead.
+        self.root.protocol("WM_DELETE_WINDOW", self.close)
         self.root.title("EyeOS gates")
         self.root.attributes("-topmost", True)
         self.root.resizable(False, False)
@@ -55,6 +63,9 @@ class GateOverlay:
             self._reason_labels.append(reason)
 
     def update(self, status: GateStatus) -> None:
+        """Redraw the lights. Does nothing once the window has been closed."""
+        if self._closed:
+            return
         passes = (
             status.gate1_presence,
             status.gate2_calibration,
@@ -76,4 +87,11 @@ class GateOverlay:
         self.root.update()
 
     def close(self) -> None:
-        self.root.destroy()
+        """Destroy the window once. Safe to call again, or after the user closed it."""
+        if self._closed:
+            return
+        self._closed = True
+        try:
+            self.root.destroy()
+        except self._tk.TclError:
+            pass  # already destroyed

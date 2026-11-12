@@ -49,7 +49,8 @@ eyeos run --config config.yaml --calibrate --overlay
 2. The terminal prints the calibration's validation error. Gate 2 refuses to move the
    cursor if it is 60 px or more (`gates.calibration_max_error_px`).
 3. The session starts with the gate-lights overlay. Every frame's gate decisions go
-   to `logs/session-<UTC time>.jsonl`.
+   to `logs/session-<UTC time>.jsonl`. Closing the overlay window only hides the
+   lights: the session keeps running until you press **Esc**.
 
 If no keyboard listener can start (pynput missing, or no input permission), `eyeos
 run` refuses to drive the cursor at all, by design.

@@ -3,6 +3,12 @@
 Install with ``monkeypatch.setitem(sys.modules, "tkinter", make_fake_tk())``. Widgets
 record what was drawn; ``Tk.fire(sequence)`` simulates a key binding firing, and
 ``Tk.close_window()`` the window manager's close button (Alt+F4, the title-bar X).
+``Tk.on_mainloop`` and ``Tk.on_update`` script what the user does while Tk is
+processing events.
+
+Like real Tk, a destroyed window stays destroyed: a second ``destroy()``, and any call
+on it or on one of its widgets, raises TclError. Events (``fire``, ``close_window``)
+sent after that are dropped, as no window is left to receive them.
 """
 
 from __future__ import annotations
@@ -19,11 +25,26 @@ class _Widget:
     def __init__(self, master: Any = None, **kwargs: Any) -> None:
         self.master = master
         self.options = dict(kwargs)
+        if master is not None:
+            master._check_alive(type(self).__name__.lower())
+
+    def _root(self) -> Any:
+        widget: Any = self
+        while widget.master is not None:
+            widget = widget.master
+        return widget
+
+    def _check_alive(self, command: str) -> None:
+        if getattr(self._root(), "destroyed", False):
+            if isinstance(self, Tk):
+                raise TclError(f'can\'t invoke "{command}" command: application has been destroyed')
+            raise TclError(f'invalid command name ".!{type(self).__name__.lower()}"')
 
     def pack(self, **_kwargs: Any) -> None:
-        return None
+        self._check_alive("pack")
 
     def config(self, **kwargs: Any) -> None:
+        self._check_alive("configure")
         self.options.update(kwargs)
 
     configure = config
@@ -41,37 +62,48 @@ class Tk(_Widget):
         self.protocols: dict[str, Any] = {}
         self.attrs: dict[str, Any] = {}
         self.destroyed = False
+        self.destroy_calls = 0
         self.updates = 0
         self.mainloop_calls = 0
         self.on_mainloop: Any = None
+        self.on_update: Any = None  # called inside update(), as Tk handles events there
 
     def winfo_screenwidth(self) -> int:
+        self._check_alive("winfo")
         return self.screen_size[0]
 
     def winfo_screenheight(self) -> int:
+        self._check_alive("winfo")
         return self.screen_size[1]
 
     def title(self, text: str) -> None:
+        self._check_alive("wm")
         self.options["title"] = text
 
     def attributes(self, name: str, value: Any) -> None:
+        self._check_alive("wm")
         self.attrs[name] = value
 
     def resizable(self, *_args: Any) -> None:
-        return None
+        self._check_alive("wm")
 
     def bind(self, sequence: str, handler: Any) -> None:
+        self._check_alive("bind")
         self.bindings[sequence] = handler
 
     def fire(self, sequence: str) -> None:
-        self.bindings[sequence](None)
+        if not self.destroyed:
+            self.bindings[sequence](None)
 
     def protocol(self, name: str, func: Any = None) -> None:
+        self._check_alive("wm")
         self.protocols[name] = func
 
     def close_window(self) -> None:
         """The user closes the window. Like real Tk, with no WM_DELETE_WINDOW handler
         registered the window is simply destroyed."""
+        if self.destroyed:
+            return
         handler = self.protocols.get("WM_DELETE_WINDOW")
         if handler is None:
             self.destroy()
@@ -79,10 +111,13 @@ class Tk(_Widget):
             handler()
 
     def update(self) -> None:
+        self._check_alive("update")
         self.updates += 1
+        if self.on_update is not None:
+            self.on_update(self)
 
     def update_idletasks(self) -> None:
-        return None
+        self._check_alive("update")
 
     def mainloop(self) -> None:
         self.mainloop_calls += 1
@@ -90,6 +125,8 @@ class Tk(_Widget):
             self.on_mainloop(self)
 
     def destroy(self) -> None:
+        self._check_alive("destroy")
+        self.destroy_calls += 1
         self.destroyed = True
 
 
@@ -108,6 +145,7 @@ class Canvas(_Widget):
         self._next_id = 1
 
     def _add(self, kind: str, coords: tuple[float, ...], **kwargs: Any) -> int:
+        self._check_alive(f"create {kind}")
         item_id = self._next_id
         self._next_id += 1
         self.items[item_id] = {"kind": kind, "coords": coords, **kwargs}
@@ -120,9 +158,11 @@ class Canvas(_Widget):
         return self._add("text", coords, **kwargs)
 
     def itemconfig(self, item_id: int, **kwargs: Any) -> None:
+        self._check_alive("itemconfigure")
         self.items[item_id].update(kwargs)
 
     def delete(self, what: str) -> None:
+        self._check_alive("delete")
         if what == "all":
             self.items.clear()
 

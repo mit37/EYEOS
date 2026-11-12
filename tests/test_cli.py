@@ -310,3 +310,121 @@ def test_two_runs_in_the_same_second_keep_both_session_logs(tmp_path, monkeypatc
         "session-20261112T140000Z.jsonl",
     ]
     assert [len(p.read_text().splitlines()) for p in logs] == [1, 3]
+
+
+# ---------------------------------------------------------------------------
+# Closing the overlay window, and cleanup when a close() fails
+# ---------------------------------------------------------------------------
+
+
+def _write_n_frames_config(tmp_path, n_frames, backend="pynput"):
+    csv_path = tmp_path / "session.csv"
+    with open(csv_path, "w", newline="") as f:
+        writer = csv.DictWriter(f, fieldnames=CSV_FIELDNAMES)
+        writer.writeheader()
+        for i in range(n_frames):
+            writer.writerow(landmarks_to_row(i / 30, make_landmarks()))
+    config_path = tmp_path / "config.yaml"
+    config_path.write_text(
+        f"input:\n  source: synthetic\n  synthetic_path: {csv_path}\n"
+        f"output:\n  backend: {backend}\n"
+    )
+    return config_path
+
+
+def test_closing_the_overlay_mid_run_keeps_the_session_and_closes_everything(
+    tmp_path, monkeypatch, capsys
+):
+    import sys
+
+    import eyeos.cli as cli
+    from eyeos.hotkeys import FakeKeySource, KeySignals
+    from eyeos.logging_utils import SessionLogger
+    from eyeos.overlay import GateOverlay
+    from tests.fake_tk import make_fake_tk
+
+    monkeypatch.setitem(sys.modules, "tkinter", make_fake_tk())
+    keyboard = FakeKeySource()
+    output = _RecordingRealCursor()
+    overlays, loggers = [], []
+
+    class UserClosesTheOverlay(GateOverlay):
+        def __init__(self):
+            super().__init__()
+            self.frames_seen = 0
+            # The user closes the window while Tk is drawing frame 2.
+            self.root.on_update = lambda root: root.close_window() if root.updates == 2 else None
+            overlays.append(self)
+
+        def update(self, status):
+            self.frames_seen += 1
+            if self.frames_seen == 5:
+                keyboard.press("esc")  # then ends the session with the kill hotkey
+            super().update(status)
+
+    class SpyLogger(SessionLogger):
+        def __init__(self, path):
+            super().__init__(path)
+            loggers.append(self)
+
+    monkeypatch.setattr(cli, "GateOverlay", UserClosesTheOverlay)
+    monkeypatch.setattr(cli, "SessionLogger", SpyLogger)
+    monkeypatch.setattr(cli, "_build_output", lambda config: output)
+    monkeypatch.setattr(cli, "_build_key_signals", lambda config: KeySignals("esc", keyboard))
+    config_path = _write_n_frames_config(tmp_path, 10)
+
+    exit_code = main(["run", "--config", str(config_path), "--overlay"])
+
+    out = capsys.readouterr().out
+    assert exit_code == 0
+    assert "processed 6 frames" in out  # frames kept coming after the window closed
+    assert "kill switch (esc) pressed: session ended" in out
+    (overlay,) = overlays
+    assert overlay.root.destroy_calls == 1
+    assert overlay.root.updates == 2  # nothing drawn after the close
+    assert output.closed
+    assert loggers[0]._fh.closed
+    assert not keyboard.running
+
+
+@pytest.mark.parametrize("failing", ["input", "overlay", "output", "logger", "keys"])
+def test_every_resource_is_closed_even_if_one_close_raises(tmp_path, monkeypatch, failing):
+    import sys
+
+    import eyeos.cli as cli
+    from eyeos.hotkeys import FakeKeySource, KeySignals
+    from eyeos.logging_utils import SessionLogger
+    from eyeos.overlay import GateOverlay
+    from tests.fake_tk import make_fake_tk
+
+    monkeypatch.setitem(sys.modules, "tkinter", make_fake_tk())
+    closed = []
+
+    def recording(name, resource):
+        original = resource.close
+
+        def close():
+            closed.append(name)
+            original()
+            if name == failing:
+                raise RuntimeError(f"{name} close failed")
+
+        resource.close = close
+        return resource
+
+    build_input = cli._build_input_source
+    monkeypatch.setattr(cli, "_build_input_source", lambda c: recording("input", build_input(c)))
+    monkeypatch.setattr(cli, "GateOverlay", lambda: recording("overlay", GateOverlay()))
+    monkeypatch.setattr(cli, "_build_output", lambda c: recording("output", _RecordingRealCursor()))
+    monkeypatch.setattr(cli, "SessionLogger", lambda p: recording("logger", SessionLogger(p)))
+    keyboard = FakeKeySource()
+    monkeypatch.setattr(
+        cli, "_build_key_signals", lambda c: recording("keys", KeySignals("esc", keyboard))
+    )
+    config_path = _write_n_frames_config(tmp_path, 3)
+
+    with pytest.raises(RuntimeError, match=f"{failing} close failed"):
+        main(["run", "--config", str(config_path), "--overlay"])
+
+    assert set(closed) == {"input", "overlay", "output", "logger", "keys"}
+    assert not keyboard.running

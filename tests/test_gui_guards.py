@@ -71,6 +71,46 @@ def test_overlay_close_destroys_the_window(fake_tk):
     assert overlay.root.destroyed
 
 
+def test_overlay_closed_by_the_user_stops_drawing_and_closes_cleanly(fake_tk):
+    overlay = GateOverlay()
+    overlay.update(_status(True, True, True, True))
+
+    overlay.root.close_window()  # the title-bar X / Alt+F4
+    overlay.update(_status(False, False, False, False))  # the session carries on
+    overlay.close()  # cli.py still closes it at the end
+
+    assert overlay.root.destroyed
+    assert overlay.root.destroy_calls == 1
+    assert overlay.root.updates == 1
+
+
+def test_overlay_close_is_safe_to_repeat(fake_tk):
+    overlay = GateOverlay()
+    overlay.close()
+    overlay.close()
+    assert overlay.root.destroy_calls == 1
+
+
+def test_overlay_close_swallows_tcl_errors(fake_tk):
+    overlay = GateOverlay()
+    overlay.root.destroy()  # the window is already gone, by a path the overlay never saw
+    overlay.close()
+
+
+def test_fake_tk_is_as_strict_as_real_tk_after_destroy(fake_tk):
+    root = fake_tk.Tk()
+    canvas = fake_tk.Canvas(root)
+    root.destroy()
+    for call in (
+        root.destroy,
+        root.update,
+        lambda: canvas.itemconfig(1, fill="red"),
+        lambda: fake_tk.Label(root),
+    ):
+        with pytest.raises(TclError):
+            call()
+
+
 def test_calibration_ui_captures_all_nine_dots_in_order(fake_tk):
     captured = []
     ui = CalibrationUI(1920, 1080, capture_sample=lambda pt: captured.append(pt) or True)

@@ -9,6 +9,7 @@ session then runs on; ``--overlay`` shows the four gate lights. Both need a disp
 from __future__ import annotations
 
 import argparse
+import contextlib
 import sys
 from datetime import datetime, timezone
 from pathlib import Path
@@ -144,13 +145,14 @@ def _run(args: argparse.Namespace) -> int:
             )
             return 2
 
-    log_path = _session_log_path(args, config)
-    input_source: InputSource | None = None
-    output: OutputAdapter | None = None
-    logger: SessionLogger | None = None
-    overlay: GateOverlay | None = None
-    try:
+    # Every resource opened below is closed on the way out, in reverse order, even if
+    # another one's close() raises. The kill switch was opened first, so it stops last.
+    with contextlib.ExitStack() as cleanup:
+        if keys is not None:
+            cleanup.callback(keys.close)
+        log_path = _session_log_path(args, config)
         input_source = _build_input_source(config)
+        cleanup.callback(input_source.close)
         frames = iter(input_source.frames())
         calibration = None
         if args.calibrate:
@@ -159,10 +161,16 @@ def _run(args: argparse.Namespace) -> int:
                 print("eyeos: calibration cancelled", file=sys.stderr)
                 return 1
             print(f"calibration validation error: {calibration.validation_error_px:.1f} px")
+        overlay: GateOverlay | None = None
         if args.overlay:
             overlay = GateOverlay()
+            cleanup.callback(overlay.close)
         output = _build_output(config)
-        logger = SessionLogger(log_path) if log_path is not None else None
+        cleanup.callback(output.close)
+        logger: SessionLogger | None = None
+        if log_path is not None:
+            logger = SessionLogger(log_path)
+            cleanup.callback(logger.close)
         pipeline = Pipeline(
             config,
             input_source,
@@ -173,17 +181,6 @@ def _run(args: argparse.Namespace) -> int:
             on_status=overlay.update if overlay is not None else None,
         )
         result = pipeline.run(max_frames=args.max_frames, frames=frames)
-    finally:
-        if input_source is not None:
-            input_source.close()
-        if overlay is not None:
-            overlay.close()
-        if output is not None:
-            output.close()
-        if logger is not None:
-            logger.close()
-        if keys is not None:
-            keys.close()
 
     print(
         f"processed {result.frame_count} frames: "
