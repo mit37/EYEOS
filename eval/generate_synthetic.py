@@ -40,6 +40,7 @@ from eyeos.synthetic_format import CSV_FIELDNAMES, landmarks_to_row
 
 SCREEN_W, SCREEN_H = 1920.0, 1080.0
 DT = 0.1  # 10 fps
+NOISE_SIGMA = 0.03  # per-frame iris-offset noise on calibration and on-target frames
 
 FIELDNAMES = [*CSV_FIELDNAMES, "target_x", "target_y", "segment", "away_mode"]
 
@@ -111,7 +112,7 @@ def generate_rows(seed: int = 20260925) -> list[dict[str, str]]:
     rows: list[dict[str, str]] = []
     t = 0.0
 
-    noise_sigma = 0.03  # in iris-offset units, for both calibration and on-target frames
+    noise_sigma = NOISE_SIGMA
 
     # 1. Calibration: the standard 9-point grid, with the same noise as on-target gaze.
     for target in target_points(SCREEN_W, SCREEN_H):
