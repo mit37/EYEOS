@@ -104,6 +104,8 @@ class GateStateMachine:
         last_t = self._last_frame_timestamp_s
         if last_t is not None and not frame.timestamp_s > last_t:
             return False, f"timestamp not advancing (t={frame.timestamp_s:.3f} <= {last_t:.3f})"
+        if not math.isfinite(frame.detection_confidence):
+            return False, "detection confidence is not a number"
         if frame.face_count != 1:
             return False, f"expected exactly one face, saw {frame.face_count}"
         if frame.detection_confidence < self.config.presence_confidence_threshold:
@@ -121,6 +123,8 @@ class GateStateMachine:
     def _gate2(self, frame: FrameInput) -> tuple[bool, str]:
         if not self._calibration.exists:
             return False, "no calibration for this session — recalibrate"
+        if not all(math.isfinite(a) for a in frame.head_pose_deg):
+            return False, "head pose is not finite"
         if not math.isfinite(self._calibration.validation_error_px):
             return False, "calibration not validated — recalibrate"
         if self._calibration.validation_error_px >= self.config.calibration_max_error_px:
@@ -140,6 +144,10 @@ class GateStateMachine:
     def _gate4(self, frame: FrameInput) -> tuple[bool, str]:
         if frame.kill_switch_pressed:
             return False, "kill switch pressed"
+        if frame.gaze_point_px is not None and not all(
+            math.isfinite(c) for c in frame.gaze_point_px
+        ):
+            return False, "gaze point is not finite"
 
         speed_px_s = 0.0
         if (

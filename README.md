@@ -138,9 +138,9 @@ ruff check . && black --check . && mypy eyeos   # lint + typecheck (CI runs thes
 python scripts/update_readme.py --check # README numbers match the code (CI runs this too)
 ```
 
-**<!-- test-count -->223<!-- /test-count --> tests** (counted by `scripts/update_readme.py` from `pytest --collect-only`), covering:
+**<!-- test-count -->227<!-- /test-count --> tests** (counted by `scripts/update_readme.py` from `pytest --collect-only`), covering:
 
-- The four-gate state machine has the largest share (<!-- gate-test-count -->65<!-- /gate-test-count --> tests). They cover every gate's pass/fail conditions, the kill switch, no-click zones, click-rate limiting, the speed limit, non-advancing timestamps, dwell/jitter behaviour and each confirmation mode. All of it is driven by explicit timestamps rather than a wall clock, so the tests *are* a fake clock.
+- The four-gate state machine has the largest share (<!-- gate-test-count -->69<!-- /gate-test-count --> tests). They cover every gate's pass/fail conditions, the kill switch, no-click zones, click-rate limiting, the speed limit, non-advancing timestamps, dwell/jitter behaviour and each confirmation mode. All of it is driven by explicit timestamps rather than a wall clock, so the tests *are* a fake clock.
 - Features, calibration (against a known synthetic ground-truth mapping) and the One Euro filter (against the reference algorithm's documented behaviour) are each unit-tested in isolation.
 - The full pipeline is tested end to end at 30 fps:
   - uncalibrated: the gates correctly refuse to move;

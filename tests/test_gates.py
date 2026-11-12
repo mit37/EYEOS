@@ -683,3 +683,29 @@ def test_repeated_or_backward_timestamps_fail_gate1():
         assert status.click_fired is False
 
     assert m.step(make_frame(timestamp_s=1.1)).gate1_presence is True
+
+
+# ---------------------------------------------------------------------------
+# Non-finite inputs fail closed (NaN comparisons are always False, i.e. fail open)
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    "overrides, gate",
+    [
+        ({"detection_confidence": float("nan")}, "gate1_presence"),
+        ({"head_pose_deg": (float("nan"), 0.0, 0.0)}, "gate2_calibration"),
+        ({"gaze_point_px": (float("nan"), 500.0)}, "gate4_kill_and_limits"),
+        ({"gaze_point_px": (500.0, float("inf"))}, "gate4_kill_and_limits"),
+    ],
+)
+def test_non_finite_inputs_fail_closed(overrides, gate):
+    m = machine()
+    m.step(make_frame(timestamp_s=1.0))
+    t = 1.1
+    for _ in range(8):  # long enough that dwell would otherwise be satisfied
+        status = m.step(make_frame(timestamp_s=t, confirm_keypress=True, **overrides))
+        t += 0.1
+        assert getattr(status, gate) is False
+        assert status.move_allowed is False
+        assert status.click_fired is False
