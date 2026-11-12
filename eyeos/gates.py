@@ -211,7 +211,16 @@ class GateStateMachine:
             # glance followed by closed eyes can't satisfy it.
             if self._dwell_start_s is not None and self._dwell_paused_at_s is None:
                 self._dwell_paused_at_s = frame.timestamp_s
-            return self._dwell_satisfied_when_observed
+            satisfied = self._dwell_satisfied_when_observed
+            if (
+                frame.confirm_hold_s is not None
+                and frame.confirm_hold_s >= self.config.confirmation_hold_s
+            ):
+                # A confirm-length closure ends the dwell either way: it clicks on this
+                # frame, or not at all. Otherwise single-frame glimpses spread over a
+                # long, fluttering closure could add up to a new dwell.
+                self._reset_dwell()
+            return satisfied
 
         if self._dwell_paused_at_s is not None and self._dwell_start_s is not None:
             self._dwell_start_s += frame.timestamp_s - self._dwell_paused_at_s

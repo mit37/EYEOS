@@ -592,13 +592,14 @@ def test_looking_down_with_narrowed_lids_then_confirming_never_clicks_the_old_ta
     assert keys_pipeline.run().total_clicks == 0
 
 
-def test_eyelid_flutter_in_a_long_closure_clicks_at_most_once():
-    # Dwell on A, then 3 s of closed eyes with a 30%-open frame every 15th frame. The
+@pytest.mark.parametrize("every", [13, 15, 20])
+def test_eyelid_flutter_in_a_long_closure_clicks_at_most_once(every):
+    # Dwell on A, then 30 s of closed eyes with a 30%-open frame every few frames. The
     # eyes are never really reopened, so one blink-hold click at most.
     frames = _seq([(1.0, lambda: _gaze_landmarks(960, 300))])
     t0 = frames[-1].timestamp_s
-    for k in range(1, 91):
-        lids = _lids(0.3) if k % 15 == 0 else _lids(0.025)
+    for k in range(1, 901):
+        lids = _lids(0.3) if k % every == 0 else _lids(0.025)
         lm = _gaze_landmarks(960, 300, **{n: v for n, v in lids.items() if n.endswith("_eye_top")})
         frames.append(Frame(t0 + k / 30, lm))
 
@@ -607,7 +608,7 @@ def test_eyelid_flutter_in_a_long_closure_clicks_at_most_once():
 
 
 # ---------------------------------------------------------------------------
-# Held gaze (eyes closed, lids partly closed) is not an observation
+# Held gaze (eyes closed in the blink-hold grace window) is not an observation
 # ---------------------------------------------------------------------------
 
 

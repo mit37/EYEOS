@@ -775,28 +775,41 @@ def test_a_frame_gap_fails_gate1_and_restarts_the_dwell():
 
 
 # ---------------------------------------------------------------------------
-# A held gaze point (eyes closed, lids partly closed) is not observed dwell
+# A held gaze point (eyes closed in the blink-hold grace window) is not observed dwell
 # ---------------------------------------------------------------------------
 
 
 def test_held_frames_neither_advance_nor_reset_the_dwell():
-    m = machine()  # dwell_time_s=0.5
+    m = machine()  # dwell_time_s=0.5, confirmation_hold_s=0.4
     m.step(make_frame(timestamp_s=0.0))
     m.step(make_frame(timestamp_s=0.1))
-    for k in range(2, 12):  # a full second of held frames, t = 0.2 .. 1.1
+    for k in range(2, 5):  # a natural 0.3 s blink, t = 0.2 .. 0.4
         t = k / 10
         held = m.step(make_frame(timestamp_s=t, gaze_held=True, confirm_hold_s=t - 0.2))
         assert held.gate3_stability is False
         assert held.click_fired is False
 
-    # Observation resumes at 1.2 s with 0.2 s of dwell behind it, not 1.2 s, so the
-    # 0.5 s dwell is reached at 1.5 s.
-    assert [m.step(make_frame(timestamp_s=k / 10)).gate3_stability for k in range(12, 16)] == [
+    # Observation resumes at 0.5 s with 0.2 s of dwell behind it, not 0.5 s, so the
+    # 0.5 s dwell is reached at 0.8 s.
+    assert [m.step(make_frame(timestamp_s=k / 10)).gate3_stability for k in range(5, 9)] == [
         False,
         False,
         False,
         True,
     ]
+
+
+def test_a_confirm_length_closure_that_does_not_click_ends_the_dwell():
+    m = machine()  # dwell_time_s=0.5, confirmation_hold_s=0.4
+    for k in range(4):  # 0.3 s observed: not yet satisfied
+        m.step(make_frame(timestamp_s=k / 10))
+    for k in range(4, 9):  # held 0.0 .. 0.4 s: the last frame is confirm-length
+        m.step(make_frame(timestamp_s=k / 10, gaze_held=True, confirm_hold_s=(k - 4) / 10))
+    # The dwell starts over: 0.3 s observed before the closure no longer counts.
+    statuses = [m.step(make_frame(timestamp_s=k / 10)) for k in range(9, 14)]
+    assert [s.gate3_stability for s in statuses] == [False, False, False, False, False]
+    m.step(make_frame(timestamp_s=1.4))
+    assert m.step(make_frame(timestamp_s=1.5)).gate3_stability is True
 
 
 def test_a_dwell_observed_before_the_hold_carries_through_it():
