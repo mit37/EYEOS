@@ -89,6 +89,8 @@ class Pipeline:
         self._blink_hold_start_s: float | None = None
         self._reopen_since_s: float | None = None
         self._closed_run_start_s: float | None = None
+        self._last_frame_s: float | None = None
+        self._nominal_dt_s: float | None = None
         # The last point the gates emitted for an observed (eyes open, trusted) frame;
         # None once an observed frame fails any gate. Held frames reuse it.
         self._last_open_gaze: ScreenPoint | None = None
@@ -163,8 +165,12 @@ class Pipeline:
         kill_switch_pressed, confirm_keypress = self.external_signals(frame.timestamp_s)
         self._kill_seen = self._kill_seen or kill_switch_pressed
 
-        if not math.isfinite(frame.timestamp_s):
-            # Gate 1 rejects it. Touch no timing state and don't feed the filter.
+        last_t = self._last_frame_s
+        if not math.isfinite(frame.timestamp_s) or (
+            last_t is not None and not frame.timestamp_s > last_t
+        ):
+            # Gate 1 rejects a non-finite or non-advancing timestamp. Touch no timing
+            # state and don't feed the filter.
             return FrameInput(
                 timestamp_s=frame.timestamp_s,
                 face_count=frame.landmarks.face_count if frame.landmarks else 0,
@@ -176,11 +182,14 @@ class Pipeline:
                 confirm_keypress=confirm_keypress,
             )
 
+        prev_t, self._last_frame_s = last_t, frame.timestamp_s
         if frame.landmarks is None:
-            # A lost face breaks the run of closed frames (no blink-hold across it) but
-            # doesn't end a closure: only eyes open for _MIN_REOPEN_S do that, so a
-            # tracking dropout can't turn lid flutter into observed looking.
+            # A lost face breaks the run of closed frames (no blink-hold across it) and
+            # any open run, but doesn't end a closure: only eyes observed open for
+            # _MIN_REOPEN_S do that, so a tracking dropout can't turn lid flutter into
+            # observed looking.
             self._closed_run_start_s = None
+            self._reopen_since_s = None
             self._last_open_gaze = None
             return FrameInput(
                 timestamp_s=frame.timestamp_s,
@@ -195,6 +204,15 @@ class Pipeline:
 
         landmarks = frame.landmarks
         raw_eyes_open = landmarks.both_irises_visible
+        if prev_t is not None:
+            dt = frame.timestamp_s - prev_t
+            nominal = self._nominal_dt_s
+            dropped = dt > _MIN_REOPEN_S or (nominal is not None and dt > 1.5 * nominal)
+            if not dropped:
+                self._nominal_dt_s = dt if nominal is None else 0.9 * nominal + 0.1 * dt
+            if dropped:
+                # Unobserved time (a dropped frame) never counts toward an open run.
+                self._reopen_since_s = None
         features = extract_features(landmarks)
         visible_for_gate, confirm_hold_s, eyes_open = self._resolve_blink_gesture(
             frame.timestamp_s, raw_eyes_open

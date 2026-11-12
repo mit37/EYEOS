@@ -1047,3 +1047,25 @@ def test_a_lost_face_frame_does_not_turn_lid_flutter_into_looking(fps, unit):
 
     result, _output = _run_frames(frames)
     assert result.total_clicks == 1
+
+
+@pytest.mark.parametrize("fps, unit", [(15, "coo"), (30, "coo"), (60, "ccoooo")])
+@pytest.mark.parametrize("how", ["lost_face", "dropped_frame", "stale_timestamp"])
+def test_unobserved_or_stale_frames_never_stretch_a_glimpse_into_looking(fps, unit, how):
+    # Click, then lid flutter whose open runs never reach 0.1 s. One of its closed
+    # frames is replaced by a lost face, dropped entirely, or re-sent with an old
+    # timestamp. None of that may end the closure: one click only.
+    hold = "c" * (int(0.4 * fps) + 2)
+    frames = _flutter(hold + unit * (4 * fps // len(unit)) + hold, fps=fps)
+    first_closed = round(fps)  # _flutter dwells 1 s, then the pattern starts
+    target = first_closed + len(hold) + len(unit) * (fps // len(unit))
+    if how == "lost_face":
+        frames[target] = Frame(frames[target].timestamp_s, None)
+    elif how == "dropped_frame":
+        del frames[target]
+    else:
+        stale = frames[first_closed].timestamp_s + 0.05
+        frames[target + 1] = Frame(stale, frames[target + 1].landmarks)
+
+    result, _output = _run_frames(frames)
+    assert result.total_clicks == 1
