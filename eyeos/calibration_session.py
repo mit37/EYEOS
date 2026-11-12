@@ -55,7 +55,8 @@ def calibrate_interactively(
 ) -> Calibration | None:
     """Run the dot screen built by ``ui_factory`` (CalibrationUI in real use) and fit.
 
-    Returns None if the user cancels.
+    Returns None if the user cancels, or if any of the ``config.calibration.points``
+    dots is left without a sample.
     """
     calibration = Calibration(config.screen.width_px, config.screen.height_px)
 
@@ -68,6 +69,11 @@ def calibrate_interactively(
 
     ui = ui_factory(config.screen.width_px, config.screen.height_px, capture_sample=capture)
     if not ui.run():
+        return None
+    # Each captured dot adds exactly one sample. Whatever the dot screen reported, never
+    # fit on fewer dots than the calibration asks for.
+    dots_with_a_sample = {sample.target_px for sample in calibration.samples}
+    if len(dots_with_a_sample) < config.calibration.points:
         return None
     calibration.fit()
     return calibration

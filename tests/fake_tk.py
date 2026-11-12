@@ -1,7 +1,8 @@
 """A tiny fake ``tkinter`` for testing overlay.py and calibration_ui.py headless.
 
 Install with ``monkeypatch.setitem(sys.modules, "tkinter", make_fake_tk())``. Widgets
-record what was drawn; ``Tk.fire(sequence)`` simulates a key binding firing.
+record what was drawn; ``Tk.fire(sequence)`` simulates a key binding firing, and
+``Tk.close_window()`` the window manager's close button (Alt+F4, the title-bar X).
 """
 
 from __future__ import annotations
@@ -37,6 +38,7 @@ class Tk(_Widget):
             raise type(self).fail_with
         super().__init__()
         self.bindings: dict[str, Any] = {}
+        self.protocols: dict[str, Any] = {}
         self.attrs: dict[str, Any] = {}
         self.destroyed = False
         self.updates = 0
@@ -63,6 +65,18 @@ class Tk(_Widget):
 
     def fire(self, sequence: str) -> None:
         self.bindings[sequence](None)
+
+    def protocol(self, name: str, func: Any = None) -> None:
+        self.protocols[name] = func
+
+    def close_window(self) -> None:
+        """The user closes the window. Like real Tk, with no WM_DELETE_WINDOW handler
+        registered the window is simply destroyed."""
+        handler = self.protocols.get("WM_DELETE_WINDOW")
+        if handler is None:
+            self.destroy()
+        else:
+            handler()
 
     def update(self) -> None:
         self.updates += 1

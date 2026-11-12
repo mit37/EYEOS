@@ -89,6 +89,31 @@ def test_calibration_ui_escape_cancels(fake_tk):
     assert ui.root.destroyed
 
 
+def test_calibration_ui_closing_the_window_cancels(fake_tk):
+    # Alt+F4 after 6 dots: Tk's default close handler would just destroy the window.
+    captured = []
+    ui = CalibrationUI(1920, 1080, capture_sample=lambda pt: captured.append(pt) or True)
+
+    def six_dots_then_close(root):
+        for _ in range(6):
+            root.fire("<space>")
+        root.close_window()
+
+    ui.root.on_mainloop = six_dots_then_close
+
+    assert ui.run() is False
+    assert len(captured) == 6
+    assert ui.root.destroyed
+
+
+def test_calibration_ui_fails_unless_every_dot_was_captured(fake_tk):
+    # However the main loop ends early, 6 of 9 dots is not a calibration.
+    ui = CalibrationUI(1920, 1080, capture_sample=lambda _pt: True)
+    ui.root.on_mainloop = lambda root: [root.fire("<space>") for _ in range(6)]
+
+    assert ui.run() is False
+
+
 def test_calibration_ui_reprompts_a_dot_whose_capture_failed(fake_tk):
     attempts = []
 

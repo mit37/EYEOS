@@ -44,7 +44,8 @@ eyeos run --config config.yaml --calibrate --overlay
 
 1. A fullscreen screen shows 9 dots, one at a time. Look at each dot and press
    **space** when your gaze is steady. If no face or open eyes are found, the same
-   dot is asked for again. **Esc** cancels.
+   dot is asked for again. **Esc** or closing the window cancels: `eyeos run` prints
+   "calibration cancelled" and exits without starting the session.
 2. The terminal prints the calibration's validation error. Gate 2 refuses to move the
    cursor if it is 60 px or more (`gates.calibration_max_error_px`).
 3. The session starts with the gate-lights overlay. Every frame's gate decisions go

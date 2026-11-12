@@ -7,7 +7,8 @@ Usage: show one target at a time; the caller presses space when they're looking
 steadily at the dot, which calls ``capture_sample(target_px)`` (wired by the caller to
 pull the current FeatureVector out of the running pipeline and add it to a
 Calibration). If it returns False (no usable sample), the same dot is asked for again
-instead of being silently skipped. Escape cancels.
+instead of being silently skipped. Escape cancels, and so does closing the window
+(Alt+F4, the title-bar X): ``run()`` is True only once every dot has been captured.
 """
 
 from __future__ import annotations
@@ -61,7 +62,10 @@ class CalibrationUI:
         self.canvas: Any = tk.Canvas(self.root, bg="black", highlightthickness=0)
         self.canvas.pack(fill="both", expand=True)
         self.root.bind("<space>", self._on_space)
-        self.root.bind("<Escape>", self._on_escape)
+        self.root.bind("<Escape>", self.cancel)
+        # Tk's default close handler only destroys the window, which would end run()
+        # looking like a finished calibration. Closing it must cancel, like Esc.
+        self.root.protocol("WM_DELETE_WINDOW", self.cancel)
 
         self._draw_current_target()
 
@@ -100,11 +104,15 @@ class CalibrationUI:
         else:
             self._draw_current_target()
 
-    def _on_escape(self, _event: object) -> None:
+    def cancel(self, _event: object = None) -> None:
+        """Stop without a calibration: Esc and the window's close button both land here."""
         self._cancelled = True
         self.root.destroy()
 
     def run(self) -> bool:
-        """Blocks until calibration finishes or is cancelled. Returns True on success."""
+        """Blocks until calibration finishes or is cancelled.
+
+        Returns True only if nothing cancelled it and every dot was captured.
+        """
         self.root.mainloop()
-        return not self._cancelled
+        return not self._cancelled and self._index >= len(self.targets)
