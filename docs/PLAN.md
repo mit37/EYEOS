@@ -71,7 +71,7 @@ Restated from `PRD.md` §8, per `STANDARDS.md` §6 step 1.
   - Camera errors during `--calibrate` were swallowed.
 
   Each fix came with a test that failed before it, and each was re-reviewed.
-- **Review rounds 3-9 (2026-11-12).** The first fix for the half-closed-lid bug was
+- **Review rounds 3-10 (2026-11-12).** The first fix for the half-closed-lid bug was
   itself wrong, and is recorded here as a negative result.
   - That fix held the gaze while the lids were under 80% of their usual opening.
     Looking down narrows the lids, so a confirm key pressed just after looking away
@@ -105,6 +105,10 @@ Restated from `PRD.md` §8, per `STANDARDS.md` §6 step 1.
     could stretch two glimpses into a 0.1 s "reopening". Unobserved time no longer
     counts toward an open run, and a non-advancing timestamp is rejected before it
     touches any blink state.
+  - Round 10 found that a bystander's open eyes could end the user's closure, and
+    that a dropped frame still counted toward the 0.4 s hold. Frames Gate 1 rejects
+    for presence are now treated like a lost face, and a dropped frame restarts the
+    closed run too.
   - The blink path is the part of EyeOS that most needs real recordings: each round
     found a new noise pattern, and none of the thresholds is tuned on real data.
   - Eye openness is now judged in each eye's own frame, so it holds at any head

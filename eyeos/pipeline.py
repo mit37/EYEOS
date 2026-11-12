@@ -203,6 +203,28 @@ class Pipeline:
             )
 
         landmarks = frame.landmarks
+        confidence = landmarks.detection_confidence
+        if (
+            landmarks.face_count != 1
+            or not math.isfinite(confidence)
+            or confidence < self.config.gates.presence_confidence_threshold
+        ):
+            # Gate 1 rejects this frame for presence (a second face may be a bystander's).
+            # Like a lost face: its eyes are not the user's, so it neither opens nor
+            # extends anything.
+            self._closed_run_start_s = None
+            self._reopen_since_s = None
+            self._last_open_gaze = None
+            return FrameInput(
+                timestamp_s=frame.timestamp_s,
+                face_count=landmarks.face_count,
+                detection_confidence=confidence,
+                both_irises_visible=False,
+                gaze_point_px=None,
+                head_pose_deg=(0.0, 0.0, 0.0),
+                kill_switch_pressed=kill_switch_pressed,
+                confirm_keypress=confirm_keypress,
+            )
         raw_eyes_open = landmarks.both_irises_visible
         if prev_t is not None:
             dt = frame.timestamp_s - prev_t
@@ -211,8 +233,10 @@ class Pipeline:
             if not dropped:
                 self._nominal_dt_s = dt if nominal is None else 0.9 * nominal + 0.1 * dt
             if dropped:
-                # Unobserved time (a dropped frame) never counts toward an open run.
+                # Unobserved time (a dropped frame) counts toward neither an open run
+                # nor a blink-hold.
                 self._reopen_since_s = None
+                self._closed_run_start_s = None
         features = extract_features(landmarks)
         visible_for_gate, confirm_hold_s, eyes_open = self._resolve_blink_gesture(
             frame.timestamp_s, raw_eyes_open

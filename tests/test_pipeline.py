@@ -1069,3 +1069,34 @@ def test_unobserved_or_stale_frames_never_stretch_a_glimpse_into_looking(fps, un
 
     result, _output = _run_frames(frames)
     assert result.total_clicks == 1
+
+
+@pytest.mark.parametrize("fps", [15, 30, 60])
+def test_a_dropped_frame_inside_a_closure_never_counts_toward_the_hold(fps):
+    # Two 0.25 s closures whose one-frame glimpse between them was dropped by the camera.
+    n = round(0.25 * fps)
+    frames = _seq([(1.0, lambda: _gaze_landmarks(960, 540))], fps=fps)
+    t0 = frames[-1].timestamp_s
+    pattern = "c" * n + "o" + "c" * n + "o" * fps
+    for k, ch in enumerate(pattern, start=1):
+        if k == n + 1:
+            continue  # the glimpse frame never arrives
+        frames.append(Frame(t0 + k / fps, _gaze_landmarks(960, 540, closed=(ch == "c"))))
+
+    result, _output = _run_frames(frames)
+    assert result.total_clicks == 0
+
+
+@pytest.mark.parametrize("fps, unit", [(15, "coo"), (30, "coo"), (60, "ccoooo")])
+def test_a_bystanders_open_eyes_never_end_the_users_closure(fps, unit):
+    hold = "c" * (int(0.4 * fps) + 2)
+    frames = _flutter(hold + unit * (fps // len(unit)), fps=fps)
+    t = frames[-1].timestamp_s
+    for k in range(1, int(0.1 * fps) + 3):  # a second face in view, eyes open
+        frames.append(Frame(t + k / fps, _gaze_landmarks(300, 900, face_count=2)))
+    tail = _flutter(unit * (3 * fps // len(unit)) + hold, fps=fps)[round(fps) :]
+    offset = frames[-1].timestamp_s + 1 / fps - tail[0].timestamp_s
+    frames += [Frame(f.timestamp_s + offset, f.landmarks) for f in tail]
+
+    result, _output = _run_frames(frames)
+    assert result.total_clicks == 1
