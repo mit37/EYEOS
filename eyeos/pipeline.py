@@ -7,6 +7,7 @@ CSV — only the source/backend objects passed to the constructor differ.
 
 from __future__ import annotations
 
+import math
 from collections.abc import Callable
 from dataclasses import dataclass, field
 
@@ -178,6 +179,8 @@ class Pipeline:
         if self.calibration is None or not self.calibration.is_fitted:
             return None
         raw_point = self.calibration.predict(features)
+        if not all(math.isfinite(c) for c in raw_point):
+            return None  # never seed or feed the filter a NaN/inf: it would stick forever
         if self._filter is None:
             self._filter = OneEuroFilter2D(
                 timestamp_s,
@@ -186,8 +189,21 @@ class Pipeline:
                 beta=self.config.filter.beta,
                 d_cutoff=self.config.filter.d_cutoff,
             )
-            return raw_point
-        return self._filter(timestamp_s, raw_point)
+            smoothed = raw_point
+        else:
+            smoothed = self._filter(timestamp_s, raw_point)
+        return self._to_screen_pixel(smoothed)
+
+    def _to_screen_pixel(self, point: ScreenPoint) -> ScreenPoint:
+        """The exact on-screen pixel the cursor will be sent to.
+
+        Gate 4's no-click zones and speed limit must judge this pixel, not the float
+        gaze it came from, or a click can land inside a zone after rounding/clamping.
+        """
+        width, height = self.config.screen.width_px, self.config.screen.height_px
+        x = min(max(round(point[0]), 0), width - 1)
+        y = min(max(round(point[1]), 0), height - 1)
+        return float(x), float(y)
 
     def _process_frame(self, frame: Frame) -> GateStatus:
         frame_input = self._frame_input(frame)

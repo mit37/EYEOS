@@ -359,3 +359,87 @@ def test_blink_hold_cannot_click_inside_a_no_click_zone():
         if status.click_fired:
             x, y = status.cursor_target_px
             assert not (0 <= x <= 1920 and 0 <= y <= 40)
+
+
+# ---------------------------------------------------------------------------
+# The gates must judge the exact pixel that is emitted (rounded, on-screen, finite)
+# ---------------------------------------------------------------------------
+
+
+class _FixedGaze:
+    """A stand-in calibration that maps every frame to one fixed screen point."""
+
+    is_fitted = True
+
+    def __init__(self, point):
+        self.point = point
+
+    def predict(self, _features):
+        return self.point
+
+    def status(self):
+        from eyeos.calibration import CalibrationStatus
+
+        return CalibrationStatus(
+            exists=True, validation_error_px=1.0, calibration_head_pose=(0.0, 0.0, 0.0)
+        )
+
+
+def _zone_config():
+    from dataclasses import replace
+
+    from eyeos.config import NoClickZone
+
+    base = Config()
+    zones = (NoClickZone(1860, 0, 1920, 40),)
+    return replace(base, gates=replace(base.gates, no_click_zones=zones))
+
+
+def _dwell_then_keypress(point):
+    frames = [Frame(timestamp_s=i / 30, landmarks=make_landmarks()) for i in range(45)]
+    output = DryRunOutputAdapter(echo=None)
+    pipeline = Pipeline(
+        _zone_config(),
+        ListInputSource(frames),
+        output,
+        calibration=_FixedGaze(point),
+        external_signals=lambda t: (False, t >= 1.2),
+    )
+    return pipeline.run(), output
+
+
+@pytest.mark.parametrize("point", [(1859.6, 20.0), (1925.0, 20.0), (1900.0, -3.0)])
+def test_no_click_lands_in_a_zone_after_rounding_or_clamping(point):
+    result, output = _dwell_then_keypress(point)
+
+    assert result.total_clicks == 0
+    for action in output.actions:
+        if action[0] == "move":
+            assert 0 <= action[1] <= 1919 and 0 <= action[2] <= 1079
+
+
+def test_zone_edge_is_exact_not_padded():
+    result, output = _dwell_then_keypress((1859.4, 20.0))
+
+    assert result.total_clicks == 1
+    clicked = next(s for s in result.statuses if s.click_fired)
+    assert clicked.cursor_target_px == (1859, 20)
+
+
+def test_a_nan_landmark_does_not_poison_the_filter_or_crash_the_run():
+    import math
+
+    frames = [Frame(timestamp_s=i / 30, landmarks=make_landmarks()) for i in range(30)]
+    bad = make_landmarks(left_iris_center=Point3D(float("nan"), 0.40))
+    frames[15] = Frame(timestamp_s=15 / 30, landmarks=bad)
+    output = DryRunOutputAdapter(echo=None)
+    pipeline = Pipeline(
+        Config(), ListInputSource(frames), output, calibration=_fitted_calibration()
+    )
+
+    result = pipeline.run()
+
+    assert result.frame_count == 30
+    assert result.statuses[15].cursor_target_px is None
+    later = [s.cursor_target_px for s in result.statuses[16:]]
+    assert later and all(p is not None and all(math.isfinite(c) for c in p) for p in later)
