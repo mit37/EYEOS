@@ -4,18 +4,26 @@ Restated from `PRD.md` §8, per `STANDARDS.md` §6 step 1.
 
 ## Definition of Done
 
-- [x] Gate state machine fully tested (≥40 tests), including the kill switch and no-click zones
-      — 49 tests in `tests/test_gates.py`, driven entirely by explicit timestamps (no wall clock).
-- [x] Dry-run mode runs the whole pipeline on a video file
-      — on a synthetic-landmark CSV in this container (no real video available); the exact
-      same `Pipeline`/`VideoFileInputSource` code path works on a real video file once
-      `opencv-python`/`mediapipe` are installed on real hardware (untested here, see below).
-- [x] Eval numbers generated (synthetic in CI; real ones from Mitansh's recordings or marked pending)
-      — `eval/run_eval.py`; real-recording numbers explicitly marked "not measured" pending
-      Mitansh's own recordings.
-- [x] README states "experiment, not an assistive-tech product"; CI green; tag v2.0.0
+- [x] Gate state machine fully tested (≥40 tests), including the kill switch and no-click
+      zones. All of `tests/test_gates.py` is driven by explicit timestamps (no wall clock),
+      and README's Testing section shows the generated count.
+- [ ] (partial) Dry-run mode runs the whole pipeline on a video file
+      - Done: the same `Pipeline` runs end to end on a synthetic-landmark CSV, and
+        `VideoFileInputSource`'s frame loop runs against fake OpenCV/MediaPipe modules
+        (`tests/fake_capture.py`).
+      - Pending: decoding a real video file, which needs the `webcam` extra (Python
+        3.10–3.12) and a real recording (see `docs/DEMO.md` §4).
+- [x] Eval numbers generated (synthetic in CI; real ones marked pending)
+      - `eval/run_eval.py` produces them, and `scripts/update_readme.py` writes them into
+        README.md (CI fails on drift).
+      - Real-recording numbers, including PRD §5's 5-minute reading segment, are
+        marked "not measured".
+- [x] README states "experiment, not an assistive-tech product"
+- [ ] CI green on the commit to be tagged
+- [ ] Tag v2.0.0. Pending: the owner tags `main` once the items above are met (this
+      build's agent cannot push tags or edit repo settings).
 
-## Milestones (PRD §6), built in order
+## Milestones (PRD §6)
 
 1. [x] Scaffold, CI, config, an input-source interface (webcam | video file | synthetic landmarks).
 2. [x] Landmark → features + head pose (unit-tested on fixture landmarks).
@@ -24,40 +32,66 @@ Restated from `PRD.md` §8, per `STANDARDS.md` §6 step 1.
 5. [x] The four gates as a pure state machine with a fake clock (the most tests: every gate transition).
 6. [x] Output adapters (Windows SendInput + fallback) behind an interface; dry-run mode prints actions instead of moving the mouse.
 7. [x] Overlay + calibration UI.
-8. [x] Eval, README with gate diagram, `docs/DEMO.md`, tag v2.0.0.
+8. [x] Eval, README with gate diagram, `docs/DEMO.md`. [ ] Tag v2.0.0 (see above).
+
+### How this was actually built (history note)
+
+- **First build (2026-09-25).** Milestones 1–8 were built in one agent session on
+  branch `claude/new-session-cawn9l` and committed as one commit (`170b0e2`). CI then
+  caught a bug, fixed in `b051c61` (the tkinter `TclError` guard described below). The
+  pair was squash-merged as PR #1 (`fd3858b`).
+- **History split (2026-09-27).** At the owner's request, `main` was rewritten into
+  12 per-milestone commits. They are a post-hoc split of the same final tree, so their
+  timestamps (all within about a minute on 2026-09-27) record when the split was made,
+  not when each milestone was written. The dates were not faked (STANDARDS §1.2), but
+  the order does not show build order.
+- **A known flaw in that split.** The "feat: gate overlay and fullscreen calibration
+  UI" commit (`b2aae59`) already contains the `TclError` fix, so the later "fix: guard
+  tkinter.TclError" commit (`d094fbe`) only changes this file. Correcting it would mean
+  rewriting `main` again, which is the owner's call.
+- **Audit and hardening (2026-11-12).** A multi-agent audit against PRD.md and
+  STANDARDS.md confirmed 42 findings, several of them critical:
+  - the kill hotkey was never wired;
+  - `eyeos run` could never use a calibration;
+  - blink-hold clicks could not fire;
+  - the README's jitter "negative result" was an eval bug.
+
+  They were fixed in individual commits. Owner-only items (tag, repo description and
+  topics, branch protection) and hardware verification are still open.
 
 ## Cloud-instance constraints (PRD §7, STANDARDS §6.4)
 
-This session has no webcam, no Windows desktop, and no display server (`tkinter` is not
-even importable in this container — verified during scaffolding). Consequences:
+This build had no webcam, no Windows desktop, no keyboard and no display server
+(`tkinter` isn't even importable in the build container). Every hardware-facing path
+is therefore behind an interface and tested only against a fake:
 
-- `WebcamInputSource` and `VideoFileInputSource` depend on `opencv-python` and `mediapipe`,
-  which are **not installed** and are not required by the core package. They are behind the
-  `InputSource` interface, with the imports lazy (inside `frames()`, not at module level),
-  so importing `eyeos` never requires them. `tests/test_input_sources.py` exercises exactly
-  what this container can: the guarded "dependency missing" `RuntimeError` path (both
-  packages are genuinely absent here) and the MediaPipe-landmark-index mapping as a pure
-  function on fake landmark objects. Real capture is untested here and must be verified by
-  Mitansh on a real machine (see `docs/DEMO.md`).
-- `WindowsSendInputOutput` depends on `ctypes.windll`, which only exists on Windows. It is
-  behind the `OutputAdapter` interface and is guarded to raise a clear `RuntimeError` off
-  Windows. It is untested here; `DryRunOutputAdapter` (fully tested) stands in for it in
-  the pipeline test and in the eval harness.
-- `overlay.py` and `calibration_ui.py` depend on `tkinter` *and* a real display, which
-  this build container has neither of, and GitHub's own hosted CI runners have only the
-  first (`tkinter` is installed there, but there's no `$DISPLAY`). Both modules guard
-  both failure modes — `ImportError` (no tkinter) and `tkinter.TclError` (tkinter
-  present, no display) — into the same clear `RuntimeError`, so importing the package
-  never fails and CI fails clearly instead of with a raw Tcl traceback (this is exactly
-  the bug CI itself caught on the first push of this branch: the guard only handled the
-  `ImportError` case, which is all this local build container ever produces, and CI's
-  `TclError` case slipped through untested until then). They are not otherwise unit
-  tested (nothing to test without a display); `docs/DEMO.md` is the script for Mitansh
-  to record them on his own machine.
-- The eval numbers in the README come from a **generated synthetic landmark sequence**
-  (`eval/fixtures/`, produced by `eval/generate_synthetic.py`, committed so CI needs no
-  camera). Real-session numbers from recorded video are marked "not measured — pending
-  Mitansh's recordings" until he supplies them.
+- **Webcam and video file** (`WebcamInputSource`, `VideoFileInputSource`). OpenCV and
+  MediaPipe are optional and imported lazily, so importing `eyeos` never needs them.
+  - The frame loop, cleanup on failure, the confidence-threshold plumbing and
+    host-clock timestamps are tested against fake `cv2`/`mediapipe` modules
+    (`tests/fake_capture.py`). These fakes prove EyeOS's plumbing, not OpenCV's or
+    MediaPipe's real behaviour.
+  - Live use needs `mediapipe<0.10.30` (the Solutions API was removed upstream in
+    0.10.30), so Python 3.10–3.12.
+  - The claim that `CAP_PROP_POS_MSEC` is constant on live DirectShow/AVFoundation
+    cameras was reasoned from OpenCV's source and not tested on hardware.
+- **Windows output** (`WindowsSendInputOutput`) needs `ctypes.windll` and is guarded to
+  raise off Windows. It has never run here; `DryRunOutputAdapter` stands in for it.
+- **Keyboard** (`PynputKeySource`, the kill switch and confirm key). It is tested
+  through `FakeKeySource`. The real pynput listener has never run here. Without it,
+  `eyeos run` refuses to drive the real cursor.
+- **Display** (`overlay.py`, `calibration_ui.py`). Both are tested against a fake
+  tkinter (`tests/fake_tk.py`), and both no-display modes raise a clear `RuntimeError`.
+  The first push of `claude/new-session-cawn9l` showed why both modes matter: the guard
+  only handled `ImportError`, the only mode this container produces, and GitHub's
+  runners (tkinter installed, no `$DISPLAY`) hit the unguarded `TclError`. Neither
+  module has been shown on a real screen.
+- **Eval.** The README numbers come from a generated synthetic landmark sequence
+  (`eval/fixtures/`, made by `eval/generate_synthetic.py`). Real-session numbers are
+  marked "not measured", pending recordings, and so is the PRD's 5-minute reading
+  false-click test. A real-accuracy eval also needs footage recorded with known
+  on-screen targets (see `docs/DEMO.md` §4).
 
-Everything else (features, calibration, filter, gates, dry-run pipeline, eval on synthetic
-data) runs and is tested in this container with no external hardware.
+Everything else runs and is tested in this container with no external hardware:
+features, calibration, filter, gates, hotkey latch logic, the dry-run pipeline and the
+eval on synthetic data.

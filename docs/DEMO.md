@@ -1,14 +1,16 @@
 # DEMO.md — recording the real EyeOS demo
 
-This cloud build container has no webcam, no display, and no Windows desktop, so the
-live demo couldn't be recorded here (see `docs/PLAN.md`'s "Cloud-instance
-constraints"). This is the script to record it on real hardware — should take about
-5 minutes.
+This cloud build container has no webcam, no display, no keyboard and no Windows
+desktop, so the live demo couldn't be recorded here (see `docs/PLAN.md`'s
+"Cloud-instance constraints"). This is the script to record it on real hardware, and
+it should take about 5 minutes. None of these steps has been run on real hardware
+yet, so if one fails, that failure is itself worth recording in `docs/PLAN.md`.
 
 ## What you need
 
 - Windows, with a webcam.
-- Python 3.10+.
+- **Python 3.10–3.12.** The `webcam` extra pins `mediapipe<0.10.30`, the last line
+  with the legacy Solutions API, and those wheels stop at 3.12.
 
 ## Setup (once)
 
@@ -19,115 +21,87 @@ pip install -e ".[webcam,windows-fallback]"
 copy config.example.yaml config.yaml
 ```
 
-Edit `config.yaml`:
+Edit `config.yaml` (it is gitignored):
 
 ```yaml
+screen:
+  width_px: 1920   # your primary screen's real resolution, in physical pixels
+  height_px: 1080
 input:
   source: webcam
+  device_index: 0  # change if Windows picks the wrong camera
 output:
   backend: windows_sendinput
+  kill_hotkey: esc
+  confirm_key: space   # optional: hold to confirm a click
 ```
 
-## 1. Calibrate (about 1 minute)
-
-Run the calibration UI (fullscreen, 9 dots). Look at each dot and press space when
-your gaze feels steady on it; press it 9 times in the printed dot order. Escape
-cancels.
+## 1. Calibrate and run, in one command
 
 ```bash
-python -c "
-from eyeos.calibration import Calibration
-from eyeos.calibration_ui import CalibrationUI
-from eyeos.config import load_config
-from eyeos.input_sources.webcam import WebcamInputSource
-from eyeos.features import extract_features
-
-config = load_config('config.yaml')
-cal = Calibration(config.screen.width_px, config.screen.height_px)
-source = WebcamInputSource(device_index=config.input.device_index)
-frames = source.frames()
-
-def capture(target_px):
-    frame = next(frames)
-    if frame.landmarks is not None:
-        cal.add_sample(target_px, extract_features(frame.landmarks))
-
-ui = CalibrationUI(config.screen.width_px, config.screen.height_px, capture_sample=capture)
-if ui.run():
-    cal.fit()
-    print('calibration validation error (px):', cal.validation_error_px)
-"
+eyeos run --config config.yaml --calibrate --overlay
 ```
 
-(This is intentionally a short inline script, not a saved-calibration CLI flag — see
-`docs/PLAN.md` for why persisting calibrations to disk was left out of this build.)
+1. A fullscreen screen shows 9 dots, one at a time. Look at each dot and press
+   **space** when your gaze is steady. If no face or open eyes are found, the same
+   dot is asked for again. **Esc** cancels.
+2. The terminal prints the calibration's validation error. Gate 2 refuses to move the
+   cursor if it is 60 px or more (`gates.calibration_max_error_px`).
+3. The session starts with the gate-lights overlay. Every frame's gate decisions go
+   to `logs/session-<UTC time>.jsonl`.
 
-## 2. Run it live, with the gate overlay (about 2 minutes)
+If no keyboard listener can start (pynput missing, or no input permission), `eyeos
+run` refuses to drive the cursor at all, by design.
 
-Show the four gate lights (green = passing) while you move your gaze around, look
-away, and hold a blink to click:
+## 2. Narrate while recording (about 2 minutes)
 
-Combine this with step 1 in one script (calibration isn't persisted to disk in this
-build — see `docs/PLAN.md` — so `cal` needs to stay in memory between the two):
+1. Look around the screen. The cursor follows your gaze, and Gates 1, 2 and 4 are green.
+2. Look away from the camera or cover one eye. The cursor freezes and the Gate 1
+   light goes red.
+3. Hold your gaze on one spot. The Gate 3 light goes green once the dwell time (0.8 s)
+   is reached.
+4. On a dwelled target, hold a deliberate blink for at least 0.4 s, or press the
+   confirm key. A click fires where you were looking.
+5. Press **Esc** (the kill hotkey) mid-movement. The Gate 4 light goes red, nothing
+   more is emitted, and the session ends: the terminal prints "kill switch (esc)
+   pressed: session ended".
 
-```bash
-python -c "
-from eyeos.config import load_config
-from eyeos.input_sources.webcam import WebcamInputSource
-from eyeos.output.windows_sendinput import WindowsSendInputOutput
-from eyeos.overlay import GateOverlay
-from eyeos.pipeline import Pipeline
-# cal = ... (the Calibration fit in step 1)
-
-config = load_config('config.yaml')
-overlay = GateOverlay()
-output = WindowsSendInputOutput()
-pipeline = Pipeline(
-    config, WebcamInputSource(), output, calibration=cal, on_status=overlay.update
-)
-pipeline.run()
-"
-```
-
-Narrate for the recording:
-
-1. Look around the screen — cursor follows your gaze (Gate 1/2/4 green, moving).
-2. Look away from the camera / cover one eye — cursor freezes, Gate 1 light goes red.
-3. Hold still on one spot for under a second, then dwell past it — Gate 3 light goes
-   green once the dwell time is reached.
-4. Hold a deliberate blink (or press a key, if you wired keypress confirm) on a
-   stable, dwelled target — a click fires.
-5. Trigger the kill hotkey (Esc by default) mid-movement — everything freezes
-   immediately, Gate 4 light goes red.
+Expect to struggle with step 3 if the gaze is noisy. The synthetic eval suggests
+the 20 px dwell radius (`gates.dwell_jitter_px`) may be too tight for webcam noise
+(see README's Results). Note what you see; that is a real result.
 
 ## 3. Record
 
-- **GIF** (CLI-adjacent tools, `vhs`/`asciinema`+`agg`, or a screen recording
-  converted with `ffmpeg`): capture the overlay window during step 2's narration,
-  ≤8 MB, 15-30s is plenty.
-- Save it to `docs/demo.gif` and link it at the top of `README.md`, replacing the "No
-  demo GIF yet" note.
+- **GIF**: capture the overlay window during step 2's narration with a screen
+  recorder (convert with `ffmpeg`), ≤8 MB; 15–30 s is plenty.
+- Save it to `docs/demo.gif` and link it at the top of `README.md`, replacing the
+  "No demo GIF yet" note.
 
-## 4. Feed the recording back into the eval harness (optional but ideal)
+## 4. Replaying a recording (optional)
 
-If you also recorded the raw webcam video during step 2 (`ffmpeg` screen/webcam
-capture, or OBS), you can run the *real* pipeline against it instead of a live
-camera, and get real (not synthetic) eval numbers:
+If you also saved the raw webcam video, you can replay the real pipeline over it:
 
 ```yaml
 # config.yaml
 input:
   source: video_file
   video_path: recordings/session1.mp4
+output:
+  backend: dry_run
 ```
 
 ```bash
-eyeos run --config config.yaml --log logs/session1.jsonl
+eyeos run --config config.yaml
 ```
 
-The recorded video itself should **not** be committed (see `.gitignore` — `*.mp4` is
-excluded). If you're comfortable with it, extract just the derived landmark CSV
-(`eyeos.input_sources.video_file` + `eyeos.synthetic_format.landmarks_to_row` per
-frame) and commit *that* instead, the same way `eval/fixtures/synthetic_session.csv`
-was generated synthetically — that gives `eval/run_eval.py` a real-accuracy
-counterpart to the synthetic numbers, without publishing your face.
+This gives you the gates' decisions on real footage, in the session log. It does
+**not** yet give accuracy numbers. `eval/run_eval.py` needs each frame's true
+on-screen target (the `target_x`, `target_y` and `segment` columns in
+`eval/fixtures/synthetic_session.csv`), and a plain recording doesn't have them. A
+real-accuracy eval needs footage taken while known targets are shown, plus a
+labelling step, and that is not built yet. Replaying without `--calibrate` also
+means Gate 2 never passes, because calibrations aren't saved between sessions.
+
+Recordings must **not** be committed: `.gitignore` excludes `recordings/`, `*.mp4`,
+`*.mov`, `*.mkv` and `*.webm`. If you're comfortable with it, commit only derived
+landmark CSVs, which don't contain your face.
