@@ -217,3 +217,71 @@ def test_cli_forwards_gate1_threshold_to_live_sources(tmp_path, source):
 
     assert built.min_detection_confidence == 0.9
     assert built.min_tracking_confidence == 0.9
+
+
+# ---------------------------------------------------------------------------
+# `eyeos run` on a video file, end to end through fake cv2/mediapipe
+# ---------------------------------------------------------------------------
+
+
+def _video_config(tmp_path, video_line=None):
+    video = tmp_path / "clip.mp4"
+    video.write_bytes(b"")  # only has to exist: the fake cv2 does the "decoding"
+    config_path = tmp_path / "config.yaml"
+    config_path.write_text(
+        "input:\n  source: video_file\n"
+        + (video_line if video_line is not None else f"  video_path: {video}\n")
+        + f"output:\n  backend: dry_run\nlogging:\n  session_log_dir: {tmp_path / 'logs'}\n"
+    )
+    return config_path
+
+
+@pytest.mark.parametrize("max_frames", [None, 5])
+def test_cli_runs_a_video_file_end_to_end(tmp_path, capsys, monkeypatch, max_frames):
+    import json
+
+    from tests.fake_capture import FakeCv2, FakeMediapipe, install_fakes
+
+    fake_cv2 = FakeCv2(n_frames=12)
+    fake_mp = FakeMediapipe(faces_per_frame=[1, 0, 2] * 4)
+    install_fakes(monkeypatch, cv2=fake_cv2, mediapipe=fake_mp)
+    argv = ["run", "--config", str(_video_config(tmp_path))]
+    if max_frames is not None:
+        argv += ["--max-frames", str(max_frames)]
+
+    assert main(argv) == 0
+
+    expected = max_frames or 12
+    assert f"processed {expected} frames" in capsys.readouterr().out
+    (capture,) = fake_cv2.captures
+    (mesh,) = fake_mp.face_meshes
+    assert capture.release_calls == 1  # released once, on a full run and an early stop
+    assert mesh.close_calls == 1
+    assert mesh.kwargs["refine_landmarks"] is True
+
+    (log,) = (tmp_path / "logs").glob("session-*.jsonl")
+    records = [json.loads(line) for line in log.read_text().splitlines()]
+    assert len(records) == expected
+    # Container timestamps (index / fps), and every face count reaches Gate 1.
+    assert [r["timestamp_s"] for r in records] == pytest.approx([i / 30 for i in range(expected)])
+    reasons = [r["reasons"]["gate1"] for r in records[:3]]
+    assert reasons[1] == "expected exactly one face, saw 0"
+    assert reasons[2] == "expected exactly one face, saw 2"
+    assert not any(r["move_allowed"] for r in records)  # no calibration: Gate 2 holds
+
+
+def test_cli_reports_a_missing_video_file(tmp_path, capsys, monkeypatch):
+    from tests.fake_capture import FakeCv2, FakeMediapipe, install_fakes
+
+    install_fakes(monkeypatch, cv2=FakeCv2(), mediapipe=FakeMediapipe())
+    config_path = _video_config(tmp_path, f"  video_path: {tmp_path / 'missing.mp4'}\n")
+
+    with pytest.raises(RuntimeError, match="video file not found"):
+        main(["run", "--config", str(config_path), "--no-log"])
+
+
+def test_cli_requires_video_path_for_a_video_source(tmp_path):
+    config_path = _video_config(tmp_path, video_line="")
+
+    with pytest.raises(ValueError, match="video_path is not set"):
+        main(["run", "--config", str(config_path), "--no-log"])

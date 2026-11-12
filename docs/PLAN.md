@@ -9,8 +9,10 @@ Restated from `PRD.md` §8, per `STANDARDS.md` §6 step 1.
       and README's Testing section shows the generated count.
 - [ ] (partial) Dry-run mode runs the whole pipeline on a video file
       - Done: the same `Pipeline` runs end to end on a synthetic-landmark CSV, and
-        `VideoFileInputSource`'s frame loop runs against fake OpenCV/MediaPipe modules
-        (`tests/fake_capture.py`).
+        `eyeos run` runs end to end on a `video_file` config against fake
+        OpenCV/MediaPipe modules (`tests/fake_capture.py`, used by `tests/test_cli.py`):
+        container timestamps, face counts reaching Gate 1, the session log, and cleanup
+        on a full run and on `--max-frames`.
       - Pending: decoding a real video file, which needs the `webcam` extra (Python
         3.10–3.12) and a real recording (see `docs/DEMO.md` §4).
 - [x] Eval numbers generated (synthetic in CI; real ones marked pending)
