@@ -61,6 +61,7 @@ jobs:
           python-version: "3.11"
       - run: pip install -e ".[dev]"
       - run: python -m eval.run_eval --fixtures eval/fixtures --out eval/results.json
+      - run: python scripts/update_readme.py --check
       - uses: actions/upload-artifact@v4
         with:
           name: eval-results

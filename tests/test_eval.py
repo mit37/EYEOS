@@ -70,10 +70,13 @@ def test_generate_rows_covers_all_four_segments():
     assert segments == {"calibration", "on_target", "looking_away", "just_reading"}
 
 
-def test_committed_fixture_exists_and_is_the_current_generator_output():
+def test_committed_fixture_is_the_current_generator_output():
+    from eval.run_eval import load_raw_rows
+
     assert FIXTURE_PATH.exists(), "run `python -m eval.generate_synthetic` to (re)generate it"
-    committed_rows = compute_metrics(FIXTURE_PATH)  # just needs to not raise / parse cleanly
-    assert committed_rows["frame_count"] > 0
+    assert (
+        load_raw_rows(FIXTURE_PATH) == generate_rows()
+    ), "fixture is stale: run python -m eval.generate_synthetic"
 
 
 def test_compute_metrics_on_the_committed_fixture_matches_documented_expectations():
