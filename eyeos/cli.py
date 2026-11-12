@@ -67,7 +67,9 @@ def _build_output(config: Config) -> OutputAdapter:
     if backend == "windows_sendinput":
         from eyeos.output.windows_sendinput import WindowsSendInputOutput
 
-        return WindowsSendInputOutput()
+        return WindowsSendInputOutput(
+            expected_size=(config.screen.width_px, config.screen.height_px)
+        )
     if backend == "pynput":
         from eyeos.output.pynput_fallback import PynputOutputAdapter
 

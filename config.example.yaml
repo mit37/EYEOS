@@ -2,6 +2,8 @@
 # (it's local calibration/tuning, not a secret, but keep your own out of commits).
 # No API keys live here — EyeOS calls no paid API.
 
+# The primary screen's size as the OS reports it (after display scaling). Calibration
+# dots, no-click zones and cursor output all use these pixels; a mismatch is refused.
 screen:
   width_px: 1920
   height_px: 1080

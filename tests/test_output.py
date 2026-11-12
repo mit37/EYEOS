@@ -51,3 +51,43 @@ def test_windows_sendinput_raises_off_windows():
 def test_pynput_adapter_raises_clear_error_without_pynput_installed():
     with pytest.raises(RuntimeError, match="pynput"):
         PynputOutputAdapter()
+
+
+class _FakeUser32:
+    def __init__(self, size):
+        self.size = size
+        self.sent = []
+
+    def GetSystemMetrics(self, index):
+        return self.size[index]
+
+    def SendInput(self, count, pointer, size):
+        mi = pointer.contents.union.mi
+        self.sent.append((mi.dx, mi.dy, mi.dwFlags))
+        return count
+
+
+def _fake_windows(monkeypatch, size=(1536, 864)):
+    import ctypes
+    import types
+
+    user32 = _FakeUser32(size)
+    monkeypatch.setattr(sys, "platform", "win32")
+    monkeypatch.setattr(ctypes, "windll", types.SimpleNamespace(user32=user32), raising=False)
+    return user32
+
+
+def test_windows_sendinput_refuses_a_mismatched_screen(monkeypatch):
+    _fake_windows(monkeypatch)
+    with pytest.raises(ValueError, match="1536x864"):
+        WindowsSendInputOutput(expected_size=(1920, 1080))
+
+
+def test_windows_sendinput_clamps_absolute_coordinates(monkeypatch):
+    user32 = _fake_windows(monkeypatch)
+    out = WindowsSendInputOutput(expected_size=(1536, 864))
+
+    out.move_cursor(5000, 5000)
+    out.move_cursor(-10, -10)
+
+    assert [(dx, dy) for dx, dy, _ in user32.sent] == [(65535, 65535), (0, 0)]

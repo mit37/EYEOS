@@ -30,6 +30,7 @@ class _Widget:
 
 class Tk(_Widget):
     fail_with: Exception | None = None  # set to TclError(...) to simulate "no $DISPLAY"
+    screen_size: tuple[int, int] = (1920, 1080)
 
     def __init__(self) -> None:
         if type(self).fail_with is not None:
@@ -41,6 +42,12 @@ class Tk(_Widget):
         self.updates = 0
         self.mainloop_calls = 0
         self.on_mainloop: Any = None
+
+    def winfo_screenwidth(self) -> int:
+        return self.screen_size[0]
+
+    def winfo_screenheight(self) -> int:
+        return self.screen_size[1]
 
     def title(self, text: str) -> None:
         self.options["title"] = text
@@ -109,9 +116,11 @@ class Canvas(_Widget):
         return [item for item in self.items.values() if item["kind"] == kind]
 
 
-def make_fake_tk(fail_with: Exception | None = None) -> types.ModuleType:
+def make_fake_tk(
+    fail_with: Exception | None = None, screen_size: tuple[int, int] = (1920, 1080)
+) -> types.ModuleType:
     module = types.ModuleType("tkinter")
-    tk_class = type("Tk", (Tk,), {"fail_with": fail_with})
+    tk_class = type("Tk", (Tk,), {"fail_with": fail_with, "screen_size": screen_size})
     module.Tk = tk_class  # type: ignore[attr-defined]
     module.Frame = Frame  # type: ignore[attr-defined]
     module.Label = Label  # type: ignore[attr-defined]

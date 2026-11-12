@@ -134,7 +134,7 @@ ruff check . && black --check . && mypy eyeos   # lint + typecheck (CI runs thes
 python scripts/update_readme.py --check # README numbers match the code (CI runs this too)
 ```
 
-**<!-- test-count -->219<!-- /test-count --> tests** (counted by `scripts/update_readme.py` from `pytest --collect-only`), covering:
+**<!-- test-count -->222<!-- /test-count --> tests** (counted by `scripts/update_readme.py` from `pytest --collect-only`), covering:
 
 - The four-gate state machine has the largest share (<!-- gate-test-count -->65<!-- /gate-test-count --> tests). They cover every gate's pass/fail conditions, the kill switch, no-click zones, click-rate limiting, the speed limit, non-advancing timestamps, dwell/jitter behaviour and each confirmation mode. All of it is driven by explicit timestamps rather than a wall clock, so the tests *are* a fake clock.
 - Features, calibration (against a known synthetic ground-truth mapping) and the One Euro filter (against the reference algorithm's documented behaviour) are each unit-tested in isolation.
@@ -155,7 +155,8 @@ python scripts/update_readme.py --check # README numbers match the code (CI runs
 - **Webcam timestamps come from the host clock.** They are taken when a frame arrives, because `CAP_PROP_POS_MSEC` is constant on live DirectShow/AVFoundation cameras. That behaviour was reasoned from OpenCV's source and not tested on hardware. A clock that doesn't advance fails Gate 1 instead of silently freezing the timers.
 - **Gate 1's confidence check is enforced inside MediaPipe on real input.** The legacy API has no per-face score, so the threshold is passed to MediaPipe's detection and tracking thresholds. A face below it arrives as "no face", and the "confidence below threshold" reason only ever appears on synthetic input.
 - **A natural eye closure can click.** In `blink_hold`/`either` mode, if your eyes stay closed for at least `confirmation_hold_s` (0.4 s) while a dwell is satisfied, that counts as a deliberate blink-hold, and a long natural blink would click. Use `confirmation_mode: keypress` to rule this out.
-- **Calibrations aren't saved.** `--calibrate` runs once per session, by design ("a calibration exists for this session"). The screen size comes from `config.screen` and is not checked against the real display, so set it to your primary screen's resolution in physical pixels. On a mismatched or DPI-scaled screen, calibration dots can fall off-screen.
+- **Calibrations aren't saved.** `--calibrate` runs once per session, by design ("a calibration exists for this session").
+- **Not DPI-aware.** `config.screen` must equal the size the OS reports for the primary screen after display scaling (a 1920x1080 panel at 125% reports 1536x864). The calibration screen and the `SendInput` backend refuse to start on a mismatch rather than drawing dots off-screen.
 - **No multi-monitor calibration.** Calibration targets the primary screen only (PRD non-goal, future work).
 - **No typing / keyboard emulation.** EyeOS only moves the cursor and clicks.
 - **The head-pose estimate is a simplified geometric approximation** (ratios of landmark positions scaled to degrees), not a camera-calibrated `solvePnP` fit. It's accurate enough for Gate 2's relative "has the pose drifted" check, not for absolute pose measurement.

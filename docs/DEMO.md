@@ -25,8 +25,8 @@ Edit `config.yaml` (it is gitignored):
 
 ```yaml
 screen:
-  width_px: 1920   # your primary screen's real resolution, in physical pixels
-  height_px: 1080
+  width_px: 1920   # the size Windows *reports* for the primary screen, after display
+  height_px: 1080  # scaling (1920x1080 at 125% reports 1536x864); eyeos refuses a mismatch
 input:
   source: webcam
   device_index: 0  # change if Windows picks the wrong camera

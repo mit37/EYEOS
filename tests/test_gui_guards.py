@@ -102,3 +102,13 @@ def test_calibration_ui_reprompts_a_dot_whose_capture_failed(fake_tk):
     assert ui.run() is True
     assert attempts[0] == attempts[1]  # same dot asked again
     assert attempts[1:] == target_points(1920, 1080)
+
+
+def test_calibration_ui_refuses_a_config_screen_that_does_not_match(monkeypatch):
+    # Windows at 125% scaling reports a 1920x1080 panel as 1536x864.
+    monkeypatch.setitem(sys.modules, "tkinter", make_fake_tk(screen_size=(1536, 864)))
+    with pytest.raises(ValueError, match="1536x864"):
+        CalibrationUI(1920, 1080, capture_sample=lambda _pt: True)
+
+    ui = CalibrationUI(1536, 864, capture_sample=lambda _pt: True)
+    assert all(0 <= x < 1536 and 0 <= y < 864 for x, y in ui.targets)
