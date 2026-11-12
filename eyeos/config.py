@@ -119,7 +119,10 @@ def load_config(path: str | Path | None) -> Config:
     raw: Any = {}
     if path is not None:
         text = Path(path).read_text()
-        raw = yaml.safe_load(text) or {}
+        try:
+            raw = yaml.safe_load(text) or {}
+        except yaml.YAMLError as e:
+            raise ValueError(f"{path} is not valid YAML: {e}") from e
 
     _check_keys("config", raw, Config)
     gates_raw = raw.get("gates") or {}
@@ -133,6 +136,10 @@ def load_config(path: str | Path | None) -> Config:
     zones = tuple(NoClickZone(**z) for z in zones_raw)
 
     output = _dc(OutputConfig, raw.get("output"), "output")
+    for name in ("kill_hotkey", "confirm_key"):
+        value = getattr(output, name)
+        if value is not None and not isinstance(value, str):
+            raise ValueError(f"output.{name} must be a key name in quotes, not {value!r}")
     try:
         kill_key = parse_key_name(output.kill_hotkey)
     except ValueError as e:

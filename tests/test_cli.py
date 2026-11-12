@@ -472,6 +472,15 @@ def test_the_eyeos_command_prints_errors_as_one_line(tmp_path, capsys, monkeypat
     assert console_main(["run", "--config", str(tmp_path / "nope.yaml")]) == 2
     assert "eyeos: error:" in capsys.readouterr().err
 
+    for name, text in [
+        ("bad.yaml", "output: {kill_hotkey: [esc\n"),
+        ("int.yaml", "output: {kill_hotkey: 5}\n"),
+    ]:
+        (tmp_path / name).write_text(text)
+        assert console_main(["run", "--config", str(tmp_path / name)]) == 2
+        err = capsys.readouterr().err
+        assert err.startswith("eyeos: error:") and "Traceback" not in err
+
 
 def test_the_eyeos_command_reports_ctrl_c_cleanly(tmp_path, capsys, monkeypatch):
     import eyeos.cli as cli
