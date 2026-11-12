@@ -88,13 +88,14 @@ class Pipeline:
         self._filter: OneEuroFilter2D | None = None
         self._blink_hold_start_s: float | None = None
         self._reopen_since_s: float | None = None
+        self._last_closed_s = 0.0
         # The last point the gates emitted for an observed (eyes open, trusted) frame;
         # None once an observed frame fails any gate. Held frames reuse it.
         self._last_open_gaze: ScreenPoint | None = None
         self._kill_seen = False
 
     def _resolve_blink_gesture(
-        self, timestamp_s: float, raw_eyes_open: bool
+        self, timestamp_s: float, raw_eyes_open: bool, gaze_moved: bool = False
     ) -> tuple[bool, float | None, bool]:
         """Turn a raw per-frame eye-openness reading into (visible_for_gate1, confirm_hold_s).
 
@@ -115,27 +116,35 @@ class Pipeline:
 
         Returns ``(visible_for_gate1, confirm_hold_s, eyes_open)``. ``eyes_open`` is
         False on closed frames and on the first ``_MIN_REOPEN_S`` of a reopening, which
-        still belong to the closure.
+        still belong to the closure (a glimpse through lid flutter). Two reopenings are
+        never debounced: one after a closure shorter than ``_MIN_REOPEN_S`` (a detection
+        dropout), and one onto a different point (``gaze_moved``), which is real looking.
+        On debounce frames the hold stays at its value on the last closed frame, so the
+        blink-hold can only be confirmed while the eyes are actually closed.
         """
         if raw_eyes_open:
             if self._blink_hold_start_s is None:
                 return True, None, True
             if self._reopen_since_s is None:
                 self._reopen_since_s = timestamp_s
-            if timestamp_s - self._reopen_since_s >= _MIN_REOPEN_S - 1e-9:
+            closure_s = self._reopen_since_s - self._blink_hold_start_s
+            open_s = timestamp_s - self._reopen_since_s
+            if gaze_moved or closure_s < _MIN_REOPEN_S - 1e-9 or open_s >= _MIN_REOPEN_S - 1e-9:
                 self._blink_hold_start_s = None
                 self._reopen_since_s = None
                 return True, None, True
-            # Not open long enough yet: still part of the closure (below).
+            # A glimpse during a closure: still part of it (below), hold frozen.
         else:
             self._reopen_since_s = None
+            self._last_closed_s = timestamp_s
         if self.config.gates.confirmation_mode == "keypress":
             # No blink gesture to wait for: closed eyes fail Gate 1 now.
             return False, None, False
 
         if self._blink_hold_start_s is None:
             self._blink_hold_start_s = timestamp_s
-        held_s = timestamp_s - self._blink_hold_start_s
+        last_closed_s = timestamp_s if not raw_eyes_open else self._last_closed_s
+        held_s = last_closed_s - self._blink_hold_start_s
 
         max_hold_s = self.config.gates.confirmation_hold_s + _BLINK_GESTURE_GRACE_S
         if held_s <= max_hold_s:
@@ -176,10 +185,10 @@ class Pipeline:
 
         landmarks = frame.landmarks
         raw_eyes_open = landmarks.both_irises_visible
-        visible_for_gate, confirm_hold_s, eyes_open = self._resolve_blink_gesture(
-            frame.timestamp_s, raw_eyes_open
-        )
         features = extract_features(landmarks)
+        visible_for_gate, confirm_hold_s, eyes_open = self._resolve_blink_gesture(
+            frame.timestamp_s, raw_eyes_open, self._gaze_moved_off_hold(raw_eyes_open, features)
+        )
 
         # Closed-eye landmarks are never mapped to the screen or fed to the filter: the
         # iris estimate under a closed lid is MediaPipe's guess. During a blink-hold the
@@ -212,6 +221,20 @@ class Pipeline:
             confirm_keypress=confirm_keypress,
             gaze_held=gaze_held,
         )
+
+    def _gaze_moved_off_hold(self, raw_eyes_open: bool, features: FeatureVector) -> bool:
+        """Whether reopened eyes look away from the held point (by more than the dwell
+        radius), in which case the reopening is real looking, not a glimpse."""
+        held = self._last_open_gaze
+        if not raw_eyes_open or self._blink_hold_start_s is None or held is None:
+            return False
+        if self.calibration is None or not self.calibration.is_fitted:
+            return False
+        raw = self.calibration.predict(features)
+        if not all(math.isfinite(c) for c in raw):
+            return False
+        px = self._to_screen_pixel(raw)
+        return math.hypot(px[0] - held[0], px[1] - held[1]) > self.config.gates.dwell_jitter_px
 
     def _map_gaze(self, timestamp_s: float, features: FeatureVector) -> ScreenPoint | None:
         if self.calibration is None or not self.calibration.is_fitted:

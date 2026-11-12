@@ -841,3 +841,87 @@ def test_blinks_at_an_earlier_target_do_not_spoil_the_next_click(fps):
     assert result.total_clicks == 1
     clicked = next(s for s in result.statuses if s.click_fired)
     assert clicked.cursor_target_px == pytest.approx((1060.0, 540.0))
+
+
+@pytest.mark.parametrize("fps", [15, 30, 60])
+def test_a_closure_just_short_of_the_hold_never_clicks(fps):
+    # 1/3 s of closed eyes after a dwell, then open again: below confirmation_hold_s.
+    # The reopening's first frames must not push the hold over 0.4 s.
+    frames = _seq(
+        [
+            (1.0, lambda: _gaze_landmarks(960, 540)),
+            (1 / 3, lambda: _gaze_landmarks(960, 540, closed=True)),
+            (0.5, lambda: _gaze_landmarks(960, 540)),
+        ],
+        fps=fps,
+    )
+    result, _output = _run_frames(frames)
+    assert result.total_clicks == 0
+
+
+@pytest.mark.parametrize("fps", [15, 30, 60])
+def test_a_blink_hold_click_only_fires_while_the_eyes_are_closed(fps):
+    frames = _seq(
+        [
+            (1.0, lambda: _gaze_landmarks(960, 540)),
+            (0.5, lambda: _gaze_landmarks(960, 540, closed=True)),
+            (0.5, lambda: _gaze_landmarks(960, 540)),
+        ],
+        fps=fps,
+    )
+    result, _output = _run_frames(frames)
+    clicked = [f for f, s in zip(frames, result.statuses, strict=True) if s.click_fired]
+    assert len(clicked) == 1
+    assert not clicked[0].landmarks.both_irises_visible
+
+
+@pytest.mark.parametrize("fps", [30, 60])
+def test_a_key_pressed_just_after_reopening_on_another_point_never_clicks_the_old_one(fps):
+    # Default "either" mode: dwell on A, blink while the gaze moves to B, press the
+    # confirm key 0.05 s after the eyes reopen on B. A must not be clicked.
+    frames = _seq(
+        [
+            (1.0, lambda: _gaze_landmarks(960, 540)),
+            (2 / 30, lambda: _gaze_landmarks(1060, 540, closed=True)),
+            (0.5, lambda: _gaze_landmarks(1060, 540)),
+        ],
+        fps=fps,
+    )
+    reopened = next(
+        f.timestamp_s for f in frames if f.timestamp_s > 1.0 and f.landmarks.both_irises_visible
+    )
+
+    def signals(t):
+        return False, reopened + 0.05 - 1e-9 <= t <= reopened + 0.1
+
+    output = DryRunOutputAdapter(echo=None)
+    result = Pipeline(
+        Config(),
+        ListInputSource(frames),
+        output,
+        calibration=_fitted_calibration(),
+        external_signals=signals,
+    ).run()
+    assert result.total_clicks == 0
+
+
+@pytest.mark.parametrize("every", [6, 7])
+def test_frequent_one_frame_iris_dropouts_still_allow_a_dwell_and_a_click(every):
+    # MediaPipe losing the iris for single frames is not a blink and must not cost the
+    # reopening debounce each time.
+    frames = _seq([(3.0, lambda: _gaze_landmarks(1060, 540))])
+    frames = [
+        (
+            Frame(f.timestamp_s, _gaze_landmarks(1060, 540, closed=True))
+            if k % every == every - 1
+            else f
+        )
+        for k, f in enumerate(frames)
+    ]
+    t = frames[-1].timestamp_s
+    frames += [Frame(t + (k + 1) / 30, _gaze_landmarks(1060, 540, closed=True)) for k in range(15)]
+
+    result, _output = _run_frames(frames)
+
+    assert any(s.gate3_stability for s in result.statuses[:90])
+    assert result.total_clicks == 1

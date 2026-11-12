@@ -71,7 +71,7 @@ Restated from `PRD.md` §8, per `STANDARDS.md` §6 step 1.
   - Camera errors during `--calibrate` were swallowed.
 
   Each fix came with a test that failed before it, and each was re-reviewed.
-- **Review rounds 3-5 (2026-11-12).** The first fix for the half-closed-lid bug was
+- **Review rounds 3-6 (2026-11-12).** The first fix for the half-closed-lid bug was
   itself wrong, and is recorded here as a negative result.
   - That fix held the gaze while the lids were under 80% of their usual opening.
     Looking down narrows the lids, so a confirm key pressed just after looking away
@@ -85,6 +85,11 @@ Restated from `PRD.md` §8, per `STANDARDS.md` §6 step 1.
     flutter pattern in the next round. What finally held is a 0.1 s debounce on
     reopening: a shorter glimpse stays part of the closure. A click also uses the
     dwell up.
+  - Round 6 found that the debounce itself let a 0.33 s blink click (its open frames
+    advanced the blink-hold) and let a keypress click the old target just after the
+    eyes reopened elsewhere. The hold now freezes at the last closed frame, and the
+    debounce is skipped after a sub-0.1 s dropout or when the reopened gaze has
+    moved.
   - Eye openness is now judged in each eye's own frame, so it holds at any head
     roll.
   - Further fixes in these rounds: MediaPipe's per-axis normalisation broke roll on
