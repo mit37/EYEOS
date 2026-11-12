@@ -1,12 +1,13 @@
 """A fullscreen 9-dot calibration screen (PRD §4: "a calibration UI (a fullscreen
-Tkinter/PySide6 dots screen)"). Needs a display — untested here, same as overlay.py
-(and guards the same two failure modes: tkinter missing entirely, or installed with
-no $DISPLAY); see docs/PLAN.md.
+Tkinter/PySide6 dots screen)"). Needs a display; tested headless against a fake
+tkinter (tests/fake_tk.py), and guards both no-display failure modes (tkinter missing,
+or installed with no $DISPLAY).
 
 Usage: show one target at a time; the caller presses space when they're looking
 steadily at the dot, which calls ``capture_sample(target_px)`` (wired by the caller to
 pull the current FeatureVector out of the running pipeline and add it to a
-Calibration). Escape cancels.
+Calibration). If it returns False (no usable sample), the same dot is asked for again
+instead of being silently skipped. Escape cancels.
 """
 
 from __future__ import annotations
@@ -24,7 +25,7 @@ class CalibrationUI:
         self,
         screen_width_px: int,
         screen_height_px: int,
-        capture_sample: Callable[[tuple[float, float]], None],
+        capture_sample: Callable[[tuple[float, float]], bool | None],
     ) -> None:
         try:
             import tkinter as tk
@@ -56,7 +57,7 @@ class CalibrationUI:
 
         self._draw_current_target()
 
-    def _draw_current_target(self) -> None:
+    def _draw_current_target(self, retry: bool = False) -> None:
         self.canvas.delete("all")
         if self._index >= len(self.targets):
             return
@@ -70,11 +71,21 @@ class CalibrationUI:
             fill="white",
             text=f"Point {self._index + 1}/{len(self.targets)} — space to capture, esc to cancel",
         )
+        if retry:
+            self.canvas.create_text(
+                20,
+                50,
+                anchor="nw",
+                fill="orange",
+                text="No usable sample (face/eyes not found). Look at the dot, press space again.",
+            )
 
     def _on_space(self, _event: object) -> None:
         if self._index >= len(self.targets):
             return
-        self.capture_sample(self.targets[self._index])
+        if self.capture_sample(self.targets[self._index]) is False:
+            self._draw_current_target(retry=True)
+            return
         self._index += 1
         if self._index >= len(self.targets):
             self.root.destroy()

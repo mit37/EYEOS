@@ -1,9 +1,9 @@
 """A small always-on-top window showing the four gate lights live (PRD §2: "the
 overlay shows the four gate lights live"). Needs a display, which no cloud CI runner
 has — ``tkinter`` itself may or may not be installed (it isn't in this project's local
-build container; it is, but with no ``$DISPLAY``, on GitHub's own runners), so this
-guards both failure modes and only fails clearly, never exercised for real; see
-docs/PLAN.md.
+build container; it is, but with no ``$DISPLAY``, on GitHub's own runners). Both failure
+modes raise a clear RuntimeError; the drawing logic is tested against a fake tkinter
+(tests/fake_tk.py) but has never been shown on a real screen here; see docs/PLAN.md.
 """
 
 from __future__ import annotations
