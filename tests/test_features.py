@@ -68,7 +68,7 @@ def test_iris_offset_toward_bottom_is_positive_y():
     assert f.left_iris_y == pytest.approx(0.5)
 
 
-@pytest.mark.parametrize("top_y", [0.38, 0.39, 0.40, 0.41, 0.418])
+@pytest.mark.parametrize("top_y", [0.39, 0.40, 0.41, 0.418])
 def test_lid_movement_never_changes_the_iris_offsets(top_y):
     # A blink moves the upper lid, not the corners or the iris: the gaze must not move.
     iris = dict(left_iris_center=Point3D(0.39, 0.405), right_iris_center=Point3D(0.63, 0.405))
@@ -84,7 +84,15 @@ def test_lid_movement_never_changes_the_iris_offsets(top_y):
     assert closing.head_pose() == pytest.approx(open_eyes.head_pose())
 
 
-def test_iris_offsets_follow_the_corner_line_when_the_head_rolls():
+def test_a_wink_changes_neither_the_head_pose_nor_the_other_eye():
+    open_eyes = extract_features(make_landmarks())
+    wink = extract_features(make_landmarks(left_eye_top=Point3D(0.38, 0.41)))
+    assert wink.head_pose() == pytest.approx(open_eyes.head_pose())
+    assert wink.iris_vector() == pytest.approx(open_eyes.iris_vector())
+
+
+@pytest.mark.parametrize("roll", [10, 85, 89, 91, 95, 135, 180, -100])
+def test_iris_offsets_follow_the_corner_line_when_the_head_rolls(roll):
     import math
 
     def rotated(p, angle, about=(0.5, 0.4)):
@@ -105,12 +113,15 @@ def test_iris_offsets_follow_the_corner_line_when_the_head_rolls():
         "right_eye_top",
         "right_eye_bottom",
     ]
-    rolled = make_landmarks(**{n: rotated(getattr(base, n), math.radians(10)) for n in names})
+    rolled = make_landmarks(**{n: rotated(getattr(base, n), math.radians(roll)) for n in names})
 
+    # The same offsets at any roll, including across +-90 deg (a portrait camera, or a
+    # user lying on their side), where sorting the corners by x used to flip them.
     assert extract_features(rolled).iris_vector() == pytest.approx(
         extract_features(base).iris_vector(), abs=1e-9
     )
-    assert extract_features(rolled).roll_deg == pytest.approx(10.0)
+    expected = (roll + 180) % 360 - 180
+    assert extract_features(rolled).roll_deg == pytest.approx(expected) or abs(expected) == 180
 
 
 def test_right_eye_offset_independent_of_left():
