@@ -448,8 +448,11 @@ def test_keypress_mode_has_no_blink_grace_and_only_keypresses_click():
     ).run()
 
     first_closed = 30
-    assert result.statuses[first_closed].gate1_presence is False
-    assert result.statuses[first_closed].reasons["gate1"] == "both irises not visible"
+    # A closure shorter than the 0.1 s debounce is held as a detection dropout; past it,
+    # closed eyes fail Gate 1 (no blink-hold grace in keypress mode).
+    assert result.statuses[first_closed].gate1_presence is True
+    assert result.statuses[first_closed + 4].gate1_presence is False
+    assert result.statuses[first_closed + 4].reasons["gate1"] == "both irises not visible"
     assert result.total_clicks == 0
 
     frames = [Frame(timestamp_s=i / 30, landmarks=make_landmarks()) for i in range(40)]
@@ -924,4 +927,58 @@ def test_frequent_one_frame_iris_dropouts_still_allow_a_dwell_and_a_click(every)
     result, _output = _run_frames(frames)
 
     assert any(s.gate3_stability for s in result.statuses[:90])
+    assert result.total_clicks == 1
+
+
+@pytest.mark.parametrize("fps, blink, every", [(15, 2, 3), (30, 3, 4), (60, 6, 7)])
+def test_a_blink_followed_by_iris_dropouts_never_adds_up_to_a_click(fps, blink, every):
+    # The blink-hold is one unbroken run of closed frames: a 0.1 s blink plus one-frame
+    # dropouts must not add up to 0.4 s and click.
+    frames = _seq([(1.0, lambda: _gaze_landmarks(960, 540))], fps=fps)
+    t0 = frames[-1].timestamp_s
+    pattern = "c" * blink + ("o" * (every - 1) + "c") * (3 * fps // every)
+    for k, ch in enumerate(pattern, start=1):
+        frames.append(Frame(t0 + k / fps, _gaze_landmarks(960, 540, closed=(ch == "c"))))
+
+    result, _output = _run_frames(frames)
+    assert result.total_clicks == 0
+
+
+@pytest.mark.parametrize("seed", range(8))
+def test_noisy_lid_flutter_at_15_fps_clicks_at_most_once(seed):
+    # As the random flutter test, with +-20 px of gaze noise on every glimpse.
+    import random
+
+    rng = random.Random(seed)
+    frames = _seq([(1.0, lambda: _gaze_landmarks(960, 300))], fps=15)
+    t0, pattern = frames[-1].timestamp_s, ""
+    for _ in range(450):
+        pattern += "o" if rng.random() < 0.45 and not pattern.endswith("oo") else "c"
+    for k, ch in enumerate(pattern, start=1):
+        lids = _lids(0.3) if ch == "o" else _lids(0.025)
+        dx, dy = rng.uniform(-20, 20), rng.uniform(-20, 20)
+        tops = {n: v for n, v in lids.items() if n.endswith("_eye_top")}
+        frames.append(Frame(t0 + k / 15, _gaze_landmarks(960 + dx, 300 + dy, **tops)))
+
+    result, _output = _run_frames(frames)
+    assert result.total_clicks <= 1
+
+
+def test_keypress_mode_tolerates_one_frame_iris_dropouts():
+    from dataclasses import replace
+
+    base = Config()
+    config = replace(base, gates=replace(base.gates, confirmation_mode="keypress"))
+    frames = _seq([(2.0, lambda: _gaze_landmarks(960, 540))])
+    frames = [
+        Frame(f.timestamp_s, _gaze_landmarks(960, 540, closed=True)) if k % 12 == 11 else f
+        for k, f in enumerate(frames)
+    ]
+    result = Pipeline(
+        config,
+        ListInputSource(frames),
+        DryRunOutputAdapter(echo=None),
+        calibration=_fitted_calibration(),
+        external_signals=lambda t: (False, t >= 1.85),
+    ).run()
     assert result.total_clicks == 1

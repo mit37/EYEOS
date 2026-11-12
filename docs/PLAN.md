@@ -71,7 +71,7 @@ Restated from `PRD.md` §8, per `STANDARDS.md` §6 step 1.
   - Camera errors during `--calibrate` were swallowed.
 
   Each fix came with a test that failed before it, and each was re-reviewed.
-- **Review rounds 3-6 (2026-11-12).** The first fix for the half-closed-lid bug was
+- **Review rounds 3-7 (2026-11-12).** The first fix for the half-closed-lid bug was
   itself wrong, and is recorded here as a negative result.
   - That fix held the gaze while the lids were under 80% of their usual opening.
     Looking down narrows the lids, so a confirm key pressed just after looking away
@@ -90,6 +90,14 @@ Restated from `PRD.md` §8, per `STANDARDS.md` §6 step 1.
     eyes reopened elsewhere. The hold now freezes at the last closed frame, and the
     debounce is skipped after a sub-0.1 s dropout or when the reopened gaze has
     moved.
+  - Round 7 found that the hold still spanned glimpses (a blink plus dropouts
+    clicked with 0.15-0.27 s of closed eyes) and that the gaze-moved check misfired
+    on noisy gaze. The blink-hold now counts one unbroken run of closed frames, and
+    the gaze-moved check was replaced by ignoring the confirm key during the
+    debounce. One fail-closed gap is left and documented: very frequent dropouts
+    right after a blink can keep Gate 1 failing.
+  - The blink path is the part of EyeOS that most needs real recordings: each round
+    found a new noise pattern, and none of the thresholds is tuned on real data.
   - Eye openness is now judged in each eye's own frame, so it holds at any head
     roll.
   - Further fixes in these rounds: MediaPipe's per-axis normalisation broke roll on
