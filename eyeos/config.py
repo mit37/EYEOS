@@ -76,7 +76,7 @@ class OutputConfig:
 
 @dataclass(frozen=True)
 class LoggingConfig:
-    session_log_dir: str = "logs"
+    session_log_dir: str | None = "logs"  # null disables the default session log
 
 
 @dataclass(frozen=True)
@@ -121,6 +121,10 @@ def load_config(path: str | Path | None) -> Config:
         if confirm_key == kill_key:
             raise ValueError("output.confirm_key must differ from output.kill_hotkey")
 
+    calibration = _dc(CalibrationConfig, raw.get("calibration"))
+    if calibration.points != 9:
+        raise ValueError("calibration.points: PRD §3 fixes a 9-point calibration")
+
     gates = GatesConfig(**gates_raw, no_click_zones=zones)
     if gates.confirmation_mode not in CONFIRMATION_MODES:
         raise ValueError(
@@ -131,7 +135,7 @@ def load_config(path: str | Path | None) -> Config:
     return Config(
         screen=_dc(ScreenConfig, raw.get("screen")),
         input=_dc(InputConfig, raw.get("input")),
-        calibration=_dc(CalibrationConfig, raw.get("calibration")),
+        calibration=calibration,
         filter=_dc(FilterConfig, raw.get("filter")),
         gates=gates,
         output=output,

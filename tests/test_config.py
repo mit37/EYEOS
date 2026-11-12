@@ -42,3 +42,12 @@ def test_confirmation_mode_and_confirm_key_validation(tmp_path):
     p.write_text("output:\n  kill_hotkey: esc\n  confirm_key: Escape\n")
     with pytest.raises(ValueError, match="must differ"):
         load_config(p)
+
+
+def test_calibration_points_must_be_nine(tmp_path):
+    import pytest
+
+    p = tmp_path / "c.yaml"
+    p.write_text("calibration:\n  points: 8\n")
+    with pytest.raises(ValueError, match="calibration.points"):
+        load_config(p)

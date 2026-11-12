@@ -11,6 +11,12 @@ from eyeos.synthetic_format import CSV_FIELDNAMES, landmarks_to_row
 from tests.test_features import make_landmarks
 
 
+@pytest.fixture(autouse=True)
+def _run_in_tmp_dir(tmp_path, monkeypatch):
+    # Session logs default to ./logs; keep test runs from writing into the repo.
+    monkeypatch.chdir(tmp_path)
+
+
 def _write_synthetic_csv(path):
     with open(path, "w", newline="") as f:
         writer = csv.DictWriter(f, fieldnames=CSV_FIELDNAMES)
@@ -165,3 +171,33 @@ def test_cli_wires_and_closes_the_kill_switch_for_real_backends(tmp_path, monkey
     assert main(["run", "--config", str(_real_backend_config(tmp_path))]) == 0
     assert isinstance(seen["external_signals"], KeySignals)
     assert not source.running
+
+
+def _synthetic_config(tmp_path, extra=""):
+    csv_path = tmp_path / "session.csv"
+    _write_synthetic_csv(csv_path)
+    config_path = tmp_path / "config.yaml"
+    config_path.write_text(
+        f"input:\n  source: synthetic\n  synthetic_path: {csv_path}\n"
+        f"output:\n  backend: dry_run\n{extra}"
+    )
+    return config_path
+
+
+def test_cli_writes_a_session_log_by_default(tmp_path):
+    log_dir = tmp_path / "my-logs"
+    config_path = _synthetic_config(tmp_path, f"logging:\n  session_log_dir: {log_dir}\n")
+
+    assert main(["run", "--config", str(config_path)]) == 0
+
+    logs = list(log_dir.glob("session-*.jsonl"))
+    assert len(logs) == 1
+    assert len(logs[0].read_text().strip().splitlines()) == 3
+
+
+def test_cli_no_log_writes_nothing(tmp_path):
+    log_dir = tmp_path / "my-logs"
+    config_path = _synthetic_config(tmp_path, f"logging:\n  session_log_dir: {log_dir}\n")
+
+    assert main(["run", "--config", str(config_path), "--no-log"]) == 0
+    assert not log_dir.exists()

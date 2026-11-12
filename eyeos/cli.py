@@ -9,6 +9,8 @@ from __future__ import annotations
 
 import argparse
 import sys
+from datetime import datetime, timezone
+from pathlib import Path
 
 from eyeos.config import Config, load_config
 from eyeos.hotkeys import KeySignals, build_key_signals
@@ -70,9 +72,26 @@ def build_arg_parser() -> argparse.ArgumentParser:
         "--config", default=None, help="path to a config YAML (default: built-in defaults)"
     )
     run.add_argument("--max-frames", type=int, default=None, help="stop after N frames")
-    run.add_argument("--log", default=None, help="path to write a JSON-lines session log")
+    run.add_argument(
+        "--log",
+        default=None,
+        help="session log path (default: <logging.session_log_dir>/session-<UTC time>.jsonl)",
+    )
+    run.add_argument("--no-log", action="store_true", help="don't write a session log")
 
     return parser
+
+
+def _session_log_path(args: argparse.Namespace, config: Config) -> Path | None:
+    """PRD §2: every gate decision is logged, so a session log is on by default."""
+    if args.no_log:
+        return None
+    if args.log:
+        return Path(args.log)
+    if config.logging.session_log_dir is None:
+        return None
+    stamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
+    return Path(config.logging.session_log_dir) / f"session-{stamp}.jsonl"
 
 
 def _build_key_signals(config: Config) -> KeySignals:
@@ -96,12 +115,13 @@ def _run(args: argparse.Namespace) -> int:
             )
             return 2
 
+    log_path = _session_log_path(args, config)
     output: OutputAdapter | None = None
     logger: SessionLogger | None = None
     try:
         input_source = _build_input_source(config)
         output = _build_output(config)
-        logger = SessionLogger(args.log) if args.log else None
+        logger = SessionLogger(log_path) if log_path is not None else None
         pipeline = Pipeline(config, input_source, output, logger=logger, external_signals=keys)
         result = pipeline.run(max_frames=args.max_frames)
     finally:
@@ -116,6 +136,8 @@ def _run(args: argparse.Namespace) -> int:
         f"processed {result.frame_count} frames: "
         f"{result.total_moves} moves, {result.total_clicks} clicks"
     )
+    if log_path is not None:
+        print(f"session log: {log_path}")
     if result.killed:
         print(f"kill switch ({config.output.kill_hotkey}) pressed: session ended")
     return 0

@@ -14,7 +14,7 @@ input:
   synthetic_path: eval/fixtures/synthetic_session.csv # synthetic only
 
 calibration:
-  points: 9
+  points: 9 # fixed by PRD §3; other values are rejected
 
 filter:
   # One Euro filter (Casiez et al. 2012)
@@ -51,4 +51,6 @@ output:
   confirm_key: null
 
 logging:
+  # One JSON line per frame with every gate's decision and reason (PRD §2).
+  # `eyeos run` writes logs/session-<UTC time>.jsonl by default; null disables it.
   session_log_dir: logs
