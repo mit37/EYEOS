@@ -77,6 +77,10 @@ class _OpenCVMediaPipeSource(InputSource):
         )
         self._cap = self._open_capture(cv2)
 
+    def _frame_timestamp_s(self) -> float:
+        """Timestamp of the frame just read. Video files: the container's position."""
+        return float(self._cap.get(self._cv2.CAP_PROP_POS_MSEC)) / 1000.0
+
     def _to_landmarks(self, result: Any) -> FaceLandmarks | None:
         faces = result.multi_face_landmarks or []
         if not faces:
@@ -95,7 +99,7 @@ class _OpenCVMediaPipeSource(InputSource):
                 ok, frame_bgr = self._cap.read()
                 if not ok:
                     break
-                timestamp_s = self._cap.get(cv2.CAP_PROP_POS_MSEC) / 1000.0
+                timestamp_s = self._frame_timestamp_s()
                 frame_rgb = cv2.cvtColor(frame_bgr, cv2.COLOR_BGR2RGB)
                 result = self._face_mesh.process(frame_rgb)
                 yield Frame(timestamp_s=timestamp_s, landmarks=self._to_landmarks(result))

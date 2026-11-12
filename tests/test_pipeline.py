@@ -470,3 +470,17 @@ def test_keypress_mode_has_no_blink_grace_and_only_keypresses_click():
         external_signals=lambda t: (False, t >= 1.0),
     ).run()
     assert result.total_clicks == 1
+
+
+def test_a_frozen_clock_never_moves_the_cursor():
+    frames = [
+        Frame(
+            timestamp_s=0.0,
+            landmarks=make_landmarks(left_iris_center=Point3D(0.36 + i * 0.001, 0.40)),
+        )
+        for i in range(60)
+    ]
+    result, _ = _run_frames(frames)
+
+    assert result.total_moves <= 1
+    assert all("timestamp not advancing" in s.reasons["gate1"] for s in result.statuses[1:])

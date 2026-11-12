@@ -92,12 +92,18 @@ class GateStateMachine:
         self._awaiting_confirmation_release = False
         self._last_emitted_px: ScreenPoint | None = None
         self._last_emitted_timestamp_s: float | None = None
+        self._last_frame_timestamp_s: float | None = None
 
     def set_calibration(self, status: CalibrationStatus) -> None:
         self._calibration = status
 
     # -- gate 1 ---------------------------------------------------------------
     def _gate1(self, frame: FrameInput) -> tuple[bool, str]:
+        # A clock that doesn't advance makes every timing check (dwell, speed, blink-hold)
+        # meaningless, so it fails closed rather than pinning the cursor silently.
+        last_t = self._last_frame_timestamp_s
+        if last_t is not None and not frame.timestamp_s > last_t:
+            return False, f"timestamp not advancing (t={frame.timestamp_s:.3f} <= {last_t:.3f})"
         if frame.face_count != 1:
             return False, f"expected exactly one face, saw {frame.face_count}"
         if frame.detection_confidence < self.config.presence_confidence_threshold:
@@ -234,6 +240,8 @@ class GateStateMachine:
         if move_allowed and frame.gaze_point_px is not None:
             self._last_emitted_px = frame.gaze_point_px
             self._last_emitted_timestamp_s = frame.timestamp_s
+        if self._last_frame_timestamp_s is None or frame.timestamp_s > self._last_frame_timestamp_s:
+            self._last_frame_timestamp_s = frame.timestamp_s
 
         return GateStatus(
             gate1_presence=gate1,

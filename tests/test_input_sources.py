@@ -251,3 +251,28 @@ def test_webcam_extra_pins_a_mediapipe_with_the_solutions_api():
     assert mediapipe.contains("0.10.21")
     assert not mediapipe.contains("0.10.30")
     assert not mediapipe.contains("1.2.3")
+
+
+@pytest.mark.parametrize("pos_msec", [0.0, -1.0], ids=["avfoundation-0", "dshow-minus-1"])
+def test_webcam_stamps_frames_with_the_host_clock(pos_msec, monkeypatch):
+    import itertools
+    import time
+
+    ticks = itertools.count(start=100.0, step=1 / 30)
+    monkeypatch.setattr(time, "perf_counter", lambda: next(ticks))
+    install_fakes(
+        monkeypatch, cv2=FakeCv2(n_frames=5, pos_msec=pos_msec), mediapipe=FakeMediapipe()
+    )
+
+    stamps = [f.timestamp_s for f in WebcamInputSource(device_index=0).frames()]
+
+    assert len(stamps) == 5
+    assert all(b > a for a, b in zip(stamps, stamps[1:], strict=False))
+
+
+def test_video_file_keeps_the_container_timestamps(tmp_path, monkeypatch):
+    install_fakes(monkeypatch, cv2=FakeCv2(n_frames=4, fps=25.0), mediapipe=FakeMediapipe())
+
+    stamps = [f.timestamp_s for f in _video_file_source(tmp_path).frames()]
+
+    assert stamps == pytest.approx([0.0, 0.04, 0.08, 0.12])

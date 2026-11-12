@@ -662,3 +662,24 @@ def test_kill_switch_wins_in_every_confirmation_mode(mode):
     )
     assert status.click_fired is False
     assert status.gate4_kill_and_limits is False
+
+
+# ---------------------------------------------------------------------------
+# Non-advancing timestamps fail closed (a frozen clock breaks every timing check)
+# ---------------------------------------------------------------------------
+
+
+def test_repeated_or_backward_timestamps_fail_gate1():
+    m = machine()
+    assert m.step(make_frame(timestamp_s=1.0)).gate1_presence is True
+
+    repeated = m.step(make_frame(timestamp_s=1.0, confirm_keypress=True))
+    backward = m.step(make_frame(timestamp_s=0.5, confirm_keypress=True))
+
+    for status in (repeated, backward):
+        assert status.gate1_presence is False
+        assert "timestamp not advancing" in status.reasons["gate1"]
+        assert status.move_allowed is False
+        assert status.click_fired is False
+
+    assert m.step(make_frame(timestamp_s=1.1)).gate1_presence is True
