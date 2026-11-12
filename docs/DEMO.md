@@ -81,7 +81,8 @@ run` refuses to drive the cursor at all, by design.
 3. Hold your gaze on one spot. The Gate 3 light goes green once the dwell time (0.8 s)
    is reached.
 4. On a dwelled target, hold a deliberate blink for at least 0.4 s, or press the
-   confirm key. A click fires where you were looking.
+   confirm key. A click fires where you were looking. Each click uses the dwell up:
+   to click again, open your eyes and hold your gaze for another 0.8 s first.
 5. Press **Esc** (the kill hotkey) mid-movement. The session ends on the next frame:
    the overlay window closes at once, nothing more is emitted, and the terminal
    prints "kill switch (esc) pressed: session ended". The overlay closes too fast to
