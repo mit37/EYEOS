@@ -58,13 +58,59 @@ def test_iris_offset_toward_outer_corner_is_negative_x():
 
 
 def test_iris_offset_toward_top_is_negative_y():
+    # 0.02 above the corner line, in units of the eye's 0.04 half-width.
     f = extract_features(make_landmarks(left_iris_center=Point3D(0.38, 0.38)))
-    assert f.left_iris_y == pytest.approx(-1.0)
+    assert f.left_iris_y == pytest.approx(-0.5)
 
 
 def test_iris_offset_toward_bottom_is_positive_y():
     f = extract_features(make_landmarks(left_iris_center=Point3D(0.38, 0.42)))
-    assert f.left_iris_y == pytest.approx(1.0)
+    assert f.left_iris_y == pytest.approx(0.5)
+
+
+@pytest.mark.parametrize("top_y", [0.38, 0.39, 0.40, 0.41, 0.418])
+def test_lid_movement_never_changes_the_iris_offsets(top_y):
+    # A blink moves the upper lid, not the corners or the iris: the gaze must not move.
+    iris = dict(left_iris_center=Point3D(0.39, 0.405), right_iris_center=Point3D(0.63, 0.405))
+    open_eyes = extract_features(make_landmarks(**iris))
+    closing = extract_features(
+        make_landmarks(
+            **iris,
+            left_eye_top=Point3D(0.38, top_y),
+            right_eye_top=Point3D(0.62, top_y),
+        )
+    )
+    assert closing.iris_vector() == pytest.approx(open_eyes.iris_vector())
+    assert closing.head_pose() == pytest.approx(open_eyes.head_pose())
+
+
+def test_iris_offsets_follow_the_corner_line_when_the_head_rolls():
+    import math
+
+    def rotated(p, angle, about=(0.5, 0.4)):
+        c, s = math.cos(angle), math.sin(angle)
+        x, y = p.x - about[0], p.y - about[1]
+        return Point3D(about[0] + c * x - s * y, about[1] + s * x + c * y)
+
+    base = make_landmarks(left_iris_center=Point3D(0.39, 0.405))
+    names = [
+        "left_iris_center",
+        "right_iris_center",
+        "left_eye_inner",
+        "left_eye_outer",
+        "right_eye_inner",
+        "right_eye_outer",
+        "left_eye_top",
+        "left_eye_bottom",
+        "right_eye_top",
+        "right_eye_bottom",
+    ]
+    rolled = make_landmarks(**{n: rotated(getattr(base, n), math.radians(10)) for n in names})
+
+    assert extract_features(rolled).iris_vector() == pytest.approx(
+        extract_features(base).iris_vector(), abs=1e-9
+    )
+    assert extract_features(rolled).roll_deg == pytest.approx(10.0)
 
 
 def test_right_eye_offset_independent_of_left():
@@ -108,10 +154,10 @@ def test_head_tilted_up_gives_negative_pitch():
 def test_head_rolled_gives_nonzero_roll():
     f = extract_features(
         make_landmarks(
-            left_eye_top=Point3D(0.38, 0.34),
-            left_eye_bottom=Point3D(0.38, 0.38),
-            right_eye_top=Point3D(0.62, 0.42),
-            right_eye_bottom=Point3D(0.62, 0.46),
+            left_eye_inner=Point3D(0.42, 0.38),
+            left_eye_outer=Point3D(0.34, 0.38),
+            right_eye_inner=Point3D(0.58, 0.42),
+            right_eye_outer=Point3D(0.66, 0.42),
         )
     )
     assert f.roll_deg != pytest.approx(0.0, abs=1e-6)

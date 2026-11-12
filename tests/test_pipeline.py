@@ -478,26 +478,26 @@ def test_a_frozen_clock_never_moves_the_cursor():
 
 
 # ---------------------------------------------------------------------------
-# Partly closed lids: the frames on the way into and out of a blink
+# Lids moving during a blink don't move the gaze (offsets are measured from the corners)
 # ---------------------------------------------------------------------------
 
-_TRANSITION_TOPS = (0.39, 0.40, 0.41)  # upper lid closing over three frames
+_APERTURE_RAMP = (0.875, 0.75, 0.5, 0.25)  # fractions of the open lid gap (0.04)
 
 
-def _lids(top_y, bottom_y=0.42, iris_dy=0.0):
+def _lids(fraction_open, iris_dy=0.0):
+    top_y = 0.42 - 0.04 * fraction_open  # the upper lid moves; the lower lid doesn't
     return dict(
         left_eye_top=Point3D(0.38, top_y),
-        left_eye_bottom=Point3D(0.38, bottom_y),
         right_eye_top=Point3D(0.62, top_y),
-        right_eye_bottom=Point3D(0.62, bottom_y),
         left_iris_center=Point3D(0.38, 0.40 + iris_dy),
         right_iris_center=Point3D(0.62, 0.40 + iris_dy),
     )
 
 
-def _blink_with_transitions(closed_s, open_s=1.0, after_s=0.5, fps=30, drift=0.003):
-    """Open, three closing frames, a closure, three reopening frames, open again. The
-    iris drifts 0.003 down with the lid, as MediaPipe's iris estimate tends to."""
+def _blink_with_transitions(closed_s, open_s=1.0, after_s=0.5, fps=30, drift=0.0, ramp=None):
+    """Open, a closing ramp of partly closed frames, a closure, the ramp reversed, open
+    again. ``drift`` moves the iris estimate down with the lid on every non-open frame."""
+    ramp = _APERTURE_RAMP if ramp is None else ramp
     frames, t, dt = [], 0.0, 1.0 / fps
 
     def add(**overrides):
@@ -507,12 +507,12 @@ def _blink_with_transitions(closed_s, open_s=1.0, after_s=0.5, fps=30, drift=0.0
 
     for _ in range(round(open_s * fps)):
         add()
-    for top in _TRANSITION_TOPS:
-        add(**_lids(top, iris_dy=drift))
+    for f in ramp:
+        add(**_lids(f, iris_dy=drift))
     for _ in range(round(closed_s * fps)):
-        add(**_lids(0.418, bottom_y=0.420, iris_dy=drift))
-    for top in reversed(_TRANSITION_TOPS):
-        add(**_lids(top, iris_dy=drift))
+        add(**_lids(0.05 / 2, iris_dy=drift))  # gap 0.001: below both_irises_visible
+    for f in reversed(ramp):
+        add(**_lids(f, iris_dy=drift))
     for _ in range(round(after_s * fps)):
         add()
     return frames
@@ -524,18 +524,20 @@ def _max_move_distance(output, point=(960, 540)):
     return max(((x - point[0]) ** 2 + (y - point[1]) ** 2) ** 0.5 for _, x, y in moves)
 
 
-def test_blink_hold_with_lid_transitions_clicks_once_on_target():
-    result, output = _run_frames(_blink_with_transitions(closed_s=0.5))
+@pytest.mark.parametrize("fps", [15, 30, 60])
+def test_blink_hold_with_lid_transitions_clicks_once_on_target(fps):
+    # Includes a frame with the lid only 12.5% closed, at the start and the end.
+    result, output = _run_frames(_blink_with_transitions(closed_s=0.5, fps=fps))
 
     assert result.total_clicks == 1
     clicked = next(s for s in result.statuses if s.click_fired)
     assert clicked.cursor_target_px == pytest.approx((960.0, 540.0))
-    assert _max_move_distance(output) <= 20.0
+    assert _max_move_distance(output) == 0.0
 
 
 def test_long_closure_with_lid_transitions_never_moves_off_target():
     _result, output = _run_frames(_blink_with_transitions(closed_s=0.9))
-    assert _max_move_distance(output) <= 20.0
+    assert _max_move_distance(output) == 0.0
 
 
 def test_short_blinks_with_lid_transitions_keep_the_dwell():
@@ -549,31 +551,59 @@ def test_short_blinks_with_lid_transitions_keep_the_dwell():
     result, output = _run_frames(frames)
 
     assert result.total_clicks == 0
-    assert _max_move_distance(output) <= 20.0
+    assert _max_move_distance(output) == 0.0
     assert result.statuses[-1].gate3_stability is True
 
 
-def test_a_sustained_squint_is_trusted_again_after_the_hold():
-    # Narrowed lids for a whole second (looking down narrows them too): after a short
-    # hold the narrower opening becomes the new normal and the cursor follows again.
-    fps, t, frames = 30, 0.0, []
-    for _ in range(30):
-        frames.append(Frame(t, make_landmarks()))
-        t += 1.0 / fps
-    squint_start = t
-    for _ in range(30):
-        frames.append(Frame(t, make_landmarks(**_lids(0.395))))
-        t += 1.0 / fps
+def test_an_iris_estimate_that_drifts_with_the_lid_fails_closed():
+    # Documented limitation: if the iris estimate itself moves as the lid closes, the
+    # partly closed frames are a real gaze change. The dwell restarts and no click fires.
+    result, _output = _run_frames(_blink_with_transitions(closed_s=0.5, drift=0.003))
+    assert result.total_clicks == 0
+
+
+def test_looking_down_with_narrowed_lids_then_confirming_never_clicks_the_old_target():
+    # Dwell on A, then look down toward B: the lids narrow to 70% as the gaze drops. A
+    # confirm key 0.13 s later must not click A (nor B, which was never dwelled on).
+    from dataclasses import replace
+
+    config = Config()
+    config = replace(config, gates=replace(config.gates, confirmation_mode="keypress"))
+    narrowed = {k: v for k, v in _lids(0.7).items() if k.endswith("_eye_top")}
+    frames = _seq(
+        [
+            (1.0, lambda: _gaze_landmarks(960, 300)),
+            (0.5, lambda: _gaze_landmarks(960, 950, **narrowed)),
+        ]
+    )
+    pressed_from = frames[30].timestamp_s + 0.13
+
+    def signals(t):
+        return False, t >= pressed_from - 1e-9
+
+    output = DryRunOutputAdapter(echo=None)
+    keys_pipeline = Pipeline(
+        config,
+        ListInputSource(frames),
+        output,
+        calibration=_fitted_calibration(),
+        external_signals=signals,
+    )
+    assert keys_pipeline.run().total_clicks == 0
+
+
+def test_eyelid_flutter_in_a_long_closure_clicks_at_most_once():
+    # Dwell on A, then 3 s of closed eyes with a 30%-open frame every 15th frame. The
+    # eyes are never really reopened, so one blink-hold click at most.
+    frames = _seq([(1.0, lambda: _gaze_landmarks(960, 300))])
+    t0 = frames[-1].timestamp_s
+    for k in range(1, 91):
+        lids = _lids(0.3) if k % 15 == 0 else _lids(0.025)
+        lm = _gaze_landmarks(960, 300, **{n: v for n, v in lids.items() if n.endswith("_eye_top")})
+        frames.append(Frame(t0 + k / 30, lm))
 
     result, _output = _run_frames(frames)
-
-    moved = [
-        f.timestamp_s
-        for f, s in zip(frames, result.statuses, strict=True)
-        if s.move_allowed and s.cursor_target_px != pytest.approx((960.0, 540.0))
-    ]
-    assert moved, "the cursor never followed the squinting gaze"
-    assert moved[0] >= squint_start + 0.3 - 1e-9
+    assert result.total_clicks <= 1
 
 
 # ---------------------------------------------------------------------------
@@ -588,8 +618,8 @@ def _gaze_landmarks(px, py, closed=False, **overrides):
     a = (dx * 650 - 30 * dy) / det
     b = (800 * dy - 10 * dx) / det
     lm = dict(
-        left_iris_center=Point3D(0.38 + 0.04 * a, 0.40 + 0.02 * b),
-        right_iris_center=Point3D(0.62 + 0.04 * a, 0.40 + 0.02 * b),
+        left_iris_center=Point3D(0.38 + 0.04 * a, 0.40 + 0.04 * b),
+        right_iris_center=Point3D(0.62 + 0.04 * a, 0.40 + 0.04 * b),
     )
     if closed:
         lm.update(_CLOSED)
@@ -680,24 +710,35 @@ def test_a_head_turn_during_a_blink_hold_fails_gate2():
     assert not result.statuses[-1].gate2_calibration
 
 
-def test_a_camera_stall_does_not_count_as_dwell_or_blink_hold():
-    # Three open frames at B, one closed frame, a 0.85 s stall, one more closed frame.
-    b = (1100.0, 540.0)
+def test_a_camera_stall_mid_blink_hold_does_not_click():
+    # A dwell met with open eyes, the eyes close, the camera stalls 0.3 s, the eyes stay
+    # closed. The stall breaks the observation, so the blink-hold can't confirm.
     frames = _seq(
         [
             (1.0, lambda: _gaze_landmarks(960, 540)),
-            (2.0, None),
-            (3 / 30, lambda: _gaze_landmarks(*b)),
-            (1 / 30, lambda: _gaze_landmarks(*b, closed=True)),
+            (0.1, lambda: _gaze_landmarks(960, 540, closed=True)),
         ]
     )
-    t = frames[-1].timestamp_s + 0.85
-    frames += [Frame(t + k / 30, _gaze_landmarks(*b, closed=True)) for k in range(3)]
+    t = frames[-1].timestamp_s + 0.3
+    frames += [Frame(t + k / 30, _gaze_landmarks(960, 540, closed=True)) for k in range(15)]
 
     result, _output = _run_frames(frames)
 
     assert result.total_clicks == 0
-    assert "frame gap" in result.statuses[-3].reasons["gate1"]
+    assert any("frame gap" in s.reasons["gate1"] for s in result.statuses)
+
+
+def test_a_second_face_mid_blink_hold_does_not_click():
+    frames = _seq(
+        [
+            (1.0, lambda: _gaze_landmarks(960, 540)),
+            (0.1, lambda: _gaze_landmarks(960, 540, closed=True)),
+            (1 / 30, lambda: _gaze_landmarks(960, 540, closed=True, face_count=2)),
+            (0.5, lambda: _gaze_landmarks(960, 540, closed=True)),
+        ]
+    )
+    result, _output = _run_frames(frames)
+    assert result.total_clicks == 0
 
 
 @pytest.mark.parametrize("bad_t", [math.nan, math.inf])

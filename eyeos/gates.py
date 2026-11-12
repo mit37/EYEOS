@@ -12,7 +12,8 @@ clock just by choosing timestamps.
     2. Calibration -- a calibration exists, its error < X px, pose within Y deg.
                       Fails -> "recalibrate"; cursor frozen.
     3. Stability   -- gaze has stayed in the same region for the dwell time, counting
-                      only observed frames (not ``gaze_held`` ones).
+                      only observed frames (not ``gaze_held`` ones). A click uses the
+                      dwell up: the next click needs a fresh one.
                       Fails -> no click (movement still OK).
     4. Kill/limits -- kill hotkey up; cursor speed and click rate within limits;
                       not a no-click zone. Fails -> all output stops.
@@ -64,8 +65,8 @@ class FrameInput:
     confirm_hold_s: float | None = None
     # Instantaneous confirmation (e.g. a keypress) this frame.
     confirm_keypress: bool = False
-    # True when gaze_point_px was carried over from an earlier frame (eyes closed or
-    # lids partly closed) rather than observed in this one. Gate 3 doesn't count it.
+    # True when gaze_point_px was carried over from an earlier frame (eyes closed in the
+    # blink-hold grace window) rather than observed in this one. Gate 3 doesn't count it.
     gaze_held: bool = False
 
 
@@ -193,12 +194,15 @@ class GateStateMachine:
         return True, "ok"
 
     # -- gate 3 (dwell) -------------------------------------------------------
+    def _reset_dwell(self) -> None:
+        self._dwell_anchor = None
+        self._dwell_start_s = None
+        self._dwell_paused_at_s = None
+        self._dwell_satisfied_when_observed = False
+
     def _update_dwell(self, frame: FrameInput, eligible: bool) -> bool:
         if not eligible or frame.gaze_point_px is None:
-            self._dwell_anchor = None
-            self._dwell_start_s = None
-            self._dwell_paused_at_s = None
-            self._dwell_satisfied_when_observed = False
+            self._reset_dwell()
             return False
 
         if frame.gaze_held:
@@ -258,6 +262,9 @@ class GateStateMachine:
             click_fired = True
             self._click_timestamps.append(frame.timestamp_s)
             self._awaiting_confirmation_release = True
+            # A click uses the dwell up. Otherwise a dwell met once could confirm click
+            # after click, e.g. across eyelid flutter in a long closure.
+            self._reset_dwell()
             reasons["click"] = "fired"
         elif not confirmation_active:
             self._awaiting_confirmation_release = False

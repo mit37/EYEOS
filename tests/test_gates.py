@@ -542,18 +542,43 @@ def test_click_requires_confirmation_release_before_firing_again():
     assert "release" in second.reasons["click"]
 
 
-def test_click_can_fire_again_after_confirmation_is_released_and_reapplied():
-    m = machine()
+def test_click_can_fire_again_after_release_and_a_fresh_dwell():
+    m = machine()  # dwell_time_s=0.5
     t = _dwell_in(m)
     first = m.step(make_frame(timestamp_s=t, gaze_point_px=(500.0, 500.0), confirm_keypress=True))
     assert first.click_fired is True
     # Release the confirmation gesture.
     m.step(make_frame(timestamp_s=t + 0.1, gaze_point_px=(500.0, 500.0)))
-    # Re-confirm.
-    second = m.step(
+    # Re-confirming at once doesn't click: the click used the dwell up.
+    early = m.step(
         make_frame(timestamp_s=t + 0.2, gaze_point_px=(500.0, 500.0), confirm_keypress=True)
     )
+    assert early.click_fired is False
+    assert early.gate3_stability is False
+    for dt in (0.3, 0.4, 0.5):  # released; the fresh dwell started at t + 0.1
+        m.step(make_frame(timestamp_s=t + dt, gaze_point_px=(500.0, 500.0)))
+    # 0.6 s of fresh dwell by t + 0.7 re-arms it.
+    second = m.step(
+        make_frame(timestamp_s=t + 0.7, gaze_point_px=(500.0, 500.0), confirm_keypress=True)
+    )
     assert second.click_fired is True
+
+
+def test_a_click_uses_the_dwell_up_even_while_the_eyes_stay_closed():
+    m = machine()  # dwell_time_s=0.5
+    t = _dwell_in(m)
+    assert m.step(make_frame(timestamp_s=t)).gate3_stability is True  # observed, satisfied
+    t += 0.1
+    clicks = 0
+    # A long blink-hold with the gaze held, broken by single barely-open (observed)
+    # frames: each one ends the gesture, but the click already used the dwell up.
+    for k in range(20):
+        if k % 5 == 4:
+            frame = make_frame(timestamp_s=t + k / 10)
+        else:
+            frame = make_frame(timestamp_s=t + k / 10, gaze_held=True, confirm_hold_s=0.4)
+        clicks += m.step(frame).click_fired
+    assert clicks == 1
 
 
 def test_awaiting_confirmation_flag_clears_once_gesture_ends_without_a_click():
@@ -789,3 +814,39 @@ def test_a_held_frame_never_starts_a_dwell():
         status = m.step(make_frame(timestamp_s=k / 10, gaze_held=True, confirm_hold_s=k / 10))
         assert status.gate3_stability is False
         assert status.click_fired is False
+
+
+def test_a_rejected_frame_mid_hold_clears_the_carried_dwell():
+    m = machine()  # dwell_time_s=0.5
+    t = _dwell_in(m)
+    assert m.step(make_frame(timestamp_s=t)).gate3_stability is True
+    m.step(make_frame(timestamp_s=t + 0.1, gaze_held=True, confirm_hold_s=0.1))
+    m.step(make_frame(timestamp_s=t + 0.2, face_count=2, gaze_held=True, confirm_hold_s=0.2))
+    held = m.step(make_frame(timestamp_s=t + 0.5, gaze_held=True, confirm_hold_s=0.5))
+    assert held.gate3_stability is False
+    assert held.click_fired is False
+
+
+@pytest.mark.parametrize("bad_t", [math.nan, math.inf])
+def test_a_non_finite_timestamp_never_resets_the_click_rate_limit(bad_t):
+    m = machine()  # 2 clicks per 5 s
+    clicks = []
+    t = 0.0
+
+    def dwell_and_click(t):
+        m.step(make_frame(timestamp_s=t))
+        for k in range(1, 7):
+            m.step(make_frame(timestamp_s=t + k / 10))
+        status = m.step(make_frame(timestamp_s=t + 0.7, confirm_keypress=True))
+        m.step(make_frame(timestamp_s=t + 0.8))  # release
+        return status, t + 0.9
+
+    for _ in range(2):
+        status, t = dwell_and_click(t)
+        clicks.append(status.click_fired)
+    assert clicks == [True, True]
+
+    m.step(make_frame(timestamp_s=bad_t))
+    third, _t = dwell_and_click(t)
+    assert third.click_fired is False
+    assert "click limit reached" in third.reasons["gate4"]

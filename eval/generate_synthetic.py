@@ -48,7 +48,7 @@ FIELDNAMES = [*CSV_FIELDNAMES, "target_x", "target_y", "segment", "away_mode"]
 # the iris offset (within each eye box) and face_count/detection_confidence vary.
 _LEFT_EYE_CENTER = (0.38, 0.40)
 _RIGHT_EYE_CENTER = (0.62, 0.40)
-_HALF_W, _HALF_H = 0.04, 0.02
+_HALF_W = 0.04  # eye half-width; the lids sit 0.02 above and below the corner line
 
 
 def make_landmarks(
@@ -64,11 +64,12 @@ def make_landmarks(
     return FaceLandmarks(
         face_count=face_count,
         detection_confidence=detection_confidence,
+        # Both offsets are in units of the eye's half-width, as features.py measures them.
         left_iris_center=Point3D(
-            _LEFT_EYE_CENTER[0] + offset_x * _HALF_W, _LEFT_EYE_CENTER[1] + offset_y * _HALF_H
+            _LEFT_EYE_CENTER[0] + offset_x * _HALF_W, _LEFT_EYE_CENTER[1] + offset_y * _HALF_W
         ),
         right_iris_center=Point3D(
-            _RIGHT_EYE_CENTER[0] + offset_x * _HALF_W, _RIGHT_EYE_CENTER[1] + offset_y * _HALF_H
+            _RIGHT_EYE_CENTER[0] + offset_x * _HALF_W, _RIGHT_EYE_CENTER[1] + offset_y * _HALF_W
         ),
         left_eye_inner=Point3D(0.42, 0.40),
         left_eye_outer=Point3D(0.34, 0.40),
