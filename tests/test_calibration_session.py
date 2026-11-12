@@ -51,7 +51,9 @@ class FakeDotScreen:
                 self.presses += 1
                 try:
                     captured = self.capture_sample(target)
-                except Exception as e:
+                except SystemExit:
+                    raise
+                except BaseException as e:  # like Tk's CallWrapper: even KeyboardInterrupt
                     self.callback_errors.append(e)
                     captured = False
                 if captured is not False:
@@ -316,3 +318,25 @@ def test_eyeos_run_calibrate_reports_a_camera_that_stops_mid_calibration(
     captured = capsys.readouterr()
     assert "calibration cancelled" not in captured.err
     assert captured.out == ""
+
+
+def test_ctrl_c_while_a_dot_is_sampled_is_reported_as_an_interrupt():
+    # Real Tk swallows a KeyboardInterrupt raised in a key handler. It must still end
+    # calibration as an interrupt, not as "camera stopped" on the next press.
+    def frames():
+        for i in range(SETTLE_FRAMES + SAMPLE_FRAMES):
+            yield Frame(i / 30, make_landmarks(0.2, -0.1))
+        raise KeyboardInterrupt
+
+    with pytest.raises(KeyboardInterrupt):
+        calibrate_interactively(Config(), frames(), FakeDotScreen)
+
+
+def test_the_last_dot_keeps_a_sample_when_the_input_ends_with_enough_frames():
+    # A recording that ends right after the last dot, with one blink among its frames.
+    frames = [Frame(i / 30, make_landmarks(0.2, -0.1)) for i in range(SETTLE_FRAMES)]
+    frames += [Frame(1.0, None)]
+    frames += [Frame(1.1 + i / 30, make_landmarks(0.2, -0.1)) for i in range(SAMPLE_FRAMES - 1)]
+    features = collect_dot_features(iter(frames))
+    assert features is not None
+    assert features.left_iris_x == pytest.approx(0.2)

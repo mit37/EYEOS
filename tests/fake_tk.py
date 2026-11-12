@@ -7,10 +7,13 @@ record what was drawn; ``Tk.fire(sequence)`` simulates a key binding firing, and
 processing events.
 
 Like real Tk, a destroyed window stays destroyed: a second ``destroy()``, and any call
-on it or on one of its widgets, raises TclError. Events (``fire``, ``close_window``)
-sent after that are dropped, as no window is left to receive them. Also like real Tk,
-an exception raised by an event handler is not raised to the caller: it goes to
-``report_callback_exception``, which prints it and records it in ``callback_errors``.
+on one of its widgets or that creates one, raises TclError. ``update()`` and
+``update_idletasks()`` are the exception: they are core Tcl commands, and real Tk lets
+them through after a destroy. Events (``fire``, ``close_window``) sent after that are
+dropped, as no window is left to receive them. Also like real Tk (``CallWrapper``), an
+exception raised by an event handler, KeyboardInterrupt included, is not raised to the
+caller: it goes to ``report_callback_exception``, which prints it and records it in
+``callback_errors``. Only SystemExit gets through.
 """
 
 from __future__ import annotations
@@ -100,7 +103,9 @@ class Tk(_Widget):
         """Run an event handler the way Tk does: report an exception, don't raise it."""
         try:
             handler(*args)
-        except Exception:
+        except SystemExit:
+            raise
+        except BaseException:
             self.report_callback_exception(*sys.exc_info())
 
     def report_callback_exception(self, exc: Any, val: Any, tb: Any) -> None:
@@ -125,13 +130,14 @@ class Tk(_Widget):
         self._dispatch(handler if handler is not None else self.destroy)
 
     def update(self) -> None:
-        self._check_alive("update")
+        if self.destroyed:
+            return  # real Tk: `update` is a core Tcl command and still runs
         self.updates += 1
         if self.on_update is not None:
             self.on_update(self)
 
     def update_idletasks(self) -> None:
-        self._check_alive("update")
+        return None
 
     def mainloop(self) -> None:
         self.mainloop_calls += 1

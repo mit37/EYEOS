@@ -103,12 +103,24 @@ def test_fake_tk_is_as_strict_as_real_tk_after_destroy(fake_tk):
     root.destroy()
     for call in (
         root.destroy,
-        root.update,
         lambda: canvas.itemconfig(1, fill="red"),
         lambda: fake_tk.Label(root),
     ):
         with pytest.raises(TclError):
             call()
+    root.update()  # real Tk lets the core `update` command through after a destroy
+
+
+def test_fake_tk_reports_a_keyboard_interrupt_in_a_handler_like_real_tk(fake_tk, capsys):
+    root = fake_tk.Tk()
+
+    def interrupted(_event):
+        raise KeyboardInterrupt
+
+    root.bind("<space>", interrupted)
+    root.fire("<space>")  # real Tk's CallWrapper swallows it and prints it
+    assert isinstance(root.callback_errors[0], KeyboardInterrupt)
+    assert "Exception in Tkinter callback" in capsys.readouterr().err
 
 
 def test_calibration_ui_captures_all_nine_dots_in_order(fake_tk):

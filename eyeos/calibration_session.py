@@ -50,7 +50,10 @@ def collect_dot_features(
         if len(usable) >= want:
             break
     else:
-        raise InputEndedError("the input source ran out of frames")
+        # The stream ended. Enough usable frames still make a sample (e.g. a recording
+        # that ends with the last dot); too few can't be retried, as nothing follows.
+        if len(usable) < max(1, want // 2):
+            raise InputEndedError("the input source ran out of frames")
     if len(usable) < max(1, want // 2):
         return None
     mean = np.mean([[*f.iris_vector(), *f.head_pose()] for f in usable], axis=0)
@@ -71,7 +74,7 @@ def calibrate_interactively(
     ``run() -> bool`` and ``cancel()``.
     """
     calibration = Calibration(config.screen.width_px, config.screen.height_px)
-    failures: list[Exception] = []
+    failures: list[BaseException] = []
 
     def dots_with_a_sample() -> int:
         return len({sample.target_px for sample in calibration.samples})
@@ -89,7 +92,8 @@ def calibrate_interactively(
             )
             stopped.__cause__ = e
             failures.append(stopped)
-        except Exception as e:
+        except (Exception, KeyboardInterrupt) as e:
+            # Tk would swallow even Ctrl+C here; re-raise it once the screen is gone.
             failures.append(e)
         else:
             if features is None:

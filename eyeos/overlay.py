@@ -42,7 +42,8 @@ class GateOverlay:
             ) from e
         self._closed = False
         # Tk's default close handler destroys the window, and the next update() would
-        # then raise TclError and end the session. Stop drawing instead.
+        # then draw on a destroyed canvas, raise TclError and end the session. Stop
+        # drawing instead.
         self.root.protocol("WM_DELETE_WINDOW", self.close)
         self.root.title("EyeOS gates")
         self.root.attributes("-topmost", True)
