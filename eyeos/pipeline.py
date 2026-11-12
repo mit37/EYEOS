@@ -17,6 +17,7 @@ from eyeos.features import FeatureVector, extract_features
 from eyeos.filtering import OneEuroFilter2D
 from eyeos.gates import FrameInput, GateStateMachine, GateStatus, HeadPose, ScreenPoint
 from eyeos.input_sources import Frame, InputSource
+from eyeos.landmarks import FaceLandmarks
 from eyeos.logging_utils import SessionLogger
 from eyeos.output import OutputAdapter
 
@@ -25,6 +26,16 @@ from eyeos.output import OutputAdapter
 # eyes-away dropout. See Pipeline._resolve_blink_gesture's docstring for why this
 # exists at all.
 _BLINK_GESTURE_GRACE_S = 0.5
+# Lids open less than this fraction of the user's usual opening are partway through a
+# blink. The iris offset is measured against a shrinking lid gap there, so it can't be
+# trusted.
+_PARTIAL_CLOSURE_FRACTION = 0.8
+# Per-frame weight with which the usual-opening baseline follows trusted frames.
+_APERTURE_BASELINE_ALPHA = 0.1
+# The longest partly-closed lids hold the gaze, counted from the last trusted or closed
+# frame. Blink transitions take about 0.1-0.2 s. Past this, the narrower opening (a
+# squint, or looking down) becomes the new usual opening.
+_PARTIAL_CLOSURE_HOLD_S = 0.3
 
 ExternalSignals = Callable[[float], tuple[bool, bool]]
 
@@ -85,6 +96,8 @@ class Pipeline:
         self._blink_hold_start_s: float | None = None
         self._last_open_gaze: ScreenPoint | None = None
         self._last_open_head_pose: HeadPose | None = None
+        self._aperture_baseline: float | None = None
+        self._last_trusted_or_closed_s: float | None = None
         self._kill_seen = False
 
     def _resolve_blink_gesture(
@@ -130,6 +143,7 @@ class Pipeline:
             self._blink_hold_start_s = None
             self._last_open_gaze = None
             self._last_open_head_pose = None
+            self._last_trusted_or_closed_s = None
             return FrameInput(
                 timestamp_s=frame.timestamp_s,
                 face_count=0,
@@ -151,19 +165,30 @@ class Pipeline:
         # Closed-eye iris offsets divide by a near-zero lid gap, so they are never mapped
         # to the screen or fed to the filter. During a blink-hold the gaze holds where
         # the eyes were last open (that is where the click must land); past the grace
-        # window there is no gaze at all.
+        # window there is no gaze at all. Partly closed lids (the frames on the way into
+        # and out of a blink) hold the gaze the same way, briefly.
         gaze_point: ScreenPoint | None
-        if raw_eyes_open:
+        if raw_eyes_open and self._lids_partly_closed(frame.timestamp_s, landmarks):
+            gaze_point = self._last_open_gaze
+            head_pose = features.head_pose()
+        elif raw_eyes_open:
             gaze_point = self._map_gaze(frame.timestamp_s, features)
             head_pose = features.head_pose()
             self._last_open_gaze = gaze_point
             self._last_open_head_pose = head_pose
+            self._last_trusted_or_closed_s = frame.timestamp_s
         elif confirm_hold_s is not None:
             gaze_point = self._last_open_gaze
             head_pose = self._last_open_head_pose or features.head_pose()
+            self._last_trusted_or_closed_s = frame.timestamp_s
         else:
+            # Past the grace window the held gaze is stale: drop it, so the reopening
+            # frames that follow carry no gaze until a trusted frame arrives.
             gaze_point = None
             head_pose = features.head_pose()
+            self._last_open_gaze = None
+            self._last_open_head_pose = None
+            self._last_trusted_or_closed_s = frame.timestamp_s
 
         return FrameInput(
             timestamp_s=frame.timestamp_s,
@@ -176,6 +201,28 @@ class Pipeline:
             confirm_hold_s=confirm_hold_s,
             confirm_keypress=confirm_keypress,
         )
+
+    def _lids_partly_closed(self, timestamp_s: float, landmarks: FaceLandmarks) -> bool:
+        """Whether these open-eye landmarks are partway through a blink.
+
+        True while the lid opening is under ``_PARTIAL_CLOSURE_FRACTION`` of the usual
+        opening and the last trusted or closed frame is at most
+        ``_PARTIAL_CLOSURE_HOLD_S`` old. Trusted frames update the usual opening. A
+        narrower opening that lasts longer than the hold replaces it.
+        """
+        ratio = landmarks.eye_aperture_ratio
+        baseline = self._aperture_baseline
+        if baseline is None:
+            self._aperture_baseline = ratio
+            return False
+        if ratio < _PARTIAL_CLOSURE_FRACTION * baseline:
+            anchor = self._last_trusted_or_closed_s
+            if anchor is not None and timestamp_s - anchor <= _PARTIAL_CLOSURE_HOLD_S:
+                return True
+            self._aperture_baseline = ratio
+            return False
+        self._aperture_baseline = baseline + _APERTURE_BASELINE_ALPHA * (ratio - baseline)
+        return False
 
     def _map_gaze(self, timestamp_s: float, features: FeatureVector) -> ScreenPoint | None:
         if self.calibration is None or not self.calibration.is_fitted:

@@ -69,6 +69,22 @@ class FaceLandmarks:
         right_open = right_width > 0 and (right_gap / right_width) >= min_open_ratio
         return left_open and right_open
 
+    @property
+    def eye_aperture_ratio(self) -> float:
+        """The narrower eye's lid gap divided by that eye's width (0.0 if degenerate).
+
+        The pipeline compares it with the user's usual opening to spot lids partway
+        through a blink, where the iris offset can't be trusted yet.
+        """
+        ratios = []
+        for top, bottom, outer, inner in (
+            (self.left_eye_top, self.left_eye_bottom, self.left_eye_outer, self.left_eye_inner),
+            (self.right_eye_top, self.right_eye_bottom, self.right_eye_outer, self.right_eye_inner),
+        ):
+            width = abs(outer.x - inner.x)
+            ratios.append(abs(top.y - bottom.y) / width if width > 0 else 0.0)
+        return min(ratios)
+
 
 # The 15 named points, in the same order as FaceLandmarks' constructor fields (after
 # face_count/detection_confidence). Used by anything that (de)serializes a
