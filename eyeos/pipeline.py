@@ -65,6 +65,7 @@ class Pipeline:
         logger: SessionLogger | None = None,
         external_signals: ExternalSignals | None = None,
         on_status: Callable[[GateStatus], None] | None = None,
+        on_frame: Callable[[Frame, FrameInput, GateStatus], None] | None = None,
     ) -> None:
         if output.moves_real_cursor and external_signals is None:
             raise ValueError(
@@ -80,6 +81,10 @@ class Pipeline:
         # Called with every frame's GateStatus, e.g. to drive a live overlay
         # (PRD §2: "the overlay shows the four gate lights live") — see docs/DEMO.md.
         self.on_status = on_status
+        # Called after on_status with the frame (its camera image, when the source kept
+        # it), what the gates were given and what they decided, e.g. to draw the live
+        # tracking view (eyeos/tracking_view.py). It only observes: gating never reads it.
+        self.on_frame = on_frame
 
         self.gates = GateStateMachine(config.gates)
         if calibration is not None:
@@ -356,6 +361,8 @@ class Pipeline:
             self.logger.log(frame.timestamp_s, status)
         if self.on_status is not None:
             self.on_status(status)
+        if self.on_frame is not None:
+            self.on_frame(frame, frame_input, status)
 
         return status
 

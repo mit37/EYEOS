@@ -71,3 +71,39 @@ def test_capture_sources_attach_the_bgr_frame_when_asked(make_source, tmp_path, 
     # The frame as read() returned it (BGR), not the RGB copy MediaPipe was given.
     assert [f.image for f in frames] == [FakeImage("bgr", i, (480, 640, 3)) for i in range(3)]
     assert all(f.landmarks is not None for f in frames)
+
+
+# ---------------------------------------------------------------------------
+# Pipeline.on_frame: one call per frame, after on_status
+# ---------------------------------------------------------------------------
+
+
+def test_on_frame_gets_each_frame_its_gate_input_and_status_after_on_status():
+    from eyeos.config import Config
+    from eyeos.gates import FrameInput
+    from eyeos.output.dry_run import DryRunOutputAdapter
+    from eyeos.pipeline import Pipeline
+    from tests.test_pipeline import ListInputSource
+
+    frames = [
+        Frame(timestamp_s=t, landmarks=make_landmarks(), image=FakeImage("bgr", i))
+        for i, t in enumerate((0.0, 0.2, 0.4))
+    ]
+    events = []
+    pipeline = Pipeline(
+        Config(),
+        ListInputSource(frames),
+        DryRunOutputAdapter(echo=None),
+        on_status=lambda status: events.append(("status", status)),
+        on_frame=lambda *args: events.append(("frame", *args)),
+    )
+
+    result = pipeline.run()
+
+    assert [e[0] for e in events] == ["status", "frame"] * 3
+    seen = [e for e in events if e[0] == "frame"]
+    assert [e[1] for e in seen] == frames
+    assert [e[1].image for e in seen] == [FakeImage("bgr", i) for i in range(3)]
+    assert all(isinstance(e[2], FrameInput) for e in seen)
+    assert [e[2].timestamp_s for e in seen] == [0.0, 0.2, 0.4]
+    assert [e[3] for e in seen] == result.statuses
