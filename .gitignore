@@ -39,6 +39,8 @@ secrets/
 *.webm
 recordings/
 data/raw/
+# Public datasets (face images of real people) and caches derived from them
+datasets/
 
 # Local config (copied from config.example.yaml)
 config.yaml
