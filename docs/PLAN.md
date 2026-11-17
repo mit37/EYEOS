@@ -13,8 +13,11 @@ Restated from `PRD.md` §8, per `STANDARDS.md` §6 step 1.
         OpenCV/MediaPipe modules (`tests/fake_capture.py`, used by `tests/test_cli.py`):
         container timestamps, face counts reaching Gate 1, the session log, and cleanup
         on a full run and on `--max-frames`.
-      - Pending: decoding a real video file, which needs the `webcam` extra (Python
-        3.10–3.12) and a real recording (see `docs/DEMO.md` §4).
+      - Also run once with the real libraries (OpenCV 4.11, MediaPipe 0.10.21, Python
+        3.11): `eyeos run` decoded a generated 45-frame video, took its timestamps from
+        the container, and reported "no face" on every frame. That is a run outside CI,
+        on a video with no face in it.
+      - Pending: the same run on footage with a real face (see `docs/DEMO.md` §4).
 - [x] Eval numbers generated (synthetic in CI; real ones marked pending)
       - `eval/run_eval.py` produces them, and `scripts/update_readme.py` writes them into
         README.md (CI fails on drift).

@@ -7,6 +7,7 @@ on their missing-dependency path and against the fakes in tests/fake_capture.py.
 from __future__ import annotations
 
 import csv
+import sys
 import types
 from pathlib import Path
 
@@ -144,12 +145,21 @@ def test_landmarks_from_mediapipe_indexes_the_right_points():
 # ---------------------------------------------------------------------------
 
 
-def test_webcam_source_raises_clear_error_without_opencv_mediapipe():
+@pytest.fixture
+def no_capture_libraries(monkeypatch):
+    # Hide OpenCV and MediaPipe even where the webcam extra is installed (a dev laptop).
+    monkeypatch.setitem(sys.modules, "cv2", None)
+    monkeypatch.setitem(sys.modules, "mediapipe", None)
+
+
+def test_webcam_source_raises_clear_error_without_opencv_mediapipe(no_capture_libraries):
     with pytest.raises(RuntimeError, match="needs OpenCV and MediaPipe"):
         next(iter(WebcamInputSource(device_index=0).frames()))
 
 
-def test_video_file_source_raises_clear_error_without_opencv_mediapipe(tmp_path):
+def test_video_file_source_raises_clear_error_without_opencv_mediapipe(
+    tmp_path, no_capture_libraries
+):
     missing = tmp_path / "does_not_matter.mp4"
     with pytest.raises(RuntimeError, match="needs OpenCV and MediaPipe"):
         next(iter(VideoFileInputSource(missing).frames()))
