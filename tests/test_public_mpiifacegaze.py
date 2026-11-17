@@ -11,8 +11,10 @@ them).
 from __future__ import annotations
 
 import csv
+import dataclasses
 import importlib.util
 import io
+import json
 import math
 import os
 import shutil
@@ -29,8 +31,15 @@ import numpy as np
 import pytest
 from packaging.requirements import Requirement
 
+from eval.generate_synthetic import make_landmarks
 from eval.public import mpiifacegaze as mpii
-from eyeos.landmarks import FaceLandmarks
+from eval.public import protocol
+from eyeos.calibration import target_points
+from eyeos.config import Config, ScreenConfig
+from eyeos.input_sources.synthetic import SyntheticInputSource
+from eyeos.landmarks import FaceLandmarks, Point3D
+from eyeos.output.dry_run import DryRunOutputAdapter
+from eyeos.pipeline import Pipeline
 from eyeos.synthetic_format import row_to_frame
 from tests.fake_capture import FakeCv2, FakeImage, FakeMediapipe, install_fakes
 from tests.fake_mpiifacegaze import (
@@ -806,3 +815,256 @@ def test_mediapipe_image_detector_finds_no_face_in_a_blank_image_with_real_libra
         assert detector(image) is None
     finally:
         detector.close()
+
+
+# ---------------------------------------------------------------------------
+# the evaluation protocol's building blocks (dataset-agnostic, no scipy needed)
+# ---------------------------------------------------------------------------
+
+
+def test_calibration_set_takes_the_k_nearest_images_to_each_grid_point():
+    grid = target_points(1000.0, 1000.0)
+    targets = []
+    for gx, gy in grid:
+        targets += [(gx + d, gy) for d in (4.0, 1.0, 3.0, 2.0)]  # 4 images near each dot
+    targets += [(300.0, 300.0), (700.0, 700.0)]  # far from every dot
+
+    selected, mean_distance = protocol.select_calibration_set(np.array(targets), grid, k=3)
+
+    assert selected == [[4 * i + 1, 4 * i + 3, 4 * i + 2] for i in range(9)]
+    assert mean_distance == pytest.approx([2.0] * 9)
+
+
+def test_calibration_set_never_reuses_an_image_and_breaks_ties_by_order():
+    targets = np.array([(0.5, 0.0), (0.6, 0.0), (5.0, 0.0), (5.0, 0.0), (-5.0, 0.0)])
+
+    selected, _ = protocol.select_calibration_set(targets, [(0.0, 0.0), (1.0, 0.0)], k=2)
+
+    # The second dot's nearest images (0.6 and 0.5) are taken already; of the two
+    # equally near ones left (5.0 twice), the first in order wins.
+    assert selected == [[0, 1], [2, 3]]
+
+
+def test_calibration_set_needs_k_images_per_grid_point():
+    with pytest.raises(ValueError, match="needs 18"):
+        protocol.select_calibration_set(np.zeros((17, 2)), target_points(10.0, 10.0), k=2)
+
+
+def test_predictions_are_rounded_and_clamped_exactly_like_the_pipelines_cursor_pixel():
+    config = Config(screen=ScreenConfig(width_px=1280, height_px=800))
+    pipeline = Pipeline(
+        config, SyntheticInputSource(ROOT / "unused.csv"), DryRunOutputAdapter(echo=None)
+    )
+    points = np.array([[-5.2, 3.6], [1279.6, 799.5], [640.5, 400.49], [2000.0, -1.0], [10.5, 11.5]])
+
+    clamped = protocol.clamp_to_screen(points, 1280.0, 800.0)
+
+    assert clamped.tolist() == [list(pipeline._to_screen_pixel((x, y))) for x, y in points]
+
+
+def test_angular_error_is_the_angle_between_the_predicted_and_true_gaze_rays():
+    face_centers = np.array([[0.0, 0.0, 0.0], [10.0, 10.0, 10.0]])
+    true_targets = np.array([[0.0, 0.0, 100.0], [10.0, 10.0, 110.0]])
+    predicted = np.array([[100.0, 0.0, 100.0], [10.0, 10.0, 110.0]])
+
+    angles = protocol.angular_errors_deg(predicted, face_centers, true_targets)
+
+    assert angles == pytest.approx([45.0, 0.0])
+
+
+def test_valid_frames_need_exactly_one_face_with_both_irises_visible():
+    assert protocol.is_valid(make_landmarks(0.1, 0.2))
+    assert not protocol.is_valid(None)
+    assert not protocol.is_valid(make_landmarks(0.1, 0.2, face_count=2))
+    closed = dataclasses.replace(
+        make_landmarks(0.0, 0.0),
+        left_eye_top=Point3D(0.38, 0.40),
+        left_eye_bottom=Point3D(0.38, 0.40),
+    )
+    assert not protocol.is_valid(closed)
+
+
+# ---------------------------------------------------------------------------
+# evaluate: the EyeOS-faithful protocol end to end on a fake dataset
+# ---------------------------------------------------------------------------
+
+
+def _extracted(tmp_path: Path, persons: list[FakePerson]) -> tuple[Path, Path]:
+    root, cache = tmp_path / "MPIIFaceGaze", tmp_path / "cache"
+    for person in persons:
+        write_person(root, person)
+    mpii.extract(root, cache, detector_factory=fake_detector_factory)
+    return root, cache
+
+
+def _second_screen(name: str, seed: int, **kwargs: object) -> FakePerson:
+    return FakePerson(
+        name, seed=seed, screen_px=(1440, 900), screen_mm=(300.0, 188.0), **kwargs  # type: ignore[arg-type]
+    )
+
+
+def test_noise_free_evaluate_recovers_the_targets_to_about_0_px_and_0_deg(tmp_path, scipy_io):
+    root, cache = _extracted(tmp_path, [FakePerson("p00"), _second_screen("p01", seed=1)])
+
+    results = mpii.evaluate_dataset(root, cache, variants=["eyeos"])
+
+    eyeos = results["variants"]["eyeos"]
+    assert sorted(eyeos["persons"]) == ["p00", "p01"]
+    for person in eyeos["persons"].values():
+        assert person["n_calibration"] == 45
+        assert person["n_test"] == 240 - 45
+        assert person["calibration_mean_distance_px"] > 0
+        # Rounding to a whole pixel, as the cursor does, is the only error left.
+        assert person["pixel_error_px"]["mean"] < 0.75
+        assert person["pixel_error_px"]["p90"] < 0.75
+        assert person["angular_error_deg"]["mean"] < 0.02
+        assert person["validation_error_px"] < 0.5
+        assert person["passes_gate2"] is True
+        assert person["head_pose_within_limit_share"] == 1.0
+    aggregate = eyeos["aggregate"]
+    assert aggregate["persons_evaluated"] == 2
+    assert aggregate["pixel_error_px"]["mean_of_person_means"] < 0.75
+    assert aggregate["pixel_error_px"]["pooled_p90"] < 0.75
+    assert aggregate["angular_error_deg"]["mean_of_person_means"] < 0.02
+    assert aggregate["gate2_passed"] == 2
+    for name in ("p00", "p01"):
+        assert results["screen_model"][name]["model"] == "default"
+        assert results["screen_model"][name]["median_error_mm"] < 1e-6
+        assert results["detection"]["persons"][name]["detection_rate"] == 1.0
+
+
+def test_noisy_evaluate_reports_a_proportionate_error_and_gate2_catches_a_bad_one(
+    tmp_path, scipy_io
+):
+    root, cache = _extracted(
+        tmp_path, [FakePerson("p00", noise=0.05), FakePerson("p01", seed=1, noise=0.2)]
+    )
+
+    results = mpii.evaluate_dataset(root, cache, variants=["eyeos"])
+
+    persons = results["variants"]["eyeos"]["persons"]
+    mild, bad = persons["p00"], persons["p01"]
+    px = mild["pixel_error_px"]
+    assert 10 < px["mean"] < 100
+    assert px["median"] <= px["p90"]
+    assert mild["pixel_error_pct_diagonal"]["mean"] == pytest.approx(
+        100 * px["mean"] / math.hypot(1280, 800)
+    )
+    assert mild["angular_error_deg"]["mean"] > 0.5
+    assert 10 < mild["validation_error_px"] < 60 and mild["passes_gate2"] is True
+    assert bad["pixel_error_px"]["mean"] > px["mean"]
+    assert bad["validation_error_px"] > 60 and bad["passes_gate2"] is False
+    aggregate = results["variants"]["eyeos"]["aggregate"]
+    assert aggregate["gate2_passed"] == 1
+    assert aggregate["pixel_error_px"]["mean_of_person_means"] == pytest.approx(
+        (px["mean"] + bad["pixel_error_px"]["mean"]) / 2
+    )
+
+
+def test_frames_without_exactly_one_open_eyed_face_are_counted_and_left_out(tmp_path, scipy_io):
+    faces = {i: 0 for i in range(20)} | {i: 2 for i in range(20, 30)}
+    root, cache = _extracted(tmp_path, [FakePerson("p00", faces=faces, closed=set(range(30, 35)))])
+
+    results = mpii.evaluate_dataset(root, cache, variants=["eyeos"])
+
+    assert results["detection"]["persons"]["p00"] == {
+        "images": 240,
+        "valid": 205,
+        "no_face": 20,
+        "multiple_faces": 10,
+        "irises_not_visible": 5,
+        "detection_rate": pytest.approx(205 / 240),
+    }
+    assert results["detection"]["aggregate"]["detection_rate_mean"] == pytest.approx(205 / 240)
+    person = results["variants"]["eyeos"]["persons"]["p00"]
+    assert person["n_calibration"] + person["n_test"] == 205
+
+
+def test_angular_error_is_null_with_the_reason_when_no_screen_model_fits(tmp_path, scipy_io):
+    root, cache = _extracted(tmp_path, [FakePerson("p00", gt_offset_mm=40.0)])
+
+    results = mpii.evaluate_dataset(root, cache, variants=["eyeos"])
+
+    assert results["screen_model"]["p00"]["fits"] is False
+    person = results["variants"]["eyeos"]["persons"]["p00"]
+    assert person["angular_error_deg"] is None
+    assert "5 mm" in person["angular_error_note"]
+    assert person["pixel_error_px"]["mean"] < 0.75
+    assert results["variants"]["eyeos"]["aggregate"]["angular_error_deg"] is None
+
+
+def test_a_person_with_too_few_valid_frames_is_skipped_with_the_reason(tmp_path, scipy_io):
+    root, cache = _extracted(tmp_path, [FakePerson("p00", n_images=40), FakePerson("p01")])
+
+    results = mpii.evaluate_dataset(root, cache, variants=["eyeos"])
+
+    eyeos = results["variants"]["eyeos"]
+    assert "40 valid" in eyeos["persons"]["p00"]["skipped"]
+    assert eyeos["aggregate"]["persons_evaluated"] == 1
+    assert eyeos["aggregate"]["persons_skipped"] == ["p00"]
+
+
+def test_evaluate_is_deterministic(tmp_path, scipy_io):
+    root, cache = _extracted(tmp_path, [FakePerson("p00", noise=0.05), FakePerson("p01")])
+
+    first = mpii.evaluate_dataset(root, cache, variants=["eyeos"])
+    second = mpii.evaluate_dataset(root, cache, variants=["eyeos"])
+
+    for results in (first, second):
+        results.pop("generated")
+    assert json.dumps(first, sort_keys=True) == json.dumps(second, sort_keys=True)
+
+
+def test_evaluate_fails_loudly_on_a_cache_from_another_format(tmp_path, scipy_io):
+    root, cache = _extracted(tmp_path, [FakePerson("p00", n_images=3)])
+    (cache / "p00.csv").write_text("image,target_x\nday01/0000.jpg,1\n")
+
+    with pytest.raises(mpii.DatasetFormatError, match="extract --force"):
+        mpii.evaluate_dataset(root, cache, variants=["eyeos"])
+
+
+def test_evaluate_cli_writes_the_results_json(tmp_path, scipy_io, capsys):
+    root, cache = _extracted(tmp_path, [FakePerson("p00"), _second_screen("p01", seed=1)])
+    out = tmp_path / "results" / "mpiifacegaze.json"
+
+    code = mpii.main(
+        ["evaluate", "--root", str(root), "--cache", str(cache), "--out", str(out)]
+        + ["--variants", "eyeos"]
+    )
+
+    assert code == 0
+    results = json.loads(out.read_text())
+    assert results["dataset"] == "MPIIFaceGaze"
+    assert results["license"] == "CC BY-NC-SA 4.0"
+    assert len(results["citation"]) == 2
+    assert results["generated"]
+    assert "git_commit" in results
+    assert results["config"]["k_per_dot"] == 5
+    assert results["config"]["persons"] == ["p00", "p01"]
+    assert results["config"]["gate2_max_validation_error_px"] == 60.0
+    assert results["config"]["max_head_pose_delta_deg"] == 15.0
+    assert list(results["variants"]) == ["eyeos"]
+    assert set(results["screen_model"]) == {"p00", "p01"}
+    assert "eyeos" in capsys.readouterr().out
+
+
+def test_evaluate_cli_rejects_an_unknown_variant(tmp_path, capsys):
+    with pytest.raises(SystemExit) as excinfo:
+        mpii.main(
+            ["evaluate", "--root", str(tmp_path), "--cache", str(tmp_path)]
+            + ["--out", str(tmp_path / "r.json"), "--variants", "eyeos,nope"]
+        )
+
+    assert excinfo.value.code == 2
+    err = capsys.readouterr().err
+    assert "nope" in err and "eyeos" in err
+
+
+def test_evaluate_cli_reports_an_empty_cache(tmp_path, capsys):
+    code = mpii.main(
+        ["evaluate", "--root", str(tmp_path), "--cache", str(tmp_path / "empty")]
+        + ["--out", str(tmp_path / "r.json")]
+    )
+
+    assert code == 1
+    assert "extract" in capsys.readouterr().err

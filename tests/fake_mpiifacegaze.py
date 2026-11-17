@@ -52,6 +52,7 @@ class FakePerson:
     faces: dict[int, int] = field(default_factory=dict)  # image index -> face count
     closed: set[int] = field(default_factory=set)  # image indices with both eyes shut
     mirror_gt_x: bool = False  # write gt as if the screen's x axis were mirrored
+    gt_offset_mm: float = 0.0  # added to every gt coordinate: a screen model that fits nothing
     write_mat: bool = True
     targets: list[tuple[float, float]] = field(default_factory=list)
 
@@ -62,7 +63,7 @@ class FakePerson:
         if self.mirror_gt_x:
             x_mm = w_mm - x_mm
         local = np.array([x_mm, y * h_mm / h_px, 0.0])
-        return rotation_about_y(self.theta) @ local + np.array(self.tvec)
+        return rotation_about_y(self.theta) @ local + np.array(self.tvec) + self.gt_offset_mm
 
 
 def annotation_line(

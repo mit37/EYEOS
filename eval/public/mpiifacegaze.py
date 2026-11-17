@@ -23,21 +23,26 @@ from __future__ import annotations
 
 import argparse
 import csv
+import json
 import math
 import re
+import subprocess
 import sys
 from collections.abc import Callable, Sequence
 from concurrent.futures import ProcessPoolExecutor
-from dataclasses import dataclass
+from dataclasses import asdict, dataclass
+from datetime import datetime, timezone
 from pathlib import Path, PurePosixPath
 from typing import Any
 
 import numpy as np
 
+from eval.public import protocol
+from eval.public.models import VARIANT_NAMES, build_variants
 from eyeos.config import Config
 from eyeos.input_sources._mediapipe_common import landmarks_from_mediapipe
 from eyeos.landmarks import FaceLandmarks
-from eyeos.synthetic_format import CSV_FIELDNAMES, landmarks_to_row
+from eyeos.synthetic_format import CSV_FIELDNAMES, landmarks_to_row, row_to_frame
 
 DATASET = "MPIIFaceGaze"
 LICENSE = "CC BY-NC-SA 4.0"
@@ -558,22 +563,229 @@ def extract(
 
 
 # ---------------------------------------------------------------------------
+# evaluate: the cached landmarks through the EyeOS protocol (eval/public/protocol.py)
+# ---------------------------------------------------------------------------
+
+REPO_ROOT = Path(__file__).resolve().parents[2]
+
+NOTES = {
+    "static_photos": (
+        "MPIIFaceGaze is still photos, not live video, so the One Euro filter, dwell (Gate 3) "
+        "and click confirmation are not exercised: every error is one frame's calibration "
+        "output, rounded and clamped to the screen like the cursor pixel."
+    ),
+    "calibration_set": (
+        "For each of EyeOS's 9 calibration dots, the K valid images whose true target is "
+        "nearest the dot stand in for looking at it, and are added with their true targets. "
+        "calibration_mean_distance_px says how far from the dots those images were."
+    ),
+    "screens": (
+        "Each participant's own laptop screen (screenSize.mat) is the screen, not the user's: "
+        "pixel errors are in that screen's pixels, and % of the diagonal compares across "
+        "screens."
+    ),
+    "valid_frames": (
+        "valid = exactly one face and both irises visible, what Gate 1 needs; detection_rate "
+        "= valid / images. Invalid frames are in neither the calibration nor the test set."
+    ),
+    "test_sets": (
+        "the test set is every valid image not used for calibration, so a variant with more "
+        "images per dot is tested on slightly fewer images."
+    ),
+    "angular_error": (
+        "the angle between (P_pred - fc) and (gt - fc), with the predicted pixel P_pred "
+        "mapped to camera coordinates by the screen model recorded under screen_model; null "
+        "for a person whose screen model does not reproduce the annotated gt within the "
+        "tolerance."
+    ),
+    "head_pose": (
+        "EyeOS's own simplified head pose (eyeos.features), not the dataset's: the share of "
+        "test frames within Gate 2's head-pose limit of the calibration pose."
+    ),
+    "validation_error_px": (
+        "Calibration's own leave-one-out RMS error for the eyeos.calibration variants, and the "
+        "same leave-one-out definition for the other models; Gate 2 passes below the limit."
+    ),
+}
+
+
+def read_cache(cache_dir: Path, person: str) -> list[dict[str, str]]:
+    path = cache_path(cache_dir, person)
+    if not path.is_file():
+        raise DatasetFormatError(f"missing {path}: run extract for {person} first")
+    with path.open(newline="") as f:
+        reader = csv.DictReader(f)
+        if reader.fieldnames != CACHE_COLUMNS:
+            raise DatasetFormatError(
+                f"{path} is not an extract cache in this version's format (its columns start "
+                f"{list(reader.fieldnames or [])[:4]}); rerun `extract --force --persons {person}`"
+            )
+        rows = list(reader)
+    if not rows:
+        raise DatasetFormatError(f"{path} has no rows; rerun `extract --force --persons {person}`")
+    return rows
+
+
+def cached_persons(cache_dir: Path) -> list[str]:
+    cache_dir = Path(cache_dir)
+    if not cache_dir.is_dir():
+        return []
+    return sorted(
+        p.stem for p in cache_dir.glob("*.csv") if p.is_file() and PERSON_PATTERN.fullmatch(p.stem)
+    )
+
+
+def _floats(rows: list[dict[str, str]], columns: Sequence[str]) -> np.ndarray:
+    return np.array([[float(row[c]) for c in columns] for row in rows], dtype=float)
+
+
+def load_person(
+    root: Path, cache_dir: Path, person: str
+) -> tuple[protocol.PersonData, ScreenModelCheck]:
+    """One person's cached landmarks and labels, plus their checked screen model."""
+    rows = read_cache(cache_dir, person)
+    screen = load_screen_size(root, person)
+    pose = load_monitor_pose(root, person)
+    targets = _floats(rows, ("target_x", "target_y"))
+    face_centers = _floats(rows, ("fc_x", "fc_y", "fc_z"))
+    gaze_targets = _floats(rows, ("gt_x", "gt_y", "gt_z"))
+    check = check_screen_model(targets, gaze_targets, screen, pose)
+
+    to_camera = None
+    if check.model is not None:
+        model = check.model
+
+        def to_camera(points_px: np.ndarray) -> np.ndarray:
+            return screen_to_camera(points_px, screen, pose, model)
+
+    data = protocol.PersonData(
+        person=person,
+        screen_px=(screen.width_px, screen.height_px),
+        targets_px=targets,
+        landmarks=[row_to_frame(row)[1] for row in rows],
+        face_centers_mm=face_centers,
+        gaze_targets_mm=gaze_targets,
+        to_camera_mm=to_camera,
+        angular_note=check.reason,
+    )
+    return data, check
+
+
+def _git(*args: str) -> str | None:
+    try:
+        done = subprocess.run(
+            ["git", *args], cwd=REPO_ROOT, capture_output=True, text=True, timeout=10, check=True
+        )
+    except (OSError, subprocess.SubprocessError):
+        return None
+    return done.stdout.strip()
+
+
+def evaluate_dataset(
+    root: Path,
+    cache_dir: Path,
+    persons: Sequence[str] | None = None,
+    variants: Sequence[str] | None = None,
+    k_per_dot: int = protocol.DEFAULT_K_PER_DOT,
+) -> dict[str, Any]:
+    """Run the protocol on the cached persons (default: every pXX.csv in ``cache_dir``)
+    for the named variants (default: all) and return the results document."""
+    names = list(persons) if persons is not None else cached_persons(cache_dir)
+    if not names:
+        raise DatasetFormatError(
+            f"no pXX.csv caches in {cache_dir}: run `python -m eval.public.mpiifacegaze "
+            "extract` first"
+        )
+    registry = build_variants()
+    chosen = list(variants) if variants is not None else list(VARIANT_NAMES)
+    unknown = [v for v in chosen if v not in registry]
+    if unknown:
+        raise ValueError(f"unknown variant(s) {unknown}; choose from {list(VARIANT_NAMES)}")
+
+    loaded = [load_person(root, cache_dir, name) for name in names]
+    limits = protocol.Limits()
+    results = protocol.evaluate(
+        [data for data, _ in loaded], [registry[v] for v in chosen], k_per_dot, limits
+    )
+    dirty = _git("status", "--porcelain", "--untracked-files=no")
+    return {
+        "dataset": DATASET,
+        "license": LICENSE,
+        "citation": list(CITATION),
+        "generated": datetime.now(timezone.utc).isoformat(timespec="seconds"),
+        "git_commit": _git("rev-parse", "HEAD"),
+        "git_dirty": None if dirty is None else bool(dirty),
+        "config": {
+            "root": str(root),
+            "cache": str(cache_dir),
+            "persons": names,
+            "variants": chosen,
+            "k_per_dot": k_per_dot,
+            "calibration_grid": "eyeos.calibration.target_points: 3x3 at 10/50/90% of the screen",
+            "gate2_max_validation_error_px": limits.gate2_max_error_px,
+            "max_head_pose_delta_deg": limits.max_head_pose_delta_deg,
+            "screen_model_tolerance_mm": SCREEN_MODEL_TOLERANCE_MM,
+        },
+        "screen_model": {data.person: asdict(check) for data, check in loaded},
+        "detection": results["detection"],
+        "variants": results["variants"],
+        "notes": NOTES,
+    }
+
+
+def _fmt_or_dash(value: float | None, spec: str) -> str:
+    return "-" if value is None else format(value, spec)
+
+
+def summary_table(results: dict[str, Any]) -> str:
+    """A short text table of the per-variant aggregates, for the terminal."""
+    lines = [
+        f"{'variant':<16}{'persons':>8}{'mean px':>10}{'% diag':>8}{'mean deg':>10}{'gate2':>8}"
+    ]
+    for name, variant in results["variants"].items():
+        agg = variant["aggregate"]
+        px = agg["pixel_error_px"] or {}
+        deg = agg["angular_error_deg"] or {}
+        gate2 = f"{agg['gate2_passed']}/{agg['persons_evaluated']}"
+        lines.append(
+            f"{name:<16}{agg['persons_evaluated']:>8}"
+            f"{_fmt_or_dash(px.get('mean_of_person_means'), '.1f'):>10}"
+            f"{_fmt_or_dash(agg['pixel_error_pct_diagonal_mean_of_person_means'], '.2f'):>8}"
+            f"{_fmt_or_dash(deg.get('mean_of_person_means'), '.2f'):>10}"
+            f"{gate2:>8}"
+        )
+    return "\n".join(lines)
+
+
+# ---------------------------------------------------------------------------
 # command line
 # ---------------------------------------------------------------------------
 
 
-def _persons_arg(root: Path, text: str | None, parser: argparse.ArgumentParser) -> list[str]:
-    available = find_persons(root)
+def _persons_arg(
+    available: list[str], text: str | None, parser: argparse.ArgumentParser, where: str
+) -> list[str] | None:
+    """The --persons list, checked against what is available; None means all."""
     if text is None:
-        if not available:
-            parser.error(f"no pXX folders with annotations under {root}")
-        return available
+        return None
     names = [p.strip() for p in text.split(",") if p.strip()]
     unknown = [p for p in names if p not in available]
     if unknown:
         parser.error(
-            f"--persons: {', '.join(unknown)} not found under {root} "
+            f"--persons: {', '.join(unknown)} not found in {where} "
             f"(available: {', '.join(available) or 'none'})"
+        )
+    return names
+
+
+def _variants_arg(text: str | None, parser: argparse.ArgumentParser) -> list[str] | None:
+    if text is None:
+        return None
+    names = [v.strip() for v in text.split(",") if v.strip()]
+    unknown = [v for v in names if v not in VARIANT_NAMES]
+    if unknown:
+        parser.error(
+            f"--variants: unknown {', '.join(unknown)} (choose from {', '.join(VARIANT_NAMES)})"
         )
     return names
 
@@ -599,6 +811,21 @@ def build_parser() -> argparse.ArgumentParser:
     ext.add_argument("--limit", type=_positive_int, help="only the first N images per person")
     ext.add_argument("--workers", type=_positive_int, default=1, help="persons in parallel")
     ext.add_argument("--force", action="store_true", help="re-extract cached persons")
+
+    ev = sub.add_parser("evaluate", help="run the EyeOS protocol on the cached landmarks")
+    ev.add_argument("--root", required=True, type=Path, help="the extracted MPIIFaceGaze folder")
+    ev.add_argument("--cache", required=True, type=Path, help="the extract cache folder")
+    ev.add_argument("--out", required=True, type=Path, help="results JSON to write")
+    ev.add_argument(
+        "--variants", help=f"comma-separated (default: all): {', '.join(VARIANT_NAMES)}"
+    )
+    ev.add_argument("--persons", help="comma-separated, e.g. p00,p01 (default: all cached)")
+    ev.add_argument(
+        "--k-per-dot",
+        type=_positive_int,
+        default=protocol.DEFAULT_K_PER_DOT,
+        help="images per calibration dot for variants that do not set their own (default: 5)",
+    )
     return parser
 
 
@@ -607,7 +834,7 @@ def _run_extract(
     parser: argparse.ArgumentParser,
     detector_factory: DetectorFactory | None,
 ) -> int:
-    persons = _persons_arg(args.root, args.persons, parser)
+    persons = _persons_arg(find_persons(args.root), args.persons, parser, str(args.root))
     summaries = extract(
         args.root,
         args.cache,
@@ -623,10 +850,25 @@ def _run_extract(
     return 0
 
 
+def _run_evaluate(args: argparse.Namespace, parser: argparse.ArgumentParser) -> int:
+    persons = _persons_arg(cached_persons(args.cache), args.persons, parser, str(args.cache))
+    variants = _variants_arg(args.variants, parser)
+    results = evaluate_dataset(
+        args.root, args.cache, persons=persons, variants=variants, k_per_dot=args.k_per_dot
+    )
+    args.out.parent.mkdir(parents=True, exist_ok=True)
+    args.out.write_text(json.dumps(results, indent=2) + "\n")
+    print(summary_table(results))
+    print(f"wrote {args.out}")
+    return 0
+
+
 def main(argv: list[str] | None = None, detector_factory: DetectorFactory | None = None) -> int:
     parser = build_parser()
     args = parser.parse_args(argv)
     try:
+        if args.command == "evaluate":
+            return _run_evaluate(args, parser)
         return _run_extract(args, parser, detector_factory)
     except (DatasetFormatError, MissingDependencyError) as e:
         print(f"error: {e}", file=sys.stderr)
