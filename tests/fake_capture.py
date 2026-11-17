@@ -6,6 +6,10 @@ monkeypatch removes them again afterwards. Each fake records what the source did
 The OpenCV semantics are hardcoded (by default POS_MSEC is the timestamp of the last frame
 read, ``index * 1000 / fps``), so these prove EyeOS's plumbing, not OpenCV's or MediaPipe's
 behaviour.
+
+The fake ``cv2`` also records HighGUI drawing and window calls (``drawn`` and
+``window_calls``) for the tracking view. It draws nothing: it checks each call's argument
+types the way OpenCV parses them (points must be pairs of ints) and keeps the arguments.
 """
 
 from __future__ import annotations
@@ -13,7 +17,8 @@ from __future__ import annotations
 import sys
 import types
 from collections.abc import Callable, Sequence
-from dataclasses import dataclass
+from dataclasses import dataclass, field, replace
+from typing import Any
 
 import pytest
 
@@ -25,6 +30,46 @@ class FakeImage:
     color: str  # "bgr" straight from read(), "rgb" after cvtColor
     index: int
     shape: tuple[int, ...] | None = None  # (height, width, channels), like a numpy image
+
+    def copy(self) -> FakeImage:
+        """A new image equal to this one, like ``ndarray.copy()``."""
+        return replace(self)
+
+
+class FakeCv2Error(Exception):
+    """Stands in for ``cv2.error``."""
+
+
+@dataclass
+class FakeCv2Call:
+    """One drawing call: which function, on which image, with which arguments."""
+
+    name: str
+    image: Any
+    params: dict[str, Any] = field(default_factory=dict)
+
+
+def _check_point(name: str, point: object) -> None:
+    # OpenCV refuses float coordinates ("Can't parse 'center'. Sequence item with index 0
+    # has a wrong type"), so a view that forgot to round must fail here too.
+    if not (
+        isinstance(point, tuple)
+        and len(point) == 2
+        and all(isinstance(c, int) and not isinstance(c, bool) for c in point)
+    ):
+        raise FakeCv2Error(f"Can't parse '{name}': expected a pair of ints, got {point!r}")
+
+
+def _check_color(color: object) -> None:
+    if not (
+        isinstance(color, tuple) and len(color) == 3 and all(isinstance(c, int) for c in color)
+    ):
+        raise FakeCv2Error(f"Can't parse 'color': expected 3 ints (BGR), got {color!r}")
+
+
+def _check_int(name: str, value: object) -> None:
+    if not isinstance(value, int) or isinstance(value, bool):
+        raise FakeCv2Error(f"Argument '{name}' must be an int, got {value!r}")
 
 
 class FakeVideoCapture:
@@ -81,6 +126,11 @@ class FakeCv2(types.ModuleType):
     CAP_PROP_POS_MSEC = 0
     CAP_PROP_FPS = 5
     COLOR_BGR2RGB = 4
+    FONT_HERSHEY_SIMPLEX = 0
+    LINE_AA = 16
+    FILLED = -1
+    WND_PROP_VISIBLE = 4
+    error = FakeCv2Error
 
     def __init__(
         self,
@@ -90,7 +140,16 @@ class FakeCv2(types.ModuleType):
         fps: float = 30.0,
         pos_msec: float | Callable[[int], float] | None = None,
         frame_shape: tuple[int, ...] | None = None,
+        keys: Sequence[int] = (),
+        window_visible: float | Callable[[int], float] = 1.0,
+        imshow_error: Exception | None = None,
+        window_property_error: Exception | None = None,
+        destroy_error: Exception | None = None,
     ) -> None:
+        """``keys``: what successive waitKey() calls return (then -1, no key).
+        ``window_visible``: what getWindowProperty(WND_PROP_VISIBLE) returns, or a
+        function of how many images imshow() has shown so far (a user closing the
+        window). The ``*_error`` arguments make that call raise instead."""
         super().__init__("cv2")
         self.n_frames = n_frames
         self.opened = opened
@@ -98,6 +157,15 @@ class FakeCv2(types.ModuleType):
         self.pos_msec = pos_msec
         self.frame_shape = frame_shape
         self.captures: list[FakeVideoCapture] = []
+        self.keys = list(keys)
+        self.window_visible = window_visible
+        self.imshow_error = imshow_error
+        self.window_property_error = window_property_error
+        self.destroy_error = destroy_error
+        self.drawn: list[FakeCv2Call] = []
+        # ("imshow", name, image), ("waitKey", delay), ("getWindowProperty", name, prop),
+        # ("destroyWindow", name), in call order.
+        self.window_calls: list[tuple[Any, ...]] = []
 
     def VideoCapture(self, source: object) -> FakeVideoCapture:
         cap = FakeVideoCapture(
@@ -114,6 +182,109 @@ class FakeCv2(types.ModuleType):
     def cvtColor(self, image: FakeImage, code: int) -> FakeImage:
         assert code == self.COLOR_BGR2RGB and image.color == "bgr"
         return FakeImage("rgb", image.index, image.shape)
+
+    # -- drawing (signatures and keyword names as in OpenCV's Python bindings) ----------
+    def circle(self, img, center, radius, color, thickness=1, lineType=8, shift=0):
+        _check_point("center", center)
+        _check_int("radius", radius)
+        _check_color(color)
+        _check_int("thickness", thickness)
+        self.drawn.append(
+            FakeCv2Call(
+                "circle",
+                img,
+                dict(center=center, radius=radius, color=color, thickness=thickness),
+            )
+        )
+        return img
+
+    def line(self, img, pt1, pt2, color, thickness=1, lineType=8, shift=0):
+        _check_point("pt1", pt1)
+        _check_point("pt2", pt2)
+        _check_color(color)
+        _check_int("thickness", thickness)
+        self.drawn.append(
+            FakeCv2Call("line", img, dict(pt1=pt1, pt2=pt2, color=color, thickness=thickness))
+        )
+        return img
+
+    def arrowedLine(self, img, pt1, pt2, color, thickness=1, line_type=8, shift=0, tipLength=0.1):
+        _check_point("pt1", pt1)
+        _check_point("pt2", pt2)
+        _check_color(color)
+        _check_int("thickness", thickness)
+        self.drawn.append(
+            FakeCv2Call(
+                "arrowedLine",
+                img,
+                dict(pt1=pt1, pt2=pt2, color=color, thickness=thickness, tipLength=tipLength),
+            )
+        )
+        return img
+
+    def rectangle(self, img, pt1, pt2, color, thickness=1, lineType=8, shift=0):
+        _check_point("pt1", pt1)
+        _check_point("pt2", pt2)
+        _check_color(color)
+        _check_int("thickness", thickness)
+        self.drawn.append(
+            FakeCv2Call("rectangle", img, dict(pt1=pt1, pt2=pt2, color=color, thickness=thickness))
+        )
+        return img
+
+    def putText(
+        self,
+        img,
+        text,
+        org,
+        fontFace,
+        fontScale,
+        color,
+        thickness=1,
+        lineType=8,
+        bottomLeftOrigin=False,
+    ):
+        if not isinstance(text, str):
+            raise FakeCv2Error(f"Can't parse 'text': {text!r}")
+        _check_point("org", org)
+        _check_color(color)
+        _check_int("thickness", thickness)
+        self.drawn.append(
+            FakeCv2Call(
+                "putText",
+                img,
+                dict(text=text, org=org, fontScale=fontScale, color=color, thickness=thickness),
+            )
+        )
+        return img
+
+    # -- HighGUI windows -----------------------------------------------------------------
+    @property
+    def shown(self) -> list[Any]:
+        """Every image imshow() was given, in order."""
+        return [call[2] for call in self.window_calls if call[0] == "imshow"]
+
+    def imshow(self, winname: str, mat: Any) -> None:
+        if self.imshow_error is not None:
+            raise self.imshow_error
+        self.window_calls.append(("imshow", winname, mat))
+
+    def waitKey(self, delay: int = 0) -> int:
+        self.window_calls.append(("waitKey", delay))
+        return self.keys.pop(0) if self.keys else -1
+
+    def getWindowProperty(self, winname: str, prop_id: int) -> float:
+        self.window_calls.append(("getWindowProperty", winname, prop_id))
+        if self.window_property_error is not None:
+            raise self.window_property_error
+        if callable(self.window_visible):
+            return float(self.window_visible(len(self.shown)))
+        return float(self.window_visible)
+
+    def destroyWindow(self, winname: str) -> None:
+        self.window_calls.append(("destroyWindow", winname))
+        if self.destroy_error is not None:
+            raise self.destroy_error
 
 
 def fake_face(x: float = 0.5, y: float = 0.5, z: float = 0.0) -> types.SimpleNamespace:

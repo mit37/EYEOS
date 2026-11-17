@@ -14,7 +14,7 @@ import pytest
 from eyeos.input_sources import Frame
 from eyeos.input_sources.video_file import VideoFileInputSource
 from eyeos.input_sources.webcam import WebcamInputSource
-from tests.fake_capture import FakeCv2, FakeImage, FakeMediapipe, install_fakes
+from tests.fake_capture import FakeCv2, FakeCv2Error, FakeImage, FakeMediapipe, install_fakes
 from tests.test_features import make_landmarks
 
 # ---------------------------------------------------------------------------
@@ -315,3 +315,441 @@ def test_compute_view_rejects_empty_sizes(image_size, screen):
 
     with pytest.raises(ValueError):
         compute_view(make_landmarks(), image_size, None, screen)
+
+
+# ---------------------------------------------------------------------------
+# TrackingView: the OpenCV window, against the fake cv2
+# ---------------------------------------------------------------------------
+
+
+@pytest.fixture
+def fake_cv2(monkeypatch):
+    """A fake cv2 with drawing/window recording, and a display to draw on."""
+    cv2 = FakeCv2()
+    install_fakes(monkeypatch, cv2=cv2)
+    monkeypatch.setenv("DISPLAY", ":99")
+    return cv2
+
+
+def _install_cv2(monkeypatch, **kwargs):
+    cv2 = FakeCv2(**kwargs)
+    install_fakes(monkeypatch, cv2=cv2)
+    monkeypatch.setenv("DISPLAY", ":99")
+    return cv2
+
+
+def _frame_input(t=0.0):
+    from eyeos.gates import FrameInput
+
+    return FrameInput(
+        timestamp_s=t,
+        face_count=1,
+        detection_confidence=0.95,
+        both_irises_visible=True,
+        gaze_point_px=(960.0, 540.0),
+        head_pose_deg=(0.0, 0.0, 0.0),
+    )
+
+
+def _drawn(cv2, name):
+    return [call for call in cv2.drawn if call.name == name]
+
+
+def _texts(cv2):
+    return [call.params["text"] for call in _drawn(cv2, "putText")]
+
+
+def _centers(cv2):
+    return [call.params["center"] for call in _drawn(cv2, "circle")]
+
+
+def _round(point):
+    return (round(point[0]), round(point[1]))
+
+
+def _update(view, n_frames, landmarks="default", status="default"):
+    for i in range(n_frames):
+        t = i / 30
+        face = make_landmarks() if landmarks == "default" else landmarks
+        view.update(Frame(t, face), _frame_input(t), _status() if status == "default" else status)
+
+
+def test_the_view_needs_opencv(monkeypatch):
+    import sys
+
+    from eyeos.tracking_view import TrackingView, annotate
+
+    monkeypatch.setitem(sys.modules, "cv2", None)  # makes `import cv2` raise ImportError
+    monkeypatch.setenv("DISPLAY", ":99")
+
+    with pytest.raises(RuntimeError, match="needs OpenCV"):
+        TrackingView(SCREEN)
+    with pytest.raises(RuntimeError, match="needs OpenCV"):
+        annotate(FakeImage("bgr", 0, (480, 640, 3)), make_landmarks())
+
+
+@pytest.mark.parametrize(
+    "platform, environ, refused",
+    [
+        ("linux", {}, True),
+        ("linux", {"DISPLAY": ""}, True),
+        ("linux", {"DISPLAY": ":0"}, False),
+        ("linux", {"WAYLAND_DISPLAY": "wayland-0"}, False),
+        ("win32", {}, False),
+        ("darwin", {}, False),
+    ],
+)
+def test_a_linux_session_without_a_display_is_refused_up_front(platform, environ, refused):
+    # OpenCV's Qt window aborts the whole process (no exception to catch) when there is
+    # no X or Wayland display, so the view must refuse before its first imshow().
+    from eyeos.tracking_view import _display_problem
+
+    assert (_display_problem(platform, environ) is not None) is refused
+
+
+def test_the_view_refuses_to_start_without_a_display(monkeypatch):
+    from eyeos.tracking_view import TrackingView
+
+    install_fakes(monkeypatch, cv2=FakeCv2())
+    monkeypatch.setattr("sys.platform", "linux")
+    monkeypatch.delenv("DISPLAY", raising=False)
+    monkeypatch.delenv("WAYLAND_DISPLAY", raising=False)
+
+    with pytest.raises(RuntimeError, match="needs a display"):
+        TrackingView(SCREEN)
+
+
+def test_update_draws_the_pupils_their_shift_the_map_and_the_lights(fake_cv2):
+    from eyeos.landmarks import Point3D
+    from eyeos.tracking_view import TrackingView, compute_view
+
+    landmarks = make_landmarks(
+        left_iris_center=Point3D(0.39, 0.41), right_iris_center=Point3D(0.60, 0.40)
+    )
+    camera = FakeImage("bgr", 7, (720, 1280, 3))
+    frame = Frame(timestamp_s=1.0, landmarks=landmarks, image=camera)
+    status = _status(target=(480.0, 270.0))
+    view = TrackingView(SCREEN)
+
+    view.update(frame, _frame_input(1.0), status)
+
+    expected = compute_view(landmarks, (1280, 720), status, SCREEN)
+    # One image shown in the "EyeOS tracking" window: a copy of the camera frame, so the
+    # frame itself is never drawn on.
+    (shown,) = fake_cv2.shown
+    assert shown == camera and shown is not camera
+    assert fake_cv2.window_calls[:2] == [("imshow", "EyeOS tracking", shown), ("waitKey", 1)]
+    assert all(call.image is shown for call in fake_cv2.drawn)
+
+    circles = _centers(fake_cv2)
+    lines = [(c.params["pt1"], c.params["pt2"]) for c in _drawn(fake_cv2, "line")]
+    arrows = [(c.params["pt1"], c.params["pt2"]) for c in _drawn(fake_cv2, "arrowedLine")]
+    for eye in (expected.left, expected.right):
+        # The pupil marker, the corner midpoint, both corners and both lids.
+        for point in (eye.iris_px, eye.mid_px, eye.outer_px, eye.inner_px):
+            assert _round(point) in circles
+        for point in (eye.top_px, eye.bottom_px):
+            assert _round(point) in circles
+        assert (_round(eye.outer_px), _round(eye.inner_px)) in lines  # the corner line
+        assert (_round(eye.mid_px), _round(eye.arrow_end_px)) in arrows  # the shift x gain
+    assert len(arrows) == 2
+
+    # The mini map, with the cursor at the target the gates allowed.
+    x0, y0, x1, y1 = expected.minimap.rect
+    rectangles = [(c.params["pt1"], c.params["pt2"]) for c in _drawn(fake_cv2, "rectangle")]
+    assert rectangles == [((x0, y0), (x1, y1))]
+    assert expected.minimap.cursor_px == pytest.approx(
+        (x0 + 0.25 * (x1 - x0), y0 + 0.25 * (y1 - y0))
+    )
+    assert _round(expected.minimap.cursor_px) in circles
+
+    texts = _texts(fake_cv2)
+    for label in ("1 Presence", "2 Calibration", "3 Stability", "4 Kill/limits"):
+        assert any(text.startswith(label) for text in texts), label
+    # The numbers the calibration is fed, in eye half-widths, and the arrow's gain.
+    assert any("L +0.25 +0.25" in t and "R -0.50 +0.00" in t for t in texts)
+    assert any("x4" in t for t in texts)
+    assert "blocked" not in texts
+
+
+def test_gate_lights_are_green_or_red_with_their_reasons(fake_cv2):
+    from eyeos.tracking_view import GREEN, RED, TrackingView, gate_light_centers
+
+    reasons = {"gate1": "ok", "gate2": "no calibration", "gate3": "dwell", "gate4": "ok"}
+    status = _status(move_allowed=False, target=None, gates=(1, 0, 0, 1), reasons=reasons)
+    view = TrackingView(SCREEN)
+
+    view.update(Frame(0.0, make_landmarks()), _frame_input(), status)
+
+    texts = _texts(fake_cv2)
+    assert "1 Presence: ok" in texts
+    assert "2 Calibration: no calibration" in texts
+    centers = gate_light_centers()
+    lights = {
+        c.params["center"]: c.params["color"]
+        for c in _drawn(fake_cv2, "circle")
+        if c.params["center"] in centers and c.params["thickness"] == fake_cv2.FILLED
+    }
+    assert [lights[center] for center in centers] == [GREEN, RED, RED, GREEN]
+
+
+def test_a_blocked_cursor_is_drawn_at_the_smoothed_gaze_and_labelled(fake_cv2):
+    from eyeos.tracking_view import RED, TrackingView, compute_view
+
+    status = _status(move_allowed=False, target=None, smoothed=(1920.0, 1080.0), gates=(1, 0, 0, 1))
+    view = TrackingView(SCREEN)
+
+    view.update(Frame(0.0, make_landmarks()), _frame_input(), status)
+
+    minimap = compute_view(make_landmarks(), (640, 480), status, SCREEN).minimap
+    assert _round(minimap.cursor_px) == minimap.rect[2:]  # bottom-right corner
+    marker = [c for c in _drawn(fake_cv2, "circle") if c.params["center"] == minimap.rect[2:]]
+    assert marker and all(c.params["color"] == RED for c in marker)
+    assert "blocked" in _texts(fake_cv2)
+
+
+def test_an_allowed_cursor_is_green(fake_cv2):
+    from eyeos.tracking_view import GREEN, TrackingView
+
+    view = TrackingView(SCREEN)
+    view.update(Frame(0.0, make_landmarks()), _frame_input(), _status(target=(0.0, 0.0)))
+
+    x0, y0 = _drawn(fake_cv2, "rectangle")[0].params["pt1"]
+    marker = [c for c in _drawn(fake_cv2, "circle") if c.params["center"] == (x0, y0)]
+    assert marker and all(c.params["color"] == GREEN for c in marker)
+
+
+def test_reasons_are_drawn_in_plain_ascii(fake_cv2):
+    # OpenCV's Hershey fonts only have ASCII: an em dash would come out as "??".
+    from eyeos.tracking_view import TrackingView
+
+    reasons = {
+        "gate1": "ok",
+        "gate2": "no calibration for this session — recalibrate",
+        "gate3": "head pose 20.0° ≥ limit",
+        "gate4": "ok",
+    }
+    status = _status(move_allowed=False, target=None, gates=(1, 0, 0, 1), reasons=reasons)
+    view = TrackingView(SCREEN)
+
+    view.update(Frame(0.0, make_landmarks()), _frame_input(), status)
+
+    texts = _texts(fake_cv2)
+    assert "2 Calibration: no calibration for this session - recalibrate" in texts
+    assert "3 Stability: head pose 20.0deg >= limit" in texts
+    assert all(text.isascii() for text in texts)
+
+
+def test_without_a_camera_image_the_view_draws_on_a_black_640x480_canvas(fake_cv2):
+    import numpy as np
+
+    from eyeos.tracking_view import TrackingView, compute_view
+
+    view = TrackingView(SCREEN)
+    view.update(Frame(0.0, make_landmarks()), _frame_input(), _status())
+
+    (shown,) = fake_cv2.shown
+    assert isinstance(shown, np.ndarray)
+    assert shown.shape == (480, 640, 3) and shown.dtype == np.uint8
+    assert not shown.any()  # the fake cv2 draws nothing on it
+    expected = compute_view(make_landmarks(), (640, 480), _status(), SCREEN)
+    arrows = [c.params["pt1"] for c in _drawn(fake_cv2, "arrowedLine")]
+    assert arrows == [_round(expected.left.mid_px), _round(expected.right.mid_px)]
+
+
+def test_no_face_is_written_on_the_image(fake_cv2):
+    from eyeos.tracking_view import TrackingView
+
+    status = _status(move_allowed=False, target=None, smoothed=None, gates=(0, 0, 0, 1))
+    view = TrackingView(SCREEN)
+
+    view.update(Frame(0.0, None), _frame_input(), status)
+
+    assert "no face" in _texts(fake_cv2)
+    assert _drawn(fake_cv2, "arrowedLine") == []
+    assert len(fake_cv2.shown) == 1
+
+
+@pytest.mark.parametrize("key", [ord("q"), ord("Q")])
+def test_pressing_q_closes_the_window_and_stops_drawing(monkeypatch, key):
+    from eyeos.tracking_view import TrackingView
+
+    cv2 = _install_cv2(monkeypatch, keys=[-1, key])
+    view = TrackingView(SCREEN)
+
+    _update(view, 4)
+
+    assert view.closed
+    assert len(cv2.shown) == 2  # nothing drawn after 'q'
+    destroys = [c for c in cv2.window_calls if c[0] == "destroyWindow"]
+    assert destroys == [("destroyWindow", "EyeOS tracking")]
+
+
+def test_other_keys_leave_the_window_open(monkeypatch):
+    # Esc is the kill switch's job (eyeos.hotkeys), not the view's.
+    from eyeos.tracking_view import TrackingView
+
+    cv2 = _install_cv2(monkeypatch, keys=[27, ord("a"), ord(" ")])
+    view = TrackingView(SCREEN)
+
+    _update(view, 3)
+
+    assert not view.closed
+    assert len(cv2.shown) == 3
+
+
+def test_a_window_closed_by_the_user_stops_drawing(monkeypatch):
+    from eyeos.tracking_view import TrackingView
+
+    # The user closes the window while the second image is up.
+    cv2 = _install_cv2(monkeypatch, window_visible=lambda shown: 1.0 if shown < 2 else 0.0)
+    view = TrackingView(SCREEN)
+
+    _update(view, 5)
+
+    assert view.closed
+    assert len(cv2.shown) == 2
+    props = [c for c in cv2.window_calls if c[0] == "getWindowProperty"]
+    assert props == [("getWindowProperty", "EyeOS tracking", cv2.WND_PROP_VISIBLE)] * 2
+
+
+def test_a_window_property_error_counts_as_a_closed_window(monkeypatch):
+    from eyeos.tracking_view import TrackingView
+
+    cv2 = _install_cv2(monkeypatch, window_property_error=FakeCv2Error("NULL window"))
+    view = TrackingView(SCREEN)
+
+    _update(view, 2)
+
+    assert view.closed
+    assert len(cv2.shown) == 1
+
+
+def test_close_is_idempotent_and_tolerates_an_already_destroyed_window(monkeypatch):
+    from eyeos.tracking_view import TrackingView
+
+    cv2 = _install_cv2(monkeypatch, destroy_error=FakeCv2Error("NULL window"))
+    view = TrackingView(SCREEN)
+    _update(view, 1)
+
+    view.close()
+    view.close()
+
+    assert view.closed
+    destroys = [c for c in cv2.window_calls if c[0] == "destroyWindow"]
+    assert destroys == [("destroyWindow", "EyeOS tracking")]
+    # HighGUI only takes a destroyed window off the screen while it handles events.
+    assert cv2.window_calls[-1] == ("waitKey", 1)
+
+
+def test_closing_a_view_that_never_showed_a_frame_touches_no_window(fake_cv2):
+    from eyeos.tracking_view import TrackingView
+
+    view = TrackingView(SCREEN)
+    view.close()
+
+    assert view.closed
+    assert fake_cv2.window_calls == []
+
+
+def test_an_opencv_without_window_support_fails_with_a_clear_error(monkeypatch):
+    # opencv-python-headless raises cv2.error from imshow ("The function is not
+    # implemented. Rebuild the library with Windows, GTK+ 2.x or Cocoa support").
+    from eyeos.tracking_view import TrackingView
+
+    _install_cv2(monkeypatch, imshow_error=FakeCv2Error("The function is not implemented."))
+    view = TrackingView(SCREEN)
+
+    with pytest.raises(RuntimeError, match="could not open its window"):
+        _update(view, 1)
+
+
+# ---------------------------------------------------------------------------
+# annotate(): the same drawing on a still image
+# ---------------------------------------------------------------------------
+
+
+def test_annotate_draws_on_a_copy_of_a_still_image(fake_cv2):
+    from eyeos.tracking_view import annotate, compute_view
+
+    image = FakeImage("bgr", 3, (480, 640, 3))
+
+    out = annotate(image, make_landmarks())
+
+    assert out == image and out is not image
+    assert all(call.image is out for call in fake_cv2.drawn)
+    expected = compute_view(make_landmarks(), (640, 480), None, None)
+    circles = _centers(fake_cv2)
+    assert _round(expected.left.iris_px) in circles
+    assert _round(expected.right.iris_px) in circles
+    assert len(_drawn(fake_cv2, "arrowedLine")) == 2
+    assert _drawn(fake_cv2, "rectangle") == []  # no screen, no map
+    assert not any(t.startswith("1 Presence") for t in _texts(fake_cv2))  # no gates
+    assert fake_cv2.window_calls == []  # and no window
+
+
+def test_annotate_puts_a_given_cursor_on_the_mini_map(fake_cv2):
+    from eyeos.tracking_view import CYAN, annotate
+
+    annotate(
+        FakeImage("bgr", 3, (480, 640, 3)),
+        make_landmarks(),
+        cursor_px=(1920.0, 0.0),
+        screen=SCREEN,
+    )
+
+    (rectangle,) = _drawn(fake_cv2, "rectangle")
+    (_, y0), (x1, _) = rectangle.params["pt1"], rectangle.params["pt2"]
+    marker = [c for c in _drawn(fake_cv2, "circle") if c.params["center"] == (x1, y0)]
+    assert marker and all(c.params["color"] == CYAN for c in marker)
+    assert "blocked" not in _texts(fake_cv2)  # no gate decided anything here
+
+
+def test_compute_view_takes_a_plain_cursor_point_for_still_images():
+    from eyeos.tracking_view import compute_view
+
+    minimap = compute_view(
+        make_landmarks(), (640, 480), None, SCREEN, cursor_px=(960.0, 540.0)
+    ).minimap
+
+    x0, y0, x1, y1 = minimap.rect
+    assert minimap.cursor_state == "point"
+    assert minimap.cursor_px == pytest.approx(((x0 + x1) / 2, (y0 + y1) / 2))
+    with pytest.raises(ValueError, match="not both"):
+        compute_view(make_landmarks(), (640, 480), _status(), SCREEN, cursor_px=(1.0, 2.0))
+
+
+def test_annotate_needs_the_screen_to_place_a_cursor(fake_cv2):
+    from eyeos.tracking_view import annotate
+
+    with pytest.raises(ValueError, match="screen"):
+        annotate(FakeImage("bgr", 3, (480, 640, 3)), make_landmarks(), cursor_px=(1.0, 2.0))
+
+
+def test_annotate_with_no_face(fake_cv2):
+    from eyeos.tracking_view import annotate
+
+    annotate(FakeImage("bgr", 3, (480, 640, 3)), None, screen=SCREEN)
+
+    assert "no face" in _texts(fake_cv2)
+    assert len(_drawn(fake_cv2, "rectangle")) == 1
+
+
+def test_annotate_with_real_opencv_draws_on_a_numpy_image():
+    cv2 = pytest.importorskip("cv2")
+    import numpy as np
+
+    from eyeos.tracking_view import annotate, compute_view
+
+    assert not isinstance(cv2, FakeCv2)  # a real OpenCV
+    image = np.zeros((480, 640, 3), dtype=np.uint8)
+    cursor = (960.0, 540.0)
+
+    out = annotate(image, make_landmarks(), cursor_px=cursor, screen=SCREEN)
+
+    assert isinstance(out, np.ndarray) and out.shape == image.shape and out.dtype == np.uint8
+    assert not image.any()  # the input is untouched
+    geometry = compute_view(make_landmarks(), (640, 480), None, SCREEN, cursor_px=cursor)
+    for point in (geometry.left.iris_px, geometry.right.iris_px, geometry.minimap.cursor_px):
+        x, y = _round(point)
+        assert out[y, x].any()  # the pupil markers and the cursor on the mini map
