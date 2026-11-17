@@ -45,10 +45,14 @@ class _OpenCVMediaPipeSource(InputSource):
         min_detection_confidence: float = 0.5,
         max_num_faces: int = 2,
         min_tracking_confidence: float = 0.5,
+        keep_images: bool = False,
     ) -> None:
         self.min_detection_confidence = min_detection_confidence
         self.min_tracking_confidence = min_tracking_confidence
         self.max_num_faces = max_num_faces
+        # Attach each BGR camera frame to its Frame (the tracking view draws on it). Off
+        # by default, so nothing downstream holds on to images it doesn't need.
+        self.keep_images = keep_images
         self._cap: Any = None
         self._face_mesh: Any = None
         self._cv2: Any = None
@@ -118,6 +122,7 @@ class _OpenCVMediaPipeSource(InputSource):
                 yield Frame(
                     timestamp_s=timestamp_s,
                     landmarks=self._to_landmarks(result, _aspect(frame_rgb)),
+                    image=frame_bgr if self.keep_images else None,
                 )
         finally:
             self.close()

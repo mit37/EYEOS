@@ -9,7 +9,8 @@ from __future__ import annotations
 
 from abc import ABC, abstractmethod
 from collections.abc import Iterator
-from dataclasses import dataclass
+from dataclasses import dataclass, field
+from typing import Any
 
 from eyeos.landmarks import FaceLandmarks
 
@@ -18,6 +19,9 @@ from eyeos.landmarks import FaceLandmarks
 class Frame:
     timestamp_s: float
     landmarks: FaceLandmarks | None  # None means "no face detected this frame"
+    # The camera image (BGR) the landmarks came from. Only a capture source asked to keep
+    # images attaches it (for the tracking view); it never takes part in equality.
+    image: Any = field(default=None, compare=False, repr=False)
 
 
 class InputSource(ABC):

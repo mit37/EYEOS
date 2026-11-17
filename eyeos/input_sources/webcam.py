@@ -19,11 +19,13 @@ class WebcamInputSource(_OpenCVMediaPipeSource):
         min_detection_confidence: float = 0.5,
         max_num_faces: int = 2,
         min_tracking_confidence: float = 0.5,
+        keep_images: bool = False,
     ) -> None:
         super().__init__(
             min_detection_confidence=min_detection_confidence,
             max_num_faces=max_num_faces,
             min_tracking_confidence=min_tracking_confidence,
+            keep_images=keep_images,
         )
         self.device_index = device_index
         self._t0 = 0.0
