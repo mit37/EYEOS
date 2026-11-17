@@ -62,6 +62,33 @@ eyeos run --config config.yaml --calibrate --overlay
 If no keyboard listener can start (pynput missing, or no input permission), `eyeos
 run` refuses to drive the cursor at all, by design.
 
+### Tracking view (optional)
+
+Add `--view` to see what EyeOS measures, drawn over the camera image in a window
+called "EyeOS tracking":
+
+```bash
+eyeos run --config config.yaml --calibrate --overlay --view
+```
+
+| Drawn | What it means |
+|---|---|
+| Yellow dots joined by a line | Each eye's two corners. The white dot between them is their midpoint. |
+| Grey dots | The eyelids. They decide whether an eye counts as open (Gate 1, blink-hold), not where you look. |
+| Magenta ring and dot | The pupil marker, on MediaPipe's iris centre. |
+| Cyan arrow | The iris's shift from the corner midpoint, stretched 4x so that a few pixels show. This shift is what moves the cursor. |
+| Numbers at the bottom left | The same shift for each eye (L, R) as the calibration gets it: along the corner line, then across it, in eye half-widths. |
+| Rectangle at the top right | The screen, scaled down. A green dot is where the cursor was sent this frame. A red ring and "blocked" is where the gaze is while the gates hold the cursor still. No dot means no gaze: no calibration, no face, or eyes closed past the blink-hold window. |
+| Lights at the top left | The four gates, green or red, each with its reason. |
+| "no face" | MediaPipe found no face in this frame. |
+
+Press **q** in the window, or close it, to hide the view. The session keeps running
+until you press **Esc**. The view doesn't mirror the image: if your camera doesn't
+either, looking to your left moves the arrows towards the right of the image while the
+cursor goes left. A synthetic input has no camera image, so the view draws on a black
+640x480 canvas. The view has run only on a virtual display (Xvfb), never on a
+real desktop or with a webcam: on Windows it is untested.
+
 ## 2. Narrate while recording (about 2 minutes)
 
 1. Look around the screen. The cursor follows your gaze, and Gates 1, 2 and 4 are green.

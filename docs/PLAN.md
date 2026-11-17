@@ -157,6 +157,16 @@ is therefore behind an interface and tested only against a fake:
     closing the calibration window, closing the overlay, and a camera that fails
     before or during calibration.
   - That is not part of CI, and neither window has been shown on a physical screen.
+- **Tracking view** (`tracking_view.py`, `eyeos run --view`). Its geometry is pure and
+  unit-tested; its OpenCV window is tested against the fake `cv2` in
+  `tests/fake_capture.py`, which records the drawing and window calls. `annotate()` has
+  one optional smoke test with a real OpenCV.
+  - During development the window also ran with OpenCV 4.11 (Qt backend) and MediaPipe
+    0.10.21 on Xvfb, from ad-hoc scripts outside the repo: `eyeos run --view` on a
+    generated face-free video and on the synthetic fixture, a real `q` keypress (XTest)
+    and a real `WM_DELETE_WINDOW` close.
+  - It has never run with a webcam, a real face, a window manager, GTK, macOS or
+    Windows.
 - **Eval.** The README numbers come from a generated synthetic landmark sequence
   (`eval/fixtures/`, made by `eval/generate_synthetic.py`). Real-session numbers are
   marked "not measured", pending recordings, and so is the PRD's 5-minute reading
