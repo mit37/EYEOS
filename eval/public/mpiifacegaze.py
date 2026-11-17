@@ -1,8 +1,11 @@
-"""MPIIFaceGaze: reading the dataset and checking its screen model.
+"""MPIIFaceGaze: run EyeOS's landmark pipeline and calibration on a public gaze dataset.
 
-Fetch the data first (CC BY-NC-SA 4.0; see docs/PUBLIC_DATASETS.md):
+Fetch the data first (CC BY-NC-SA 4.0; see docs/PUBLIC_DATASETS.md), then extract
+MediaPipe landmarks once (slow, cached, restartable) and evaluate (fast, repeatable):
 
     python scripts/download_mpiifacegaze.py --accept-license
+    python -m eval.public.mpiifacegaze extract --root datasets/MPIIFaceGaze \\
+        --cache datasets/cache/mpiifacegaze [--persons p00,p01] [--limit N] [--workers N]
 
 Expected layout (our best knowledge of the format; every reader here fails loudly, naming
 the file and showing the offending line or keys, when the data does not fit it):
@@ -18,13 +21,23 @@ annotation file already gives.
 
 from __future__ import annotations
 
+import argparse
+import csv
 import math
 import re
+import sys
+from collections.abc import Callable, Sequence
+from concurrent.futures import ProcessPoolExecutor
 from dataclasses import dataclass
 from pathlib import Path, PurePosixPath
 from typing import Any
 
 import numpy as np
+
+from eyeos.config import Config
+from eyeos.input_sources._mediapipe_common import landmarks_from_mediapipe
+from eyeos.landmarks import FaceLandmarks
+from eyeos.synthetic_format import CSV_FIELDNAMES, landmarks_to_row
 
 DATASET = "MPIIFaceGaze"
 LICENSE = "CC BY-NC-SA 4.0"
@@ -43,6 +56,10 @@ Vec3 = tuple[float, float, float]
 
 class DatasetFormatError(ValueError):
     """The data on disk does not match the expected MPIIFaceGaze format."""
+
+
+class MissingDependencyError(RuntimeError):
+    """An optional library (scipy, OpenCV, MediaPipe) is missing or too new."""
 
 
 # ---------------------------------------------------------------------------
@@ -172,7 +189,7 @@ def _load_mat(path: Path) -> dict[str, Any]:
     try:
         from scipy.io import loadmat
     except ImportError as e:  # pragma: no cover - scipy is in the dev and public-eval extras
-        raise RuntimeError(
+        raise MissingDependencyError(
             "reading MPIIFaceGaze's .mat files needs scipy: pip install 'eyeos[public-eval]'"
         ) from e
     if not path.is_file():
@@ -351,3 +368,270 @@ def check_screen_model(
         f"(best: {best}, median {candidates[best]:.1f} mm), so angular error is not reported"
     )
     return ScreenModelCheck(None, candidates[best], default_error, candidates, False, reason)
+
+
+# ---------------------------------------------------------------------------
+# extract: images -> landmarks, cached as one CSV per person
+# ---------------------------------------------------------------------------
+
+# eyeos.synthetic_format's columns (so eyeos.synthetic_format.row_to_frame reads a row back
+# as the FaceLandmarks the live pipeline would have seen), plus the dataset's labels.
+CACHE_COLUMNS: list[str] = [
+    *CSV_FIELDNAMES,
+    "image",
+    "target_x",
+    "target_y",
+    "fc_x",
+    "fc_y",
+    "fc_z",
+    "gt_x",
+    "gt_y",
+    "gt_z",
+]
+
+Detector = Callable[[Path], "FaceLandmarks | None"]
+DetectorFactory = Callable[[], Detector]
+
+_MISSING_DEPS = (
+    "extracting landmarks needs OpenCV and MediaPipe: pip install 'eyeos[public-eval]' "
+    "(Python 3.10-3.12)"
+)
+
+
+class MediaPipeImageDetector:
+    """One still image -> FaceLandmarks, the way the live webcam source does it.
+
+    Uses the same legacy FaceMesh as eyeos/input_sources/_capture_base.py, but with
+    ``static_image_mode=True`` (every photo is detected from scratch, no tracking), and
+    the same conversion (landmarks_from_mediapipe with x rescaled by width / height).
+    Faces below Gate 1's confidence threshold are dropped inside MediaPipe, as live.
+    """
+
+    def __init__(
+        self,
+        min_detection_confidence: float = Config().gates.presence_confidence_threshold,
+        max_num_faces: int = 2,
+    ) -> None:
+        try:
+            import cv2
+            import mediapipe as mp
+        except ImportError as e:
+            raise MissingDependencyError(_MISSING_DEPS) from e
+        if not hasattr(mp, "solutions"):
+            version = getattr(mp, "__version__", None) or "?"
+            raise MissingDependencyError(
+                f"installed mediapipe {version} has no legacy Solutions API (FaceMesh); "
+                "it needs mediapipe<0.10.30: pip install 'eyeos[public-eval]'"
+            )
+        self._cv2: Any = cv2
+        self.min_detection_confidence = min_detection_confidence
+        self._mesh: Any = mp.solutions.face_mesh.FaceMesh(
+            static_image_mode=True,
+            max_num_faces=max_num_faces,
+            refine_landmarks=True,  # required for the iris landmarks
+            min_detection_confidence=min_detection_confidence,
+        )
+
+    def __call__(self, image_path: Path) -> FaceLandmarks | None:
+        image = self._cv2.imread(str(image_path))
+        if image is None:
+            raise DatasetFormatError(f"cannot read image {image_path}")
+        rgb = self._cv2.cvtColor(image, self._cv2.COLOR_BGR2RGB)
+        height, width = rgb.shape[:2]
+        faces = self._mesh.process(rgb).multi_face_landmarks or []
+        if not faces:
+            return None
+        return landmarks_from_mediapipe(
+            faces[0].landmark,
+            face_count=len(faces),
+            detection_confidence=self.min_detection_confidence,
+            aspect=width / height,
+        )
+
+    def close(self) -> None:
+        self._mesh.close()
+
+
+@dataclass(frozen=True)
+class ExtractSummary:
+    person: str
+    images: int
+    with_face: int
+    skipped: bool
+    path: Path
+
+
+def cache_path(cache_dir: Path, person: str) -> Path:
+    return Path(cache_dir) / f"{person}.csv"
+
+
+def _cached_images(path: Path) -> list[str] | None:
+    """The image column of a complete cache file, or None if there is no usable one."""
+    if not path.is_file():
+        return None
+    with path.open(newline="") as f:
+        reader = csv.DictReader(f)
+        if reader.fieldnames != CACHE_COLUMNS:
+            return None
+        return [row["image"] for row in reader]
+
+
+def _with_face(path: Path) -> int:
+    with path.open(newline="") as f:
+        return sum(1 for row in csv.DictReader(f) if int(row["face_count"]) > 0)
+
+
+def _fmt(value: float) -> str:
+    return repr(float(value))
+
+
+def extract_person(
+    root: Path,
+    person: str,
+    cache_dir: Path,
+    detector_factory: DetectorFactory,
+    limit: int | None = None,
+    force: bool = False,
+) -> ExtractSummary:
+    """Detect landmarks in one person's images and cache them as ``<cache>/<person>.csv``.
+
+    The file is written under a temporary name and renamed when complete, so an
+    interrupted run never leaves a cache that looks finished. An existing cache is reused
+    when it holds exactly the requested images (the first ``limit``, or all).
+    """
+    annotations = load_annotations(root, person)[:limit]
+    out = cache_path(cache_dir, person)
+    if not force and _cached_images(out) == [a.image for a in annotations]:
+        return ExtractSummary(person, len(annotations), _with_face(out), True, out)
+
+    out.parent.mkdir(parents=True, exist_ok=True)
+    partial = out.with_name(out.name + ".partial")
+    detector = detector_factory()
+    with_face = 0
+    try:
+        with partial.open("w", newline="") as f:
+            writer = csv.DictWriter(f, fieldnames=CACHE_COLUMNS)
+            writer.writeheader()
+            for index, annotation in enumerate(annotations):
+                landmarks = detector(Path(root) / person / annotation.image)
+                with_face += landmarks is not None
+                row = landmarks_to_row(float(index), landmarks)
+                row["image"] = annotation.image
+                row["target_x"], row["target_y"] = map(_fmt, annotation.target_px)
+                for prefix, vec in (
+                    ("fc", annotation.face_center_mm),
+                    ("gt", annotation.gaze_target_mm),
+                ):
+                    for axis, value in zip("xyz", vec, strict=True):
+                        row[f"{prefix}_{axis}"] = _fmt(value)
+                writer.writerow(row)
+    finally:
+        close = getattr(detector, "close", None)
+        if close is not None:
+            close()
+    partial.replace(out)
+    return ExtractSummary(person, len(annotations), with_face, False, out)
+
+
+def _extract_person_job(args: tuple[Any, ...]) -> ExtractSummary:
+    return extract_person(*args)
+
+
+def extract(
+    root: Path,
+    cache_dir: Path,
+    persons: Sequence[str] | None = None,
+    limit: int | None = None,
+    workers: int = 1,
+    force: bool = False,
+    detector_factory: DetectorFactory = MediaPipeImageDetector,
+) -> list[ExtractSummary]:
+    """Extract every person (default: all pXX under ``root``), in parallel across persons
+    when ``workers > 1``. Each worker builds its own detector from ``detector_factory``,
+    which must therefore be picklable (a module-level class or function)."""
+    names = list(persons) if persons is not None else find_persons(root)
+    jobs = [(Path(root), p, Path(cache_dir), detector_factory, limit, force) for p in names]
+    if workers <= 1 or len(jobs) <= 1:
+        return [_extract_person_job(job) for job in jobs]
+    with ProcessPoolExecutor(max_workers=min(workers, len(jobs))) as pool:
+        return list(pool.map(_extract_person_job, jobs))
+
+
+# ---------------------------------------------------------------------------
+# command line
+# ---------------------------------------------------------------------------
+
+
+def _persons_arg(root: Path, text: str | None, parser: argparse.ArgumentParser) -> list[str]:
+    available = find_persons(root)
+    if text is None:
+        if not available:
+            parser.error(f"no pXX folders with annotations under {root}")
+        return available
+    names = [p.strip() for p in text.split(",") if p.strip()]
+    unknown = [p for p in names if p not in available]
+    if unknown:
+        parser.error(
+            f"--persons: {', '.join(unknown)} not found under {root} "
+            f"(available: {', '.join(available) or 'none'})"
+        )
+    return names
+
+
+def _positive_int(text: str) -> int:
+    value = int(text)
+    if value < 1:
+        raise argparse.ArgumentTypeError(f"must be at least 1, got {value}")
+    return value
+
+
+def build_parser() -> argparse.ArgumentParser:
+    parser = argparse.ArgumentParser(
+        prog="python -m eval.public.mpiifacegaze",
+        description="Evaluate EyeOS's calibration on MPIIFaceGaze (see docs/PUBLIC_DATASETS.md).",
+    )
+    sub = parser.add_subparsers(dest="command", required=True)
+
+    ext = sub.add_parser("extract", help="detect MediaPipe landmarks once and cache them")
+    ext.add_argument("--root", required=True, type=Path, help="the extracted MPIIFaceGaze folder")
+    ext.add_argument("--cache", required=True, type=Path, help="where the per-person CSVs go")
+    ext.add_argument("--persons", help="comma-separated, e.g. p00,p01 (default: all)")
+    ext.add_argument("--limit", type=_positive_int, help="only the first N images per person")
+    ext.add_argument("--workers", type=_positive_int, default=1, help="persons in parallel")
+    ext.add_argument("--force", action="store_true", help="re-extract cached persons")
+    return parser
+
+
+def _run_extract(
+    args: argparse.Namespace,
+    parser: argparse.ArgumentParser,
+    detector_factory: DetectorFactory | None,
+) -> int:
+    persons = _persons_arg(args.root, args.persons, parser)
+    summaries = extract(
+        args.root,
+        args.cache,
+        persons=persons,
+        limit=args.limit,
+        workers=args.workers,
+        force=args.force,
+        detector_factory=detector_factory or MediaPipeImageDetector,
+    )
+    for s in summaries:
+        state = "cached already, skipped (--force redoes it)" if s.skipped else "extracted"
+        print(f"{s.person}: {s.images} images, {s.with_face} with a face; {state} -> {s.path}")
+    return 0
+
+
+def main(argv: list[str] | None = None, detector_factory: DetectorFactory | None = None) -> int:
+    parser = build_parser()
+    args = parser.parse_args(argv)
+    try:
+        return _run_extract(args, parser, detector_factory)
+    except (DatasetFormatError, MissingDependencyError) as e:
+        print(f"error: {e}", file=sys.stderr)
+        return 1
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

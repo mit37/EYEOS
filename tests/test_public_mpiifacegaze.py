@@ -10,6 +10,7 @@ them).
 
 from __future__ import annotations
 
+import csv
 import importlib.util
 import io
 import math
@@ -29,9 +30,14 @@ import pytest
 from packaging.requirements import Requirement
 
 from eval.public import mpiifacegaze as mpii
+from eyeos.landmarks import FaceLandmarks
+from eyeos.synthetic_format import row_to_frame
+from tests.fake_capture import FakeCv2, FakeImage, FakeMediapipe, install_fakes
 from tests.fake_mpiifacegaze import (
+    FakeDetector,
     FakePerson,
     annotation_line,
+    fake_detector_factory,
     rotation_about_y,
     write_person,
 )
@@ -550,3 +556,253 @@ def test_screen_model_reports_no_fit_with_a_reason_when_nothing_is_within_5_mm()
     assert not check.fits
     assert check.model is None
     assert "5" in check.reason and "angular" in check.reason
+
+
+# ---------------------------------------------------------------------------
+# extract: images -> MediaPipe landmarks -> one cached CSV per person
+# ---------------------------------------------------------------------------
+
+
+class _FailingDetector(FakeDetector):
+    def __init__(self, fail_on_call: int) -> None:
+        super().__init__()
+        self.fail_on_call = fail_on_call
+
+    def __call__(self, image_path: Path) -> FaceLandmarks | None:
+        if len(self.calls) + 1 == self.fail_on_call:
+            raise RuntimeError("interrupted")
+        return super().__call__(image_path)
+
+
+class _CountingFactory:
+    """A detector factory that remembers every detector it made."""
+
+    def __init__(self, fail_on_call: int | None = None) -> None:
+        self.detectors: list[FakeDetector] = []
+        self.fail_on_call = fail_on_call
+
+    def __call__(self) -> FakeDetector:
+        detector = (
+            FakeDetector() if self.fail_on_call is None else _FailingDetector(self.fail_on_call)
+        )
+        self.detectors.append(detector)
+        return detector
+
+    @property
+    def images_seen(self) -> int:
+        return sum(len(d.calls) for d in self.detectors)
+
+
+def _read_cache(path: Path) -> list[dict[str, str]]:
+    with path.open(newline="") as f:
+        return list(csv.DictReader(f))
+
+
+def test_extract_caches_landmarks_targets_and_3d_points_per_person(tmp_path):
+    root, cache = tmp_path / "MPIIFaceGaze", tmp_path / "cache"
+    person = write_person(
+        root, FakePerson("p00", n_images=6, faces={1: 0, 2: 2}, closed={3}, write_mat=False)
+    )
+    factory = _CountingFactory()
+
+    (summary,) = mpii.extract(root, cache, detector_factory=factory)
+
+    rows = _read_cache(cache / "p00.csv")
+    assert list(rows[0]) == mpii.CACHE_COLUMNS
+    assert [r["image"] for r in rows] == [f"day01/{i:04d}.jpg" for i in range(6)]
+    assert [int(r["face_count"]) for r in rows] == [1, 0, 2, 1, 1, 1]
+    annotations = mpii.load_annotations(root, "p00")
+    for row, annotation, target in zip(rows, annotations, person.targets, strict=True):
+        assert (float(row["target_x"]), float(row["target_y"])) == target
+        assert tuple(float(row[f"fc_{a}"]) for a in "xyz") == annotation.face_center_mm
+        assert tuple(float(row[f"gt_{a}"]) for a in "xyz") == annotation.gaze_target_mm
+    _, landmarks = row_to_frame(rows[0])
+    assert landmarks == FakeDetector()(root / "p00" / "day01" / "0000.jpg")
+    assert row_to_frame(rows[1])[1] is None
+    assert summary.person == "p00" and summary.images == 6 and summary.with_face == 5
+    assert not summary.skipped
+    assert all(d.closed for d in factory.detectors)
+
+
+def test_extract_skips_cached_persons_unless_forced(tmp_path):
+    root, cache = tmp_path / "MPIIFaceGaze", tmp_path / "cache"
+    write_person(root, FakePerson("p00", n_images=4, write_mat=False))
+    write_person(root, FakePerson("p01", n_images=4, write_mat=False))
+    mpii.extract(root, cache, detector_factory=_CountingFactory())
+    before = (cache / "p00.csv").read_text()
+
+    again = _CountingFactory()
+    summaries = mpii.extract(root, cache, detector_factory=again)
+    assert again.images_seen == 0
+    assert [s.skipped for s in summaries] == [True, True]
+    assert (cache / "p00.csv").read_text() == before
+
+    forced = _CountingFactory()
+    mpii.extract(root, cache, persons=["p01"], force=True, detector_factory=forced)
+    assert forced.images_seen == 4
+
+
+def test_extract_limit_takes_the_first_n_images_and_a_later_full_run_redoes_them(tmp_path):
+    root, cache = tmp_path / "MPIIFaceGaze", tmp_path / "cache"
+    write_person(root, FakePerson("p00", n_images=7, write_mat=False))
+
+    mpii.extract(root, cache, limit=3, detector_factory=_CountingFactory())
+    assert [r["image"] for r in _read_cache(cache / "p00.csv")] == [
+        f"day01/{i:04d}.jpg" for i in range(3)
+    ]
+
+    full = _CountingFactory()
+    (summary,) = mpii.extract(root, cache, detector_factory=full)
+    assert not summary.skipped and full.images_seen == 7
+    assert len(_read_cache(cache / "p00.csv")) == 7
+
+
+def test_an_interrupted_extract_leaves_no_cache_and_the_rerun_completes_it(tmp_path):
+    root, cache = tmp_path / "MPIIFaceGaze", tmp_path / "cache"
+    write_person(root, FakePerson("p00", n_images=5, write_mat=False))
+
+    with pytest.raises(RuntimeError, match="interrupted"):
+        mpii.extract(root, cache, detector_factory=_CountingFactory(fail_on_call=3))
+    assert not (cache / "p00.csv").exists()
+
+    (summary,) = mpii.extract(root, cache, detector_factory=_CountingFactory())
+    assert not summary.skipped
+    assert len(_read_cache(cache / "p00.csv")) == 5
+
+
+def test_extract_in_parallel_matches_a_sequential_run(tmp_path):
+    root = tmp_path / "MPIIFaceGaze"
+    for name in ("p00", "p01", "p02"):
+        write_person(root, FakePerson(name, n_images=5, seed=int(name[1:]), write_mat=False))
+
+    mpii.extract(root, tmp_path / "seq", detector_factory=fake_detector_factory)
+    summaries = mpii.extract(
+        root, tmp_path / "par", workers=3, detector_factory=fake_detector_factory
+    )
+
+    assert [s.person for s in summaries] == ["p00", "p01", "p02"]
+    for name in ("p00", "p01", "p02"):
+        assert (tmp_path / "par" / f"{name}.csv").read_text() == (
+            tmp_path / "seq" / f"{name}.csv"
+        ).read_text()
+
+
+def test_extract_cli_parses_persons_limit_and_workers(tmp_path, capsys):
+    root, cache = tmp_path / "MPIIFaceGaze", tmp_path / "cache"
+    for name in ("p00", "p01", "p02"):
+        write_person(root, FakePerson(name, n_images=4, write_mat=False))
+
+    code = mpii.main(
+        ["extract", "--root", str(root), "--cache", str(cache), "--persons", "p00,p02"]
+        + ["--limit", "2", "--workers", "1"],
+        detector_factory=fake_detector_factory,
+    )
+
+    assert code == 0
+    assert sorted(p.name for p in cache.iterdir()) == ["p00.csv", "p02.csv"]
+    assert len(_read_cache(cache / "p02.csv")) == 2
+    assert "p02" in capsys.readouterr().out
+
+
+def test_extract_cli_rejects_an_unknown_person(tmp_path, capsys):
+    root = tmp_path / "MPIIFaceGaze"
+    write_person(root, FakePerson("p00", n_images=2, write_mat=False))
+
+    with pytest.raises(SystemExit) as excinfo:
+        mpii.main(
+            ["extract", "--root", str(root), "--cache", str(tmp_path / "c"), "--persons", "p9"],
+            detector_factory=fake_detector_factory,
+        )
+
+    assert excinfo.value.code == 2
+    assert "p9" in capsys.readouterr().err
+
+
+def test_extract_cli_reports_a_dataset_problem_as_one_line_and_exit_1(tmp_path, capsys):
+    root = tmp_path / "MPIIFaceGaze"
+    (root / "p00").mkdir(parents=True)
+    (root / "p00" / "p00.txt").write_text("day01/0001.jpg 1 2 3\n")
+
+    code = mpii.main(
+        ["extract", "--root", str(root), "--cache", str(tmp_path / "c")],
+        detector_factory=fake_detector_factory,
+    )
+
+    assert code == 1
+    err = capsys.readouterr().err
+    assert err.startswith("error: ") and "p00.txt:1" in err
+    assert "Traceback" not in err
+
+
+class _ImreadCv2(FakeCv2):
+    """fake_capture's cv2 plus imread, returning a frame of the given (h, w, c) shape."""
+
+    def __init__(self, shape: tuple[int, int, int]) -> None:
+        super().__init__()
+        self.shape = shape
+        self.read_paths: list[str] = []
+
+    def imread(self, path: str) -> FakeImage | None:
+        self.read_paths.append(path)
+        if path.endswith("missing.jpg"):
+            return None
+        return FakeImage("bgr", len(self.read_paths) - 1, self.shape)
+
+
+def test_mediapipe_image_detector_runs_static_face_mesh_and_rescales_x(monkeypatch, tmp_path):
+    cv2 = _ImreadCv2((720, 1280, 3))
+    mediapipe = FakeMediapipe(faces_per_frame=[1, 0, 2])
+    install_fakes(monkeypatch, cv2=cv2, mediapipe=mediapipe)
+
+    detector = mpii.MediaPipeImageDetector()
+    one, none, two = (detector(tmp_path / f"{i}.jpg") for i in range(3))
+    detector.close()
+
+    (mesh,) = mediapipe.face_meshes
+    assert mesh.kwargs["static_image_mode"] is True
+    assert mesh.kwargs["max_num_faces"] == 2
+    assert mesh.kwargs["refine_landmarks"] is True
+    assert mesh.kwargs["min_detection_confidence"] == 0.5
+    assert [image.color for image in mesh.processed] == ["rgb", "rgb", "rgb"]
+    assert none is None
+    assert one is not None and one.face_count == 1
+    assert two is not None and two.face_count == 2
+    # fake_face() puts every landmark at (0.5, 0.5); x is rescaled by width / height.
+    assert one.left_iris_center.x == pytest.approx(0.5 * 1280 / 720)
+    assert one.left_iris_center.y == pytest.approx(0.5)
+    assert mesh.close_calls == 1
+
+
+def test_mediapipe_image_detector_fails_loudly_on_an_unreadable_image(monkeypatch, tmp_path):
+    install_fakes(monkeypatch, cv2=_ImreadCv2((10, 10, 3)), mediapipe=FakeMediapipe())
+
+    detector = mpii.MediaPipeImageDetector()
+    with pytest.raises(mpii.DatasetFormatError, match="missing.jpg"):
+        detector(tmp_path / "missing.jpg")
+
+
+def test_mediapipe_image_detector_explains_a_mediapipe_without_solutions(monkeypatch):
+    install_fakes(
+        monkeypatch,
+        cv2=_ImreadCv2((10, 10, 3)),
+        mediapipe=FakeMediapipe(solutions=False, version="0.10.30"),
+    )
+
+    with pytest.raises(RuntimeError, match=r"public-eval.*0\.10\.30|0\.10\.30.*public-eval"):
+        mpii.MediaPipeImageDetector()
+
+
+def test_mediapipe_image_detector_finds_no_face_in_a_blank_image_with_real_libraries(tmp_path):
+    """Optional smoke test of the real OpenCV + MediaPipe calls; skipped without them."""
+    cv2 = pytest.importorskip("cv2")
+    mediapipe = pytest.importorskip("mediapipe")
+    if not hasattr(mediapipe, "solutions"):
+        pytest.skip("mediapipe without the legacy Solutions API")
+    image = tmp_path / "blank.png"
+    assert cv2.imwrite(str(image), np.full((72, 128, 3), 127, dtype=np.uint8))
+
+    detector = mpii.MediaPipeImageDetector()
+    try:
+        assert detector(image) is None
+    finally:
+        detector.close()
