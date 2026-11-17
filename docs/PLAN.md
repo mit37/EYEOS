@@ -166,7 +166,8 @@ is therefore behind an interface and tested only against a fake:
     generated face-free video and on the synthetic fixture, a real `q` keypress (XTest)
     and a real `WM_DELETE_WINDOW` close.
   - It has never run with a webcam, a real face, a window manager, GTK, macOS or
-    Windows.
+    Windows. Its cost per frame (a frame copy, the drawing, `imshow` and `waitKey(1)`)
+    was not measured, so how much it slows a live session is unknown.
 - **Eval.** The README numbers come from a generated synthetic landmark sequence
   (`eval/fixtures/`, made by `eval/generate_synthetic.py`). Real-session numbers are
   marked "not measured", pending recordings, and so is the PRD's 5-minute reading
