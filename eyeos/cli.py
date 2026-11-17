@@ -3,7 +3,8 @@
 Without ``--calibrate`` there is no calibration, so Gate 2 correctly refuses to move
 the cursor; the safety gates and their logged reasons are still fully exercised.
 ``--calibrate`` shows the 9-dot screen first and fits on the same camera stream the
-session then runs on; ``--overlay`` shows the four gate lights. Both need a display.
+session then runs on; ``--overlay`` shows the four gate lights; ``--view`` shows the
+live tracking view (eyeos/tracking_view.py). All three need a display.
 """
 
 from __future__ import annotations
@@ -24,9 +25,12 @@ from eyeos.logging_utils import SessionLogger
 from eyeos.output import OutputAdapter
 from eyeos.overlay import GateOverlay
 from eyeos.pipeline import Pipeline
+from eyeos.tracking_view import TrackingView
 
 
-def _build_input_source(config: Config) -> InputSource:
+def _build_input_source(config: Config, keep_images: bool = False) -> InputSource:
+    """``keep_images`` makes a camera source attach each frame's image (for --view). A
+    synthetic source has no images, so it ignores it."""
     source = config.input.source
     if source == "synthetic":
         from eyeos.input_sources.synthetic import SyntheticInputSource
@@ -44,6 +48,7 @@ def _build_input_source(config: Config) -> InputSource:
             config.input.video_path,
             min_detection_confidence=threshold,
             min_tracking_confidence=threshold,
+            keep_images=keep_images,
         )
     if source == "webcam":
         from eyeos.input_sources.webcam import WebcamInputSource
@@ -53,6 +58,7 @@ def _build_input_source(config: Config) -> InputSource:
             device_index=config.input.device_index,
             min_detection_confidence=threshold,
             min_tracking_confidence=threshold,
+            keep_images=keep_images,
         )
     raise ValueError(f"unknown input.source: {source!r}")
 
@@ -103,6 +109,13 @@ def build_arg_parser() -> argparse.ArgumentParser:
     )
     run.add_argument(
         "--overlay", action="store_true", help="show the four gate lights live (needs a display)"
+    )
+    run.add_argument(
+        "--view",
+        action="store_true",
+        help="show the live tracking view: pupil markers, their shift, a mini screen map "
+        "and the gate lights over the camera image (needs a display and OpenCV; "
+        "q or closing the window hides it, the session keeps running)",
     )
 
     return parser
@@ -159,8 +172,14 @@ def _run(args: argparse.Namespace) -> int:
         if keys is not None:
             cleanup.callback(keys.close)
         log_path = _session_log_path(args, config)
-        input_source = _build_input_source(config)
+        input_source = _build_input_source(config, keep_images=args.view)
         cleanup.callback(input_source.close)
+        view: TrackingView | None = None
+        if args.view:
+            # Built before calibrating, so a missing OpenCV or display stops the run
+            # before the user has sat through the dots. The window opens with frame 1.
+            view = TrackingView((config.screen.width_px, config.screen.height_px))
+            cleanup.callback(view.close)
         frames = iter(input_source.frames())
         calibration = None
         if args.calibrate:
@@ -198,6 +217,7 @@ def _run(args: argparse.Namespace) -> int:
             logger=logger,
             external_signals=keys,
             on_status=overlay.update if overlay is not None else None,
+            on_frame=view.update if view is not None else None,
         )
         result = pipeline.run(max_frames=args.max_frames, frames=frames)
 

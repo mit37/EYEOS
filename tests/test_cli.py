@@ -414,7 +414,7 @@ def test_closing_the_overlay_mid_run_keeps_the_session_and_closes_everything(
     assert not keyboard.running
 
 
-@pytest.mark.parametrize("failing", ["input", "overlay", "output", "logger", "keys"])
+@pytest.mark.parametrize("failing", ["input", "overlay", "view", "output", "logger", "keys"])
 def test_every_resource_is_closed_even_if_one_close_raises(tmp_path, monkeypatch, failing):
     import sys
 
@@ -422,9 +422,13 @@ def test_every_resource_is_closed_even_if_one_close_raises(tmp_path, monkeypatch
     from eyeos.hotkeys import FakeKeySource, KeySignals
     from eyeos.logging_utils import SessionLogger
     from eyeos.overlay import GateOverlay
+    from eyeos.tracking_view import TrackingView
+    from tests.fake_capture import FakeCv2, install_fakes
     from tests.fake_tk import make_fake_tk
 
     monkeypatch.setitem(sys.modules, "tkinter", make_fake_tk())
+    install_fakes(monkeypatch, cv2=FakeCv2())
+    monkeypatch.setenv("DISPLAY", ":99")
     closed = []
 
     def recording(name, resource):
@@ -440,8 +444,13 @@ def test_every_resource_is_closed_even_if_one_close_raises(tmp_path, monkeypatch
         return resource
 
     build_input = cli._build_input_source
-    monkeypatch.setattr(cli, "_build_input_source", lambda c: recording("input", build_input(c)))
+    monkeypatch.setattr(
+        cli, "_build_input_source", lambda c, **kw: recording("input", build_input(c, **kw))
+    )
     monkeypatch.setattr(cli, "GateOverlay", lambda: recording("overlay", GateOverlay()))
+    monkeypatch.setattr(
+        cli, "TrackingView", lambda *a, **kw: recording("view", TrackingView(*a, **kw))
+    )
     monkeypatch.setattr(cli, "_build_output", lambda c: recording("output", _RecordingRealCursor()))
     monkeypatch.setattr(cli, "SessionLogger", lambda p: recording("logger", SessionLogger(p)))
     keyboard = FakeKeySource()
@@ -451,9 +460,9 @@ def test_every_resource_is_closed_even_if_one_close_raises(tmp_path, monkeypatch
     config_path = _write_n_frames_config(tmp_path, 3)
 
     with pytest.raises(RuntimeError, match=f"{failing} close failed"):
-        main(["run", "--config", str(config_path), "--overlay"])
+        main(["run", "--config", str(config_path), "--overlay", "--view"])
 
-    assert set(closed) == {"input", "overlay", "output", "logger", "keys"}
+    assert set(closed) == {"input", "overlay", "view", "output", "logger", "keys"}
     assert not keyboard.running
 
 

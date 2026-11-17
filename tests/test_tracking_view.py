@@ -4,10 +4,12 @@ and the gate lights, drawn over the camera image.
 
 The geometry is pure and tested directly. The OpenCV layer is tested against the fake
 ``cv2`` in tests/fake_capture.py, which records every drawing and window call; only the
-optional smoke tests at the bottom use a real OpenCV.
+optional smoke test of ``annotate()`` uses a real OpenCV.
 """
 
 from __future__ import annotations
+
+from pathlib import Path
 
 import pytest
 
@@ -753,3 +755,269 @@ def test_annotate_with_real_opencv_draws_on_a_numpy_image():
     for point in (geometry.left.iris_px, geometry.right.iris_px, geometry.minimap.cursor_px):
         x, y = _round(point)
         assert out[y, x].any()  # the pupil markers and the cursor on the mini map
+
+
+# ---------------------------------------------------------------------------
+# eyeos run --view
+# ---------------------------------------------------------------------------
+
+FIXTURE = Path(__file__).resolve().parent.parent / "eval" / "fixtures" / "synthetic_session.csv"
+
+
+def _synthetic_csv(tmp_path, n_frames):
+    import csv
+
+    from eyeos.synthetic_format import CSV_FIELDNAMES, landmarks_to_row
+
+    path = tmp_path / "session.csv"
+    with open(path, "w", newline="") as f:
+        writer = csv.DictWriter(f, fieldnames=CSV_FIELDNAMES)
+        writer.writeheader()
+        for i in range(n_frames):
+            writer.writerow(landmarks_to_row(i / 30, make_landmarks()))
+    return path
+
+
+def _config(tmp_path, input_lines, backend="dry_run"):
+    path = tmp_path / "config.yaml"
+    path.write_text(
+        f"input:\n{input_lines}output:\n  backend: {backend}\n"
+        f"logging:\n  session_log_dir: {tmp_path / 'logs'}\n"
+    )
+    return path
+
+
+def _video_config(tmp_path):
+    video = tmp_path / "clip.mp4"
+    video.write_bytes(b"")  # only has to exist: the fake cv2 does the "decoding"
+    return _config(tmp_path, f"  source: video_file\n  video_path: {video}\n")
+
+
+def _synthetic_config(tmp_path, n_frames=4, backend="dry_run", csv_path=None):
+    csv_path = csv_path or _synthetic_csv(tmp_path, n_frames)
+    return _config(tmp_path, f"  source: synthetic\n  synthetic_path: {csv_path}\n", backend)
+
+
+def _window_call_names(cv2):
+    return [call[0] for call in cv2.window_calls]
+
+
+def test_run_view_shows_every_camera_frame_and_closes_the_window_on_exit(
+    tmp_path, monkeypatch, capsys
+):
+    from eyeos.cli import main
+
+    cv2 = FakeCv2(n_frames=6, frame_shape=(480, 640, 3))
+    install_fakes(monkeypatch, cv2=cv2, mediapipe=FakeMediapipe())
+    monkeypatch.setenv("DISPLAY", ":99")
+
+    assert main(["run", "--config", str(_video_config(tmp_path)), "--view", "--no-log"]) == 0
+
+    assert "processed 6 frames" in capsys.readouterr().out
+    # Once per frame, each the camera frame as read (BGR): --view keeps the images.
+    assert cv2.shown == [FakeImage("bgr", i, (480, 640, 3)) for i in range(6)]
+    names = _window_call_names(cv2)
+    assert names.count("imshow") == 6
+    assert names.count("destroyWindow") == 1
+    assert names[-2:] == ["destroyWindow", "waitKey"]  # closed once, on the way out
+    (capture,) = cv2.captures
+    assert capture.release_calls == 1
+
+
+@pytest.mark.parametrize("view", [False, True], ids=["no-view", "view"])
+def test_camera_images_are_kept_only_with_view(tmp_path, monkeypatch, view):
+    import eyeos.cli as cli
+
+    cv2 = FakeCv2(n_frames=3, frame_shape=(480, 640, 3))
+    install_fakes(monkeypatch, cv2=cv2, mediapipe=FakeMediapipe())
+    monkeypatch.setenv("DISPLAY", ":99")
+    built, frames = [], []
+    build = cli._build_input_source
+
+    def spy_build(config, **kwargs):
+        built.append(build(config, **kwargs))
+        return built[-1]
+
+    class SpyPipeline(cli.Pipeline):
+        def _process_frame(self, frame):
+            frames.append(frame)
+            return super()._process_frame(frame)
+
+    monkeypatch.setattr(cli, "_build_input_source", spy_build)
+    monkeypatch.setattr(cli, "Pipeline", SpyPipeline)
+    argv = ["run", "--config", str(_video_config(tmp_path)), "--no-log"]
+
+    assert cli.main(argv + (["--view"] if view else [])) == 0
+
+    (source,) = built
+    assert source.keep_images is view
+    assert len(frames) == 3
+    assert [frame.image is not None for frame in frames] == [view] * 3
+    assert len(cv2.shown) == (3 if view else 0)
+
+
+@pytest.mark.parametrize("source", ["webcam", "video_file"])
+def test_build_input_source_passes_keep_images_to_capture_sources(tmp_path, source):
+    from eyeos.cli import _build_input_source
+    from eyeos.config import load_config
+
+    config = load_config(
+        _config(tmp_path, f"  source: {source}\n  video_path: {tmp_path / 'clip.mp4'}\n")
+    )
+
+    assert _build_input_source(config).keep_images is False
+    assert _build_input_source(config, keep_images=True).keep_images is True
+
+
+def test_a_synthetic_run_with_view_draws_each_frame_on_a_black_canvas(
+    tmp_path, monkeypatch, capsys
+):
+    import numpy as np
+
+    from eyeos.cli import main
+
+    cv2 = FakeCv2()
+    install_fakes(monkeypatch, cv2=cv2)
+    monkeypatch.setenv("DISPLAY", ":99")
+
+    assert main(["run", "--config", str(_synthetic_config(tmp_path, 4)), "--view"]) == 0
+
+    assert "processed 4 frames" in capsys.readouterr().out
+    assert len(cv2.shown) == 4
+    for image in cv2.shown:
+        assert isinstance(image, np.ndarray) and image.shape == (480, 640, 3)
+    assert _window_call_names(cv2).count("destroyWindow") == 1
+
+
+def test_closing_the_view_mid_run_keeps_the_session_running(tmp_path, monkeypatch, capsys):
+    import eyeos.cli as cli
+    from eyeos.hotkeys import FakeKeySource, KeySignals
+    from eyeos.tracking_view import TrackingView
+    from tests.test_cli import _RecordingRealCursor
+
+    # The user closes the window while the second frame is up...
+    cv2 = FakeCv2(window_visible=lambda shown: 1.0 if shown < 2 else 0.0)
+    install_fakes(monkeypatch, cv2=cv2)
+    monkeypatch.setenv("DISPLAY", ":99")
+    keyboard = FakeKeySource()
+    output = _RecordingRealCursor()
+    views = []
+
+    class SpyView(TrackingView):
+        def __init__(self, *args, **kwargs):
+            super().__init__(*args, **kwargs)
+            self.frames_seen = 0
+            views.append(self)
+
+        def update(self, frame, frame_input, status):
+            self.frames_seen += 1
+            if self.frames_seen == 5:
+                keyboard.press("esc")  # ...then ends the session with the kill hotkey
+            super().update(frame, frame_input, status)
+
+    monkeypatch.setattr(cli, "TrackingView", SpyView)
+    monkeypatch.setattr(cli, "_build_output", lambda config: output)
+    monkeypatch.setattr(cli, "_build_key_signals", lambda config: KeySignals("esc", keyboard))
+    config_path = _synthetic_config(tmp_path, 10, backend="pynput")
+
+    exit_code = cli.main(["run", "--config", str(config_path), "--view", "--no-log"])
+
+    out = capsys.readouterr().out
+    assert exit_code == 0
+    assert "processed 6 frames" in out  # frames kept coming after the window closed
+    assert "kill switch (esc) pressed: session ended" in out
+    (view,) = views
+    assert view.closed and view.frames_seen == 6
+    assert len(cv2.shown) == 2  # nothing drawn after the close
+    assert _window_call_names(cv2).count("destroyWindow") == 1
+    assert output.closed
+    assert not keyboard.running
+
+
+@pytest.mark.parametrize("problem", ["no-opencv", "no-display"])
+def test_run_view_reports_a_missing_opencv_or_display_as_one_line(
+    tmp_path, monkeypatch, capsys, problem
+):
+    import sys
+
+    from eyeos.cli import console_main
+
+    if problem == "no-opencv":
+        monkeypatch.setitem(sys.modules, "cv2", None)
+        monkeypatch.setenv("DISPLAY", ":99")
+        expected = "eyeos: error: The tracking view needs OpenCV"
+    else:
+        install_fakes(monkeypatch, cv2=FakeCv2())
+        monkeypatch.setattr("sys.platform", "linux")
+        monkeypatch.delenv("DISPLAY", raising=False)
+        monkeypatch.delenv("WAYLAND_DISPLAY", raising=False)
+        expected = "eyeos: error: The tracking view needs a display"
+
+    exit_code = console_main(["run", "--config", str(_synthetic_config(tmp_path)), "--view"])
+
+    captured = capsys.readouterr()
+    assert exit_code == 2
+    assert captured.err.startswith(expected)
+    assert "processed" not in captured.out
+    assert not (tmp_path / "logs").exists()  # failed before the session started
+
+
+# ---------------------------------------------------------------------------
+# The view only observes: gating is identical with and without it
+# ---------------------------------------------------------------------------
+
+
+def test_the_view_never_changes_what_the_gates_decide(fake_cv2):
+    from eval.run_eval import build_calibration, load_raw_rows
+    from eyeos.config import Config
+    from eyeos.input_sources.synthetic import SyntheticInputSource
+    from eyeos.output.dry_run import DryRunOutputAdapter
+    from eyeos.pipeline import Pipeline
+    from eyeos.tracking_view import TrackingView
+
+    config = Config()
+    screen = (config.screen.width_px, config.screen.height_px)
+    calibration = build_calibration(load_raw_rows(FIXTURE), *screen)
+
+    def run(on_frame):
+        output = DryRunOutputAdapter(echo=None)
+        pipeline = Pipeline(
+            config,
+            SyntheticInputSource(FIXTURE),
+            output,
+            calibration=calibration,
+            on_frame=on_frame,
+        )
+        return pipeline.run().statuses, output.actions
+
+    statuses, actions = run(None)
+    view = TrackingView(screen)
+    viewed_statuses, viewed_actions = run(view.update)
+
+    assert viewed_statuses == statuses
+    assert viewed_actions == actions
+    assert len(fake_cv2.shown) == len(statuses)  # the view did draw every frame
+    # The fixture exercises the gates both ways: moves, dwells and blocked frames. (It has
+    # no confirmation gesture, so no clicks.)
+    assert any(s.move_allowed for s in statuses)
+    assert any(s.gate3_stability for s in statuses)
+    assert any(not s.move_allowed for s in statuses)
+
+
+def test_run_view_writes_the_same_session_log(tmp_path, monkeypatch, capsys):
+    from eyeos.cli import main
+
+    cv2 = FakeCv2()
+    install_fakes(monkeypatch, cv2=cv2)
+    monkeypatch.setenv("DISPLAY", ":99")
+    config_path = _synthetic_config(tmp_path, csv_path=FIXTURE)
+    logs = tmp_path / "plain.jsonl", tmp_path / "viewed.jsonl"
+
+    assert main(["run", "--config", str(config_path), "--log", str(logs[0])]) == 0
+    plain_out = capsys.readouterr().out
+    assert main(["run", "--config", str(config_path), "--log", str(logs[1]), "--view"]) == 0
+    viewed_out = capsys.readouterr().out
+
+    assert logs[0].read_text() == logs[1].read_text()
+    assert plain_out.replace(str(logs[0]), "LOG") == viewed_out.replace(str(logs[1]), "LOG")
+    assert len(cv2.shown) == len(logs[0].read_text().splitlines()) > 0
