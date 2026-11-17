@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import importlib.util
 import io
+import math
 import os
 import shutil
 import socket
@@ -23,8 +24,17 @@ import urllib.request
 import zipfile
 from pathlib import Path
 
+import numpy as np
 import pytest
 from packaging.requirements import Requirement
+
+from eval.public import mpiifacegaze as mpii
+from tests.fake_mpiifacegaze import (
+    FakePerson,
+    annotation_line,
+    rotation_about_y,
+    write_person,
+)
 
 ROOT = Path(__file__).resolve().parents[1]
 
@@ -314,3 +324,229 @@ def test_downloader_refuses_a_zip_member_that_escapes_the_destination(
     assert "outside" in capsys.readouterr().err
     assert not (tmp_path / "evil.txt").exists()
     assert not (tmp_path / "a" / "evil.txt").exists()
+
+
+# ---------------------------------------------------------------------------
+# annotation and calibration-file parsing
+# ---------------------------------------------------------------------------
+
+
+@pytest.fixture
+def scipy_io() -> types.ModuleType:
+    return pytest.importorskip("scipy.io")
+
+
+def test_parse_reads_all_28_fields_of_a_well_formed_line(tmp_path):
+    person = write_person(tmp_path, FakePerson("p04", n_images=3, write_mat=False))
+
+    annotations = mpii.load_annotations(tmp_path, "p04")
+
+    assert [a.image for a in annotations] == ["day01/0000.jpg", "day01/0001.jpg", "day01/0002.jpg"]
+    first = annotations[0]
+    assert first.target_px == person.targets[0]
+    assert first.landmarks_px == tuple(500.0 + 10 * i for i in range(12))
+    assert first.head_rvec == (0.1, -0.2, 0.05)
+    assert first.head_tvec == (-20.0, 30.0, 600.0)
+    assert first.face_center_mm == person.face_center
+    expected_gt = person.gaze_target_mm(*person.targets[0])
+    assert first.gaze_target_mm == pytest.approx(tuple(expected_gt))
+    assert first.eye == "left"
+
+
+def test_parse_skips_blank_lines_and_accepts_tabs_and_crlf(tmp_path):
+    folder = tmp_path / "p00"
+    folder.mkdir()
+    line = annotation_line("day01/0001.jpg", (1.0, 2.0), (0.0, 0.0, 500.0), (5.0, 6.0, 0.0))
+    (folder / "p00.txt").write_text("\n" + line.replace(" ", "\t", 3) + "\r\n\n")
+
+    (annotation,) = mpii.load_annotations(tmp_path, "p00")
+
+    assert annotation.target_px == (1.0, 2.0)
+    assert annotation.eye == "left"
+
+
+@pytest.mark.parametrize(
+    ("mutate", "problem"),
+    [
+        (lambda f: f[:27], "expected 28"),
+        (lambda f: [*f, "extra"], "expected 28"),
+        (lambda f: [f[0], "abc", *f[2:]], "field 2"),
+        (lambda f: [*f[:5], "nan", *f[6:]], "field 6"),
+        (lambda f: [*f[:27], "both"], "'left' or 'right'"),
+        (lambda f: ["/etc/passwd", *f[1:]], "relative"),
+        (lambda f: ["../p01/day01/0001.jpg", *f[1:]], "relative"),
+    ],
+)
+def test_parse_fails_loudly_on_a_malformed_line_and_shows_it(tmp_path, mutate, problem):
+    folder = tmp_path / "p00"
+    folder.mkdir()
+    good = annotation_line("day01/0001.jpg", (1.0, 2.0), (0.0, 0.0, 500.0), (5.0, 6.0, 0.0))
+    bad = " ".join(mutate(good.split()))
+    (folder / "p00.txt").write_text(good + "\n" + bad + "\n")
+
+    with pytest.raises(mpii.DatasetFormatError) as excinfo:
+        mpii.load_annotations(tmp_path, "p00")
+
+    message = str(excinfo.value)
+    assert "p00.txt:2" in message
+    assert problem in message
+    assert bad[:40] in message
+
+
+def test_parse_fails_loudly_on_a_missing_or_empty_annotation_file(tmp_path):
+    with pytest.raises(mpii.DatasetFormatError, match="p07.txt"):
+        mpii.load_annotations(tmp_path, "p07")
+
+    (tmp_path / "p07").mkdir()
+    (tmp_path / "p07" / "p07.txt").write_text("\n\n")
+    with pytest.raises(mpii.DatasetFormatError, match="no annotations"):
+        mpii.load_annotations(tmp_path, "p07")
+
+
+def test_calibration_files_load_and_squeeze(tmp_path, scipy_io):
+    person = write_person(tmp_path, FakePerson("p02", n_images=2))
+
+    screen = mpii.load_screen_size(tmp_path, "p02")
+    pose = mpii.load_monitor_pose(tmp_path, "p02")
+
+    assert screen == mpii.ScreenSize(1280.0, 800.0, 331.0, 207.0)
+    assert pose.rvec.shape == (3,) and pose.tvec.shape == (3,)
+    assert pose.rvec.tolist() == [0.0, person.theta, 0.0]
+    assert pose.tvec.tolist() == list(person.tvec)
+
+
+def test_monitor_pose_accepts_the_rvecs_spelling_too(tmp_path, scipy_io):
+    folder = tmp_path / "p01" / "Calibration"
+    folder.mkdir(parents=True)
+    scipy_io.savemat(
+        folder / "monitorPose.mat",
+        {"rvecs": np.zeros((3, 1)), "tvecs": np.ones((1, 3))},
+    )
+
+    pose = mpii.load_monitor_pose(tmp_path, "p01")
+
+    assert pose.rvec.tolist() == [0.0, 0.0, 0.0]
+    assert pose.tvec.tolist() == [1.0, 1.0, 1.0]
+
+
+def test_calibration_files_fail_loudly_on_missing_keys_or_bad_shapes(tmp_path, scipy_io):
+    folder = tmp_path / "p01" / "Calibration"
+    folder.mkdir(parents=True)
+    scipy_io.savemat(folder / "screenSize.mat", {"width_pixel": 1280.0, "height_px": 800.0})
+    scipy_io.savemat(folder / "monitorPose.mat", {"rvects": np.zeros(2), "tvecs": np.ones(3)})
+
+    with pytest.raises(mpii.DatasetFormatError, match="height_pixel.*height_px"):
+        mpii.load_screen_size(tmp_path, "p01")
+    with pytest.raises(mpii.DatasetFormatError, match="rvects.*3 numbers"):
+        mpii.load_monitor_pose(tmp_path, "p01")
+    with pytest.raises(mpii.DatasetFormatError, match="p05"):
+        mpii.load_screen_size(tmp_path, "p05")
+
+
+# ---------------------------------------------------------------------------
+# Rodrigues and the screen model
+# ---------------------------------------------------------------------------
+
+
+def _axis_rotation(axis: int, theta: float) -> np.ndarray:
+    """Textbook rotation about the x (0), y (1) or z (2) axis, written out by hand."""
+    c, s = math.cos(theta), math.sin(theta)
+    if axis == 0:
+        return np.array([[1, 0, 0], [0, c, -s], [0, s, c]])
+    if axis == 1:
+        return rotation_about_y(theta)
+    return np.array([[c, -s, 0], [s, c, 0], [0, 0, 1]])
+
+
+@pytest.mark.parametrize("axis", [0, 1, 2])
+@pytest.mark.parametrize("theta", [0.3, -1.2, math.pi - 0.15, math.pi])
+def test_rodrigues_matches_the_textbook_single_axis_rotations(axis, theta):
+    rvec = np.zeros(3)
+    rvec[axis] = theta
+
+    assert mpii.rodrigues(rvec) == pytest.approx(_axis_rotation(axis, theta), abs=1e-12)
+
+
+def test_rodrigues_of_zero_is_the_identity():
+    assert mpii.rodrigues(np.zeros(3)) == pytest.approx(np.eye(3))
+    assert mpii.rodrigues(np.full(3, 1e-14)) == pytest.approx(np.eye(3))
+
+
+def test_rodrigues_of_an_arbitrary_axis_is_a_rotation_by_the_vector_length_about_it():
+    rvec = np.array([0.4, -1.1, 0.7])
+    angle = float(np.linalg.norm(rvec))
+
+    rotation = mpii.rodrigues(rvec)
+
+    assert rotation @ rotation.T == pytest.approx(np.eye(3), abs=1e-12)
+    assert np.linalg.det(rotation) == pytest.approx(1.0)
+    assert rotation @ rvec == pytest.approx(rvec)  # the axis stays put
+    assert np.trace(rotation) == pytest.approx(1 + 2 * math.cos(angle))
+
+
+def test_rodrigues_matches_opencv_when_it_is_installed():
+    cv2 = pytest.importorskip("cv2")
+    rvec = np.array([0.4, -1.1, 0.7])
+
+    expected, _ = cv2.Rodrigues(rvec.reshape(3, 1))
+
+    assert mpii.rodrigues(rvec) == pytest.approx(expected, abs=1e-9)
+
+
+def _screen_and_pose(person: FakePerson) -> tuple[mpii.ScreenSize, mpii.MonitorPose]:
+    screen = mpii.ScreenSize(
+        float(person.screen_px[0]),
+        float(person.screen_px[1]),
+        person.screen_mm[0],
+        person.screen_mm[1],
+    )
+    pose = mpii.MonitorPose(np.array([0.0, person.theta, 0.0]), np.array(person.tvec))
+    return screen, pose
+
+
+def _targets_and_gts(person: FakePerson) -> tuple[np.ndarray, np.ndarray]:
+    rng = np.random.default_rng(1)
+    targets = rng.uniform([0, 0], person.screen_px, size=(50, 2))
+    gts = np.array([person.gaze_target_mm(x, y) for x, y in targets])
+    return targets, gts
+
+
+def test_screen_model_reproduces_consistent_3d_targets_to_about_0_mm():
+    person = FakePerson("p00")
+    screen, pose = _screen_and_pose(person)
+    targets, gts = _targets_and_gts(person)
+
+    check = mpii.check_screen_model(targets, gts, screen, pose)
+
+    assert check.model == "default"
+    assert check.fits
+    assert check.median_error_mm < 1e-9
+    assert check.default_median_error_mm < 1e-9
+    assert check.reason is None
+    assert mpii.screen_to_camera(targets, screen, pose, check.model) == pytest.approx(gts)
+
+
+def test_screen_model_falls_back_to_the_best_alternative_and_records_it():
+    person = FakePerson("p00", mirror_gt_x=True)
+    screen, pose = _screen_and_pose(person)
+    targets, gts = _targets_and_gts(person)
+
+    check = mpii.check_screen_model(targets, gts, screen, pose)
+
+    assert check.default_median_error_mm > 5.0
+    assert check.model == "mirror-x"
+    assert check.fits
+    assert check.median_error_mm < 1e-9
+    assert set(check.candidates_median_mm) == set(mpii.SCREEN_MODELS)
+
+
+def test_screen_model_reports_no_fit_with_a_reason_when_nothing_is_within_5_mm():
+    person = FakePerson("p00")
+    screen, pose = _screen_and_pose(person)
+    targets, gts = _targets_and_gts(person)
+
+    check = mpii.check_screen_model(targets, gts + 40.0, screen, pose)
+
+    assert not check.fits
+    assert check.model is None
+    assert "5" in check.reason and "angular" in check.reason
