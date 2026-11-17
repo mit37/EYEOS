@@ -615,6 +615,38 @@ def test_a_window_closed_by_the_user_stops_drawing(monkeypatch):
     assert props == [("getWindowProperty", "EyeOS tracking", cv2.WND_PROP_VISIBLE)] * 2
 
 
+def test_a_window_not_yet_on_screen_is_not_taken_for_a_closed_one(monkeypatch):
+    # A window manager can map a new window a few frames late; until the window has
+    # been reported visible once, "not visible" means "not up yet", not "closed".
+    from eyeos.tracking_view import TrackingView
+
+    visible = {1: 0.0, 2: 0.0, 3: 1.0, 4: 1.0}  # then the user closes it during frame 5
+    cv2 = _install_cv2(monkeypatch, window_visible=lambda shown: visible.get(shown, 0.0))
+    view = TrackingView(SCREEN)
+
+    _update(view, 8)
+
+    assert view.closed
+    assert len(cv2.shown) == 5
+
+
+def test_a_backend_that_cannot_report_visibility_never_closes_the_view(monkeypatch):
+    # getWindowProperty returns -1 for a property a HighGUI backend doesn't support.
+    # Then only q closes the view; it must not close itself after the first frame.
+    from eyeos.tracking_view import TrackingView
+
+    cv2 = _install_cv2(monkeypatch, window_visible=-1.0, keys=[-1] * 5 + [ord("q")])
+    view = TrackingView(SCREEN)
+
+    _update(view, 5)
+    assert not view.closed
+    assert len(cv2.shown) == 5
+
+    _update(view, 3)
+    assert view.closed
+    assert len(cv2.shown) == 6
+
+
 def test_a_window_property_error_counts_as_a_closed_window(monkeypatch):
     from eyeos.tracking_view import TrackingView
 

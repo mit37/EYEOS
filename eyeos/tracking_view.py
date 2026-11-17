@@ -482,6 +482,7 @@ class TrackingView:
         self.gain = gain
         self.window_name = window_name
         self._shown = False
+        self._seen_visible = False
         self._closed = False
 
     @property
@@ -513,15 +514,24 @@ class TrackingView:
         key = cv2.waitKey(1)
         if key != -1 and (key & 0xFF) in (ord("q"), ord("Q")):
             self.close()
-        elif not self._window_visible():
-            self.close()  # the user closed the window
+        elif self._closed_by_user():
+            self.close()
 
-    def _window_visible(self) -> bool:
+    def _closed_by_user(self) -> bool:
+        """Whether the window is gone: reported visible once, and no longer.
+
+        Until it has been reported visible, "not visible" means "not on screen yet" (a
+        window manager can map it late), and a backend that can't report visibility
+        returns -1 throughout. Either way only q closes the view then."""
         cv2 = self._cv2
         try:
-            return bool(cv2.getWindowProperty(self.window_name, cv2.WND_PROP_VISIBLE) >= 1)
+            visible = cv2.getWindowProperty(self.window_name, cv2.WND_PROP_VISIBLE) >= 1
         except cv2.error:
-            return False  # some backends raise for a window that no longer exists
+            return True  # e.g. Qt: "NULL guiReceiver" once no HighGUI window is left
+        if visible:
+            self._seen_visible = True
+            return False
+        return self._seen_visible
 
     def close(self) -> None:
         """Destroy the window once. Safe to call again, or after the user closed it."""
