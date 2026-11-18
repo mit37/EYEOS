@@ -748,6 +748,22 @@ def test_extract_cli_reports_a_dataset_problem_as_one_line_and_exit_1(tmp_path, 
     assert "Traceback" not in err
 
 
+@pytest.mark.parametrize("make_root", [False, True])
+def test_extract_cli_fails_on_a_root_without_participants(tmp_path, capsys, make_root):
+    root = tmp_path / "not-the-dataset"
+    if make_root:
+        (root / "notes").mkdir(parents=True)
+
+    code = mpii.main(
+        ["extract", "--root", str(root), "--cache", str(tmp_path / "c")],
+        detector_factory=fake_detector_factory,
+    )
+
+    assert code == 1
+    assert "not-the-dataset" in capsys.readouterr().err
+    assert not (tmp_path / "c").exists()
+
+
 class _ImreadCv2(FakeCv2):
     """fake_capture's cv2 plus imread, returning a frame of the given (h, w, c) shape."""
 

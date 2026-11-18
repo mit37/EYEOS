@@ -841,7 +841,13 @@ def _run_extract(
     parser: argparse.ArgumentParser,
     detector_factory: DetectorFactory | None,
 ) -> int:
-    persons = _persons_arg(find_persons(args.root), args.persons, parser, str(args.root))
+    available = find_persons(args.root)
+    if not available:
+        raise DatasetFormatError(
+            f"no pXX folders with a pXX.txt under {args.root}: is --root the extracted "
+            "MPIIFaceGaze folder?"
+        )
+    persons = _persons_arg(available, args.persons, parser, str(args.root))
     summaries = extract(
         args.root,
         args.cache,
