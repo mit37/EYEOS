@@ -54,7 +54,10 @@ SECTIONS: dict[str, str] = {
     "feature_sanity": (
         "a. Are the iris offsets sane? Ranges per eye, whether both eyes move together, "
         "whether both eyes' x offsets have the same sign against the target's x, and the "
-        "EyeOS roll spread. A broken or swapped eye shows here."
+        "EyeOS roll spread. One eye's axis mirrored (its corners labelled the wrong way "
+        "round) shows as target_x_signs_match false; an iris paired with the other eye's "
+        "corners shows as x_medians_within_eye false (a median x of several half-widths; a "
+        "healthy one is well inside +-1), while the sign check still passes."
     ),
     "in_sample_ceiling": (
         "b. How well could one calibration of these features do across all of a person's "
@@ -191,7 +194,11 @@ METRICS: dict[str, str] = {
     ),
     "feature_sanity.target_x_signs_match": (
         "whether both eyes' x offsets correlate with the target's x with the same sign "
-        "(false = one eye's x runs the wrong way)"
+        "(false = one eye's x runs the wrong way: its axis is mirrored)"
+    ),
+    "feature_sanity.x_medians_within_eye": (
+        "whether both eyes' median x offset lies inside the eye (|median| < 1 half-width); "
+        "false = an iris paired with the wrong eye's corners, or a broken eye"
     ),
     "feature_sanity.corr_left_y_target_y": (
         "Pearson correlation of the left eye's y offset with the target's y"
@@ -515,6 +522,7 @@ def _feature_sanity(frames: _Frames) -> dict[str, Any]:
     signs_match = None
     if left_x is not None and right_x is not None:
         signs_match = bool(left_x * right_x > 0)
+    medians_inside = bool(all(abs(float(np.median(iris[:, i]))) < 1.0 for i in (0, 2)))
     return {
         "left_iris_x": _spread(iris[:, 0]),
         "left_iris_y": _spread(iris[:, 1]),
@@ -525,6 +533,7 @@ def _feature_sanity(frames: _Frames) -> dict[str, Any]:
         "corr_left_x_target_x": left_x,
         "corr_right_x_target_x": right_x,
         "target_x_signs_match": signs_match,
+        "x_medians_within_eye": medians_inside,
         "corr_left_y_target_y": _corr(iris[:, 1], targets[:, 1]),
         "corr_right_y_target_y": _corr(iris[:, 3], targets[:, 1]),
         "eyeos_roll_deg": _spread(frames.features[:, 6]),

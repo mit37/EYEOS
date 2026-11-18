@@ -543,7 +543,11 @@ are bounds and explanations, not results. Only d and e follow the evaluation pro
   correlation of each eye's x with the target's x; EyeOS roll p5 to p95. Both eyes turn
   together, so their correlation should be near +1. Landmark noise pulls it toward 0.
   An eye whose x correlates with the target's x with the opposite sign
-  (`target_x_signs_match` false) is broken or swapped.
+  (`target_x_signs_match` false) has its axis mirrored: its corners are labelled the
+  wrong way round. An iris paired with the other eye's corners passes that check, since
+  both offsets still move with the target; it shows instead as a median x offset of
+  several half-widths, far outside the eye (`x_medians_within_eye` false; a healthy
+  median is well inside ±1).
 - **b. `in_sample_ceiling`: how well could one calibration do across all days?** The
   shipping model (affine in the 4 iris offsets, same ridge strength) is fitted on all of
   a person's valid frames, from every day, and scored on the same frames. The same is

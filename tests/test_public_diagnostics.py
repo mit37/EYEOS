@@ -275,6 +275,31 @@ def test_feature_sanity_flags_an_eye_whose_x_runs_the_wrong_way():
     assert sanity["corr_right_x_target_x"] == pytest.approx(-1.0)
     assert sanity["corr_left_right_x"] == pytest.approx(-1.0)
     assert sanity["target_x_signs_match"] is False
+    # A mirrored eye axis keeps the iris inside the eye: only the sign check sees it.
+    assert sanity["x_medians_within_eye"] is True
+
+
+def test_feature_sanity_flags_irises_paired_with_the_wrong_eyes():
+    healthy = _person(Spec(noise=0.02))
+    assert diagnostics.diagnose([healthy])["persons"]["p00"]["feature_sanity"][
+        "x_medians_within_eye"
+    ]
+
+    swapped = _person(Spec(noise=0.02))
+    swapped.data.landmarks = [
+        dataclasses.replace(
+            lm, left_iris_center=lm.right_iris_center, right_iris_center=lm.left_iris_center
+        )
+        for lm in swapped.data.landmarks
+    ]
+
+    sanity = diagnostics.diagnose([swapped])["persons"]["p00"]["feature_sanity"]
+    # Both offsets still follow the target the same way, so the sign check passes ...
+    assert sanity["target_x_signs_match"] is True
+    assert sanity["corr_left_right_x"] > 0.9
+    # ... but each iris sits several half-widths outside its eye.
+    assert sanity["left_iris_x"]["median"] > 3 and sanity["right_iris_x"]["median"] < -3
+    assert sanity["x_medians_within_eye"] is False
 
 
 def test_feature_sanity_reads_the_eyeos_roll_spread():
