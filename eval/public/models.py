@@ -17,6 +17,13 @@ The variants (``--variants``, default all):
 - ``global-lopo``: one ridge regression trained on every OTHER participant's valid
   frames (iris offsets plus head pose -> screen fractions), then a per-user affine
   correction fitted on this participant's own 9-dot calibration set.
+- ``eyeos-live9``: the shipping calibration built the way a live session builds it
+  (eyeos/calibration_session.py): each dot's K images are averaged into one sample,
+  exactly as collect_dot_features averages a dot's frames (the 4 iris offsets and the
+  3 head-pose angles), and added at the GRID POINT, not at the images' true targets.
+  Calibration is fitted on those 9 samples, so its validation error is the statistic
+  live Gate 2 judges. It differs from live in what is averaged: K photos of separate
+  moments (often separate days), not ~10 consecutive frames of one.
 - ``centre``: baseline; always predicts the screen centre (W/2, H/2) and ignores the
   image. Its validation error is the RMS distance of the calibration targets to the
   centre: the leave-one-out of a constant that ignores the data.
@@ -137,6 +144,46 @@ class CalibrationVariant:
         calibration = Calibration(width, height, **self.calibration_kwargs)
         for f, (x, y) in zip(features, np.asarray(targets_px, dtype=float), strict=True):
             calibration.add_sample((float(x), float(y)), f)
+        calibration.fit()
+        return CalibrationModel(calibration)
+
+
+def average_dot_features(features: Sequence[FeatureVector]) -> FeatureVector:
+    """One calibration sample from a dot's frames, computed exactly as
+    eyeos.calibration_session.collect_dot_features computes it: the mean of the 4 iris
+    offsets and the 3 head-pose angles."""
+    mean = np.mean([[*f.iris_vector(), *f.head_pose()] for f in features], axis=0)
+    return FeatureVector(*(float(v) for v in mean))
+
+
+@dataclass(frozen=True)
+class LiveStyleCalibrationVariant:
+    """The shipping calibration fitted on 9 samples, one per dot, each the average of
+    that dot's images and placed at the dot: what calibrate_interactively fits live."""
+
+    name: str = "eyeos-live9"
+    description: str = (
+        "shipping eyeos.calibration.Calibration fitted the way a live session fits it: each "
+        "dot's K images averaged into one sample (as calibration_session.collect_dot_features "
+        "averages frames) at the grid point, not the images' true targets; validation error "
+        "= leave-one-out over those 9 samples, the statistic live Gate 2 judges"
+    )
+    k_per_dot: int | None = None
+    needs_other_persons: bool = False
+
+    def fit(
+        self, features: Sequence[FeatureVector], targets_px: np.ndarray, context: FitContext
+    ) -> FittedModel:
+        # targets_px is deliberately unused: a live session only knows where the dot was.
+        if not context.dot_rows or len(context.dot_rows) != len(context.grid_px):
+            raise ValueError(
+                f"{self.name} needs the calibration grid and each dot's images "
+                "(FitContext.grid_px and dot_rows)"
+            )
+        width, height = context.screen_px
+        calibration = Calibration(width, height)
+        for (x, y), rows in zip(context.grid_px, context.dot_rows, strict=True):
+            calibration.add_sample((x, y), average_dot_features([features[i] for i in rows]))
         calibration.fit()
         return CalibrationModel(calibration)
 
@@ -354,7 +401,7 @@ def build_variants() -> dict[str, Variant]:
             )
         )
     variants += [HeadPoseRidgeVariant(), GlobalLopoVariant()]
-    variants += [CentreBaseline(), CalibrationMeanBaseline()]
+    variants += [CentreBaseline(), CalibrationMeanBaseline(), LiveStyleCalibrationVariant()]
     return {v.name: v for v in variants}
 
 

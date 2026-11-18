@@ -252,16 +252,34 @@ These variants were added after the first real run (2026-11-18), so the committe
 dataset will.
 
 Two baselines ignore the image. They put every other error on a scale: how much of it
-is left once a model has used the photo at all.
+is left once a model has used the photo at all. The third variant builds the shipping
+calibration the way a live session does, so its validation error is the number live
+Gate 2 judges.
 
-| Variant | Predicts, for every frame | Its `validation_error_px` |
+| Variant | Model | Its `validation_error_px` |
 |---|---|---|
-| `centre` | the screen centre (W/2, H/2) | the RMS distance of the calibration targets to the centre: the leave-one-out of a constant that ignores the data |
-| `calibration-mean` | the mean of the calibration targets | the true leave-one-out RMS of that mean predictor |
+| `centre` | baseline: predicts the screen centre (W/2, H/2) for every frame | the RMS distance of the calibration targets to the centre: the leave-one-out of a constant that ignores the data |
+| `calibration-mean` | baseline: predicts the mean of the calibration targets for every frame | the true leave-one-out RMS of that mean predictor |
+| `eyeos-live9` | the shipping `Calibration`, fitted on 9 samples: each dot's K images averaged into one sample, placed at the dot | the leave-one-out over those 9 samples: the statistic live Gate 2 judges |
 
-Both go through the same protocol as `eyeos`: the same calibration and test frames, the
-same rounding and clamping, so their pixel and angular errors compare directly with
-every other row.
+All three go through the same protocol as `eyeos`: the same calibration and test
+frames, the same rounding and clamping, so their pixel and angular errors compare
+directly with every other row.
+
+**Why `eyeos-live9`.** Every other variant's `validation_error_px` is the leave-one-out
+over its 9 × K calibration photos, each labelled with its own true target, with the
+other photos of the same dot left in the fit. Live Gate 2 judges something else.
+`eyeos.calibration_session` averages about 10 frames per dot into one feature vector
+(`collect_dot_features`: the 4 iris offsets and the 3 head-pose angles) and adds it at
+the dot itself, so the leave-one-out runs over 9 samples. The two statistics react to
+noise differently and can disagree on pass or fail. `eyeos-live9` does what live
+calibration does, with the same averaging code path (a test checks it against
+`calibrate_interactively` on the same frames), so its `passes_gate2` applies live
+Gate 2's statistic and threshold to these photos. It is still not a live session: each
+dot's K photos are separate moments, often from different days, not 10 consecutive
+frames of one; and their true targets are on average `calibration_mean_distance_px`
+from the dot. A live user does not look exactly at the dot either, but by how much is
+not measured anywhere in this repo.
 
 ## The results JSON
 

@@ -40,8 +40,15 @@ from eval.generate_synthetic import make_landmarks
 from eval.public import models, protocol
 from eval.public import mpiifacegaze as mpii
 from eyeos.calibration import Calibration, target_points
+from eyeos.calibration_session import (
+    SAMPLE_FRAMES,
+    SETTLE_FRAMES,
+    calibrate_interactively,
+    collect_dot_features,
+)
 from eyeos.config import Config, ScreenConfig
 from eyeos.features import extract_features
+from eyeos.input_sources import Frame
 from eyeos.input_sources.synthetic import SyntheticInputSource
 from eyeos.landmarks import FaceLandmarks, Point3D
 from eyeos.output.dry_run import DryRunOutputAdapter
@@ -1528,6 +1535,7 @@ def test_the_variant_list_is_the_documented_one():
         "global-lopo",
         "centre",
         "calibration-mean",
+        "eyeos-live9",
     )
 
 
@@ -1840,6 +1848,167 @@ def test_baselines_are_scored_on_the_same_frames_as_eyeos(tmp_path):
             # A constant is a poor gaze estimate: far worse than the calibration here.
             assert person["pixel_error_px"]["mean"] > 5 * eyeos["pixel_error_px"]["mean"], name
             assert person["passes_gate2"] is False, name
+
+
+# ---------------------------------------------------------------------------
+# eyeos-live9: the shipping calibration built the way a live session builds it
+# ---------------------------------------------------------------------------
+
+
+class _ContextSpy:
+    """Records every FitContext the protocol hands it, with the fit's targets."""
+
+    name = "context-spy"
+    description = "records its fit arguments"
+    k_per_dot = None
+    needs_other_persons = False
+
+    def __init__(self) -> None:
+        self.calls: list[tuple[np.ndarray, protocol.FitContext]] = []
+
+    def fit(self, features, targets_px, context):
+        self.calls.append((np.asarray(targets_px), context))
+        return models.build_variants()["eyeos"].fit(features, targets_px, context)
+
+
+def test_the_protocol_hands_variants_the_grid_and_each_dots_calibration_rows(tmp_path):
+    data = _person_data(tmp_path, _second_screen("p01", seed=1))
+    spy = _ContextSpy()
+
+    protocol.evaluate([data], [spy], k_per_dot=3)
+
+    [(targets, context)] = spy.calls
+    assert context.grid_px == tuple(target_points(1440.0, 900.0))
+    assert context.dot_rows == tuple(tuple(range(3 * j, 3 * j + 3)) for j in range(9))
+    selected, _ = protocol.select_calibration_set(data.targets_px, context.grid_px, 3)
+    for rows, chosen in zip(context.dot_rows, selected, strict=True):
+        assert targets[list(rows)] == pytest.approx(data.targets_px[chosen])
+
+
+def test_a_fit_context_built_without_the_grid_has_none():
+    context = protocol.FitContext(screen_px=(1280.0, 800.0))
+
+    assert context.grid_px == () and context.dot_rows == ()
+
+
+def test_dot_averaging_is_exactly_what_live_calibration_does():
+    landmarks = [
+        dataclasses.replace(
+            make_landmarks(0.1 * i - 0.2, 0.05 * i),
+            nose_tip=Point3D(0.45 + 0.02 * i, 0.47 + i / 99),
+        )
+        for i in range(SAMPLE_FRAMES)
+    ]
+    frames = [Frame(i / 30, make_landmarks(0.9, 0.9)) for i in range(SETTLE_FRAMES)]
+    frames += [Frame(1 + i / 30, lm) for i, lm in enumerate(landmarks)]
+
+    live = collect_dot_features(iter(frames))
+
+    averaged = models.average_dot_features([extract_features(lm) for lm in landmarks])
+    assert live is not None
+    assert averaged == live  # every field, head pose included, bit for bit
+    assert averaged.yaw_deg != 0.0 and averaged.pitch_deg != 0.0
+
+
+class _InstantDotScreen:
+    """CalibrationUI stand-in: captures each dot once, in order, and completes."""
+
+    def __init__(self, width, height, capture_sample):
+        self.targets = target_points(width, height)
+        self.capture_sample = capture_sample
+
+    def cancel(self):
+        pass
+
+    def run(self):
+        return all(self.capture_sample(target) is True for target in self.targets)
+
+
+def test_eyeos_live9_matches_a_live_calibration_on_the_same_frames(tmp_path):
+    # K = 10 is SAMPLE_FRAMES, so each dot's images are exactly the frames a live session
+    # would average for that dot.
+    data = _person_data(tmp_path, FakePerson("p00", noise=0.05))
+    person = protocol.prepare(data)
+    grid = target_points(1280.0, 800.0)
+    selected, _ = protocol.select_calibration_set(data.targets_px, grid, SAMPLE_FRAMES)
+    rows = [i for per_dot in selected for i in per_dot]
+    context = protocol.FitContext(
+        screen_px=(1280.0, 800.0),
+        grid_px=tuple(grid),
+        dot_rows=tuple(tuple(range(10 * j, 10 * j + 10)) for j in range(9)),
+    )
+    model = models.build_variants()["eyeos-live9"].fit(
+        [person.features[i] for i in rows], data.targets_px[rows], context
+    )
+
+    stream = []
+    for per_dot in selected:
+        stream += [Frame(0.0, None)] * SETTLE_FRAMES  # dropped after each keypress
+        stream += [Frame(0.0, data.landmarks[i]) for i in per_dot]
+    config = Config(screen=ScreenConfig(width_px=1280, height_px=800))
+    live = calibrate_interactively(config, iter(stream), _InstantDotScreen)
+
+    assert live is not None
+    assert [s.target_px for s in live.samples] == grid
+    assert model.validation_error_px == live.validation_error_px
+    assert math.isfinite(model.validation_error_px)
+    test_features = person.features[::7]
+    assert model.predict(test_features) == pytest.approx(
+        np.array([live.predict(f) for f in test_features]), abs=1e-9
+    )
+
+
+def test_eyeos_live9_labels_each_dot_with_the_grid_point_not_the_images_targets():
+    # Every calibration image is 20 px right of its dot. eyeos fits their true targets
+    # and recovers the gaze; eyeos-live9, like a live session, puts the averaged sample
+    # at the dot, so its whole mapping shifts 20 px left.
+    shifted = _hand_built_person([20.0] * 9)
+    exact = _hand_built_person([0.0] * 9)
+    variants = models.build_variants()
+    pair = [variants["eyeos"], variants["eyeos-live9"]]
+
+    results = protocol.evaluate([shifted], pair)
+    on_the_dots = protocol.evaluate([exact], pair)
+
+    eyeos = results["variants"]["eyeos"]["persons"]["p00"]
+    live = results["variants"]["eyeos-live9"]["persons"]["p00"]
+    assert eyeos["pixel_error_px"]["mean"] < 0.75
+    assert 19.0 < live["pixel_error_px"]["mean"] < 21.0
+    for same in ("n_calibration", "n_test", "head_pose_within_limit_share"):
+        assert live[same] == eyeos[same], same
+    exact_live = on_the_dots["variants"]["eyeos-live9"]["persons"]["p00"]
+    assert exact_live["pixel_error_px"]["mean"] < 0.75
+    assert exact_live["validation_error_px"] < 0.5
+
+
+def test_eyeos_live9_validates_on_9_samples_not_on_every_image(tmp_path):
+    data = _person_data(tmp_path, FakePerson("p00", noise=0.1))
+    person = protocol.prepare(data)
+    grid = target_points(1280.0, 800.0)
+    selected, _ = protocol.select_calibration_set(data.targets_px, grid, 5)
+    calibration = Calibration(1280.0, 800.0)
+    for point, per_dot in zip(grid, selected, strict=True):
+        calibration.add_sample(
+            point, models.average_dot_features([person.features[i] for i in per_dot])
+        )
+    calibration.fit()
+
+    results = protocol.evaluate([data], [models.build_variants()["eyeos-live9"]])
+
+    live = results["variants"]["eyeos-live9"]["persons"]["p00"]
+    assert len(calibration.samples) == 9
+    assert live["validation_error_px"] == pytest.approx(calibration.validation_error_px)
+    assert live["n_calibration"] == 45  # the images it used stay out of the test set
+    assert live["passes_gate2"] is (calibration.validation_error_px < 60)
+
+
+def test_eyeos_live9_refuses_a_context_without_the_dots():
+    features = [extract_features(make_landmarks(0.1 * i, 0.0)) for i in range(9)]
+
+    with pytest.raises(ValueError, match="grid"):
+        models.build_variants()["eyeos-live9"].fit(
+            features, np.zeros((9, 2)), protocol.FitContext(screen_px=(1280.0, 800.0))
+        )
 
 
 # Every pre-existing variant's results on _locked_persons(), recorded at f2bdf78, before

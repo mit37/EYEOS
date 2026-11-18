@@ -11,7 +11,9 @@ treats those the way a live EyeOS session would:
 2. Calibration: for each point of EyeOS's own 9-point grid (eyeos.calibration.
    target_points on this person's screen), the K usable images whose true target is
    nearest the dot stand in for "looking at the dot". They are added with their TRUE
-   targets, and the model is fitted on them.
+   targets, and the model is fitted on them. (A variant also gets them grouped by dot,
+   with the grid, so it can instead average each dot's images into one sample at the
+   dot, as a live session does: eyeos-live9 in eval/public/models.py.)
 3. Every other usable image is a test frame. Predictions are rounded and clamped to the
    screen exactly as Pipeline._to_screen_pixel does for the cursor.
 
@@ -78,6 +80,12 @@ class FitContext:
     # The other participants, for variants that learn across people (global-lopo). The
     # protocol never puts the person being evaluated in here.
     other_persons: tuple[PreparedPerson, ...] = ()
+    # The calibration grid (eyeos.calibration.target_points on this screen), and for each
+    # grid point the positions in fit()'s ``features`` and ``targets_px`` of the images
+    # chosen for it. They let a variant build its calibration the way a live session
+    # does: one sample per dot, at the dot (eyeos-live9). Empty when not given.
+    grid_px: tuple[ScreenPoint, ...] = ()
+    dot_rows: tuple[tuple[int, ...], ...] = ()
 
 
 class FittedModel(Protocol):
@@ -258,10 +266,20 @@ def evaluate_person(
     is_calibration[calibration] = True
     test = np.flatnonzero(~is_calibration)
 
+    # ``calibration`` lists each dot's images in grid order, so dot j's are a run of it.
+    starts = np.cumsum([0] + [len(per_dot) for per_dot in selected])
     model = variant.fit(
         [person.features[i] for i in calibration],
         valid_targets[calibration],
-        FitContext(screen_px=(width, height), other_persons=tuple(others)),
+        FitContext(
+            screen_px=(width, height),
+            other_persons=tuple(others),
+            grid_px=tuple((float(x), float(y)) for x, y in grid),
+            dot_rows=tuple(
+                tuple(range(int(start), int(end)))
+                for start, end in zip(starts[:-1], starts[1:], strict=True)
+            ),
+        ),
     )
     test_features = [person.features[i] for i in test]
     predicted = clamp_to_screen(model.predict(test_features), width, height)
