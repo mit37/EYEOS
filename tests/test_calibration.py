@@ -4,10 +4,13 @@ from __future__ import annotations
 
 import math
 
+import numpy as np
 import pytest
 
 from eyeos.calibration import Calibration, CalibrationStatus, target_points
+from eyeos.config import GatesConfig
 from eyeos.features import FeatureVector
+from eyeos.gates import FrameInput, GateStateMachine
 
 # A fixed "true" affine mapping from [1, x1, x2, x3, x4] (basis) -> screen px.
 TRUE_WX = (960.0, 500.0, -50.0, 300.0, 80.0)
@@ -135,3 +138,60 @@ def test_noisy_targets_produce_nonzero_validation_error():
         cal.add_sample((tx + noise, ty + noise), _feature_vector(iv))
     cal.fit()
     assert cal.validation_error_px > 50.0
+
+
+def _calibration_from(samples, degree: int = 1) -> Calibration:
+    cal = Calibration(1920, 1080, degree=degree)
+    for target, iv in samples:
+        cal.add_sample(target, _feature_vector(iv))
+    cal.fit()
+    return cal
+
+
+def test_five_sample_calibration_is_reported_as_not_validated():
+    # Five samples leave too few points for leave-one-out on the 5-term affine basis;
+    # "could not validate" must never be reported as a perfect 0.0 px.
+    targets = target_points(1920, 1080)[:5]
+    cal = _calibration_from(zip(targets, IRIS_VECTORS[:5], strict=True))
+    assert cal.is_fitted
+    assert math.isinf(cal.validation_error_px)
+    assert math.isinf(cal.status().validation_error_px)
+
+
+def test_five_sample_calibration_fails_gate2_with_recalibrate():
+    targets = target_points(1920, 1080)[:5]
+    cal = _calibration_from(zip(targets, IRIS_VECTORS[:5], strict=True))
+    gates = GateStateMachine(GatesConfig())
+    gates.set_calibration(cal.status())
+    status = gates.step(
+        FrameInput(
+            timestamp_s=0.0,
+            face_count=1,
+            detection_confidence=0.9,
+            both_irises_visible=True,
+            gaze_point_px=(500.0, 500.0),
+            head_pose_deg=(0.0, 0.0, 0.0),
+        )
+    )
+    assert status.gate2_calibration is False
+    assert status.move_allowed is False
+    assert "recalibrate" in status.reasons["gate2"]
+
+
+def test_six_random_samples_give_a_finite_large_validation_error():
+    rng = np.random.default_rng(0)
+    samples = [
+        (
+            (float(rng.uniform(0, 1920)), float(rng.uniform(0, 1080))),
+            tuple(float(v) for v in rng.uniform(-0.4, 0.4, size=4)),
+        )
+        for _ in range(6)
+    ]
+    cal = _calibration_from(samples)
+    assert math.isfinite(cal.validation_error_px)
+    assert cal.validation_error_px > 60.0
+
+
+def test_degree_2_with_nine_samples_gives_a_finite_validation_error():
+    cal = _fit_calibration(degree=2)
+    assert math.isfinite(cal.validation_error_px)

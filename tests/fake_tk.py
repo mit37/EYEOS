@@ -1,0 +1,278 @@
+"""A tiny fake ``tkinter`` for testing overlay.py and calibration_ui.py headless.
+
+Install with ``monkeypatch.setitem(sys.modules, "tkinter", make_fake_tk())``. Widgets
+record what was drawn; ``Tk.fire(sequence)`` simulates a key binding firing, and
+``Tk.close_window()`` the window manager's close button (Alt+F4, the title-bar X).
+``Tk.on_mainloop`` and ``Tk.on_update`` script what the user does while Tk is
+processing events.
+
+``after()`` callbacks run inside ``mainloop()``, in order of when they are due on a
+virtual clock (no real time passes), until the window is destroyed or no callback is
+left (real Tk would then wait for input; a test has none to give). ``Tk.on_poll`` is
+called before each one, so a scripted user can press keys between callbacks, as Tk
+handles input between them. ``bell()`` only counts.
+
+Every widget reports the window's place and size (``winfo_rootx``/``winfo_rooty``/
+``winfo_width``/``winfo_height``): by default the whole screen from (0, 0), as a
+fullscreen window gets; ``make_fake_tk(window_geometry=(x, y, w, h))`` simulates one
+that doesn't cover it.
+
+Like real Tk, a destroyed window stays destroyed: a second ``destroy()``, and any call
+on one of its widgets or that creates one, raises TclError. ``update()`` and
+``update_idletasks()`` are the exception: they are core Tcl commands, and real Tk lets
+them through after a destroy. Events (``fire``, ``close_window``) sent after that are
+dropped, as no window is left to receive them. Also like real Tk (``CallWrapper``), an
+exception raised by an event handler, KeyboardInterrupt included, is not raised to the
+caller: it goes to ``report_callback_exception``, which prints it and records it in
+``callback_errors``. Only SystemExit gets through.
+"""
+
+from __future__ import annotations
+
+import sys
+import traceback
+import types
+from typing import Any
+
+
+class TclError(Exception):
+    pass
+
+
+class _Widget:
+    def __init__(self, master: Any = None, **kwargs: Any) -> None:
+        self.master = master
+        self.options = dict(kwargs)
+        if master is not None:
+            master._check_alive(type(self).__name__.lower())
+
+    def _root(self) -> Any:
+        widget: Any = self
+        while widget.master is not None:
+            widget = widget.master
+        return widget
+
+    def _check_alive(self, command: str) -> None:
+        if getattr(self._root(), "destroyed", False):
+            if isinstance(self, Tk):
+                raise TclError(f'can\'t invoke "{command}" command: application has been destroyed')
+            raise TclError(f'invalid command name ".!{type(self).__name__.lower()}"')
+
+    def pack(self, **_kwargs: Any) -> None:
+        self._check_alive("pack")
+
+    def config(self, **kwargs: Any) -> None:
+        self._check_alive("configure")
+        self.options.update(kwargs)
+
+    configure = config
+
+    def _window(self) -> tuple[int, int, int, int]:
+        root = self._root()
+        root._check_alive("winfo")
+        if root.window_geometry is not None:
+            return tuple(root.window_geometry)
+        return (0, 0, *root.screen_size)
+
+    def winfo_rootx(self) -> int:
+        return self._window()[0]
+
+    def winfo_rooty(self) -> int:
+        return self._window()[1]
+
+    def winfo_width(self) -> int:
+        return self._window()[2]
+
+    def winfo_height(self) -> int:
+        return self._window()[3]
+
+
+class Tk(_Widget):
+    fail_with: Exception | None = None  # set to TclError(...) to simulate "no $DISPLAY"
+    screen_size: tuple[int, int] = (1920, 1080)
+    window_geometry: tuple[int, int, int, int] | None = None  # None: covers the screen
+
+    def __init__(self) -> None:
+        if type(self).fail_with is not None:
+            raise type(self).fail_with
+        super().__init__()
+        self.bindings: dict[str, Any] = {}
+        self.protocols: dict[str, Any] = {}
+        self.attrs: dict[str, Any] = {}
+        self.destroyed = False
+        self.destroy_calls = 0
+        self.updates = 0
+        self.mainloop_calls = 0
+        self.on_mainloop: Any = None
+        self.on_update: Any = None  # called inside update(), as Tk handles events there
+        self.callback_errors: list[BaseException] = []
+        self.on_poll: Any = None  # called before each after() callback in mainloop()
+        self.bells = 0
+        self.geometry_spec: str | None = None
+        self.focus_forced = False
+        self.now_ms = 0  # the virtual clock after() callbacks are due on
+        self._after: dict[str, tuple[int, int, Any, tuple[Any, ...]]] = {}
+        self._after_seq = 0
+
+    def winfo_screenwidth(self) -> int:
+        self._check_alive("winfo")
+        return self.screen_size[0]
+
+    def winfo_screenheight(self) -> int:
+        self._check_alive("winfo")
+        return self.screen_size[1]
+
+    def title(self, text: str) -> None:
+        self._check_alive("wm")
+        self.options["title"] = text
+
+    def attributes(self, name: str, value: Any) -> None:
+        self._check_alive("wm")
+        self.attrs[name] = value
+
+    def resizable(self, *_args: Any) -> None:
+        self._check_alive("wm")
+
+    def geometry(self, spec: str) -> None:
+        self._check_alive("wm")
+        self.geometry_spec = spec
+
+    def focus_force(self) -> None:
+        self._check_alive("focus")
+        self.focus_forced = True
+
+    def bind(self, sequence: str, handler: Any) -> None:
+        self._check_alive("bind")
+        self.bindings[sequence] = handler
+
+    def _dispatch(self, handler: Any, *args: Any) -> None:
+        """Run an event handler the way Tk does: report an exception, don't raise it."""
+        try:
+            handler(*args)
+        except SystemExit:
+            raise
+        except BaseException:
+            self.report_callback_exception(*sys.exc_info())
+
+    def report_callback_exception(self, exc: Any, val: Any, tb: Any) -> None:
+        self.callback_errors.append(val)
+        print("Exception in Tkinter callback", file=sys.stderr)
+        traceback.print_exception(exc, val, tb, file=sys.stderr)
+
+    def fire(self, sequence: str) -> None:
+        if not self.destroyed:
+            self._dispatch(self.bindings[sequence], None)
+
+    def protocol(self, name: str, func: Any = None) -> None:
+        self._check_alive("wm")
+        self.protocols[name] = func
+
+    def close_window(self) -> None:
+        """The user closes the window. Like real Tk, with no WM_DELETE_WINDOW handler
+        registered the window is simply destroyed."""
+        if self.destroyed:
+            return
+        handler = self.protocols.get("WM_DELETE_WINDOW")
+        self._dispatch(handler if handler is not None else self.destroy)
+
+    def update(self) -> None:
+        if self.destroyed:
+            return  # real Tk: `update` is a core Tcl command and still runs
+        self.updates += 1
+        if self.on_update is not None:
+            self.on_update(self)
+
+    def update_idletasks(self) -> None:
+        return None
+
+    def after(self, ms: int, func: Any, *args: Any) -> str:
+        self._check_alive("after")
+        self._after_seq += 1
+        after_id = f"after#{self._after_seq}"
+        self._after[after_id] = (self.now_ms + max(int(ms), 0), self._after_seq, func, args)
+        return after_id
+
+    def after_cancel(self, after_id: str) -> None:
+        self._after.pop(after_id, None)
+
+    def bell(self) -> None:
+        self._check_alive("bell")
+        self.bells += 1
+
+    def mainloop(self) -> None:
+        self.mainloop_calls += 1
+        if self.on_mainloop is not None:
+            self.on_mainloop(self)
+        while not self.destroyed and self._after:
+            if self.on_poll is not None:
+                self.on_poll(self)
+            if self.destroyed or not self._after:
+                break
+            after_id = min(self._after, key=lambda k: self._after[k][:2])
+            due_ms, _seq, func, args = self._after.pop(after_id)
+            self.now_ms = max(self.now_ms, due_ms)
+            self._dispatch(func, *args)
+
+    def destroy(self) -> None:
+        self._check_alive("destroy")
+        self.destroy_calls += 1
+        self.destroyed = True
+
+
+class Frame(_Widget):
+    pass
+
+
+class Label(_Widget):
+    pass
+
+
+class Canvas(_Widget):
+    def __init__(self, master: Any = None, **kwargs: Any) -> None:
+        super().__init__(master, **kwargs)
+        self.items: dict[int, dict[str, Any]] = {}
+        self._next_id = 1
+
+    def _add(self, kind: str, coords: tuple[float, ...], **kwargs: Any) -> int:
+        self._check_alive(f"create {kind}")
+        item_id = self._next_id
+        self._next_id += 1
+        self.items[item_id] = {"kind": kind, "coords": coords, **kwargs}
+        return item_id
+
+    def create_oval(self, *coords: float, **kwargs: Any) -> int:
+        return self._add("oval", coords, **kwargs)
+
+    def create_text(self, *coords: float, **kwargs: Any) -> int:
+        return self._add("text", coords, **kwargs)
+
+    def itemconfig(self, item_id: int, **kwargs: Any) -> None:
+        self._check_alive("itemconfigure")
+        self.items[item_id].update(kwargs)
+
+    def delete(self, what: str) -> None:
+        self._check_alive("delete")
+        if what == "all":
+            self.items.clear()
+
+    def of_kind(self, kind: str) -> list[dict[str, Any]]:
+        return [item for item in self.items.values() if item["kind"] == kind]
+
+
+def make_fake_tk(
+    fail_with: Exception | None = None,
+    screen_size: tuple[int, int] = (1920, 1080),
+    window_geometry: tuple[int, int, int, int] | None = None,
+) -> types.ModuleType:
+    module = types.ModuleType("tkinter")
+    tk_class = type(
+        "Tk",
+        (Tk,),
+        {"fail_with": fail_with, "screen_size": screen_size, "window_geometry": window_geometry},
+    )
+    module.Tk = tk_class  # type: ignore[attr-defined]
+    module.Frame = Frame  # type: ignore[attr-defined]
+    module.Label = Label  # type: ignore[attr-defined]
+    module.Canvas = Canvas  # type: ignore[attr-defined]
+    module.TclError = TclError  # type: ignore[attr-defined]
+    return module

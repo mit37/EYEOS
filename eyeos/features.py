@@ -41,16 +41,25 @@ class FeatureVector:
         return (self.yaw_deg, self.pitch_deg, self.roll_deg)
 
 
-def _iris_offset(
-    iris: Point3D, inner: Point3D, outer: Point3D, top: Point3D, bottom: Point3D
-) -> tuple[float, float]:
-    center_x = (inner.x + outer.x) / 2.0
-    center_y = (top.y + bottom.y) / 2.0
-    half_width = abs(outer.x - inner.x) / 2.0
-    half_height = abs(bottom.y - top.y) / 2.0
-    offset_x = (iris.x - center_x) / half_width if half_width > 1e-9 else 0.0
-    offset_y = (iris.y - center_y) / half_height if half_height > 1e-9 else 0.0
-    return offset_x, offset_y
+def _iris_offset(iris: Point3D, start: Point3D, end: Point3D) -> tuple[float, float]:
+    """The iris centre relative to the midpoint of the eye's two corners, in units of
+    the eye's half-width. x runs along the corner line from ``start`` to ``end``, y
+    perpendicular to it (90 deg clockwise of x, i.e. down for an upright face).
+
+    The eyelids are deliberately not used. They move during every blink while the
+    corners don't, and a lid-relative offset made a half-closed lid look like a gaze
+    jump of hundreds of pixels. The axis comes from the corner labels, not their x
+    order, so it turns smoothly with any head roll.
+    """
+    axis_x, axis_y = end.x - start.x, end.y - start.y
+    width = math.hypot(axis_x, axis_y)
+    if width <= 1e-9:
+        return 0.0, 0.0
+    ux, uy = axis_x / width, axis_y / width
+    dx = iris.x - (start.x + end.x) / 2.0
+    dy = iris.y - (start.y + end.y) / 2.0
+    half_width = width / 2.0
+    return (dx * ux + dy * uy) / half_width, (-dx * uy + dy * ux) / half_width
 
 
 def _clamp(value: float, low: float, high: float) -> float:
@@ -58,28 +67,24 @@ def _clamp(value: float, low: float, high: float) -> float:
 
 
 def extract_features(landmarks: FaceLandmarks) -> FeatureVector:
+    # Both axes run left to right across an upright face in the image: from the left
+    # eye's outer corner to its inner one, and from the right eye's inner corner to
+    # its outer one.
     left_x, left_y = _iris_offset(
-        landmarks.left_iris_center,
-        landmarks.left_eye_inner,
-        landmarks.left_eye_outer,
-        landmarks.left_eye_top,
-        landmarks.left_eye_bottom,
+        landmarks.left_iris_center, landmarks.left_eye_outer, landmarks.left_eye_inner
     )
     right_x, right_y = _iris_offset(
-        landmarks.right_iris_center,
-        landmarks.right_eye_inner,
-        landmarks.right_eye_outer,
-        landmarks.right_eye_top,
-        landmarks.right_eye_bottom,
+        landmarks.right_iris_center, landmarks.right_eye_inner, landmarks.right_eye_outer
     )
 
+    # Roll from the eye corners too, so a blink (or a wink) can't change the head pose.
     left_eye_center = Point3D(
         (landmarks.left_eye_inner.x + landmarks.left_eye_outer.x) / 2.0,
-        (landmarks.left_eye_top.y + landmarks.left_eye_bottom.y) / 2.0,
+        (landmarks.left_eye_inner.y + landmarks.left_eye_outer.y) / 2.0,
     )
     right_eye_center = Point3D(
         (landmarks.right_eye_inner.x + landmarks.right_eye_outer.x) / 2.0,
-        (landmarks.right_eye_top.y + landmarks.right_eye_bottom.y) / 2.0,
+        (landmarks.right_eye_inner.y + landmarks.right_eye_outer.y) / 2.0,
     )
     roll_deg = math.degrees(
         math.atan2(

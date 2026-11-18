@@ -5,12 +5,52 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from eval.generate_synthetic import generate_rows, write_csv
-from eval.run_eval import compute_metrics
+from eval.generate_synthetic import (
+    DT,
+    generate_rows,
+    make_landmarks,
+    make_row,
+    offset_for_target,
+    write_csv,
+)
+from eval.run_eval import build_calibration, compute_metrics, load_raw_rows
+from eyeos.calibration import target_points
+from eyeos.config import Config
+from eyeos.input_sources.synthetic import SyntheticInputSource
+from eyeos.output.dry_run import DryRunOutputAdapter
+from eyeos.pipeline import Pipeline
 
 FIXTURE_PATH = (
     Path(__file__).resolve().parent.parent / "eval" / "fixtures" / "synthetic_session.csv"
 )
+
+
+def _on_target_move_allowed(path: Path) -> list[bool]:
+    rows = load_raw_rows(path)
+    config = Config()
+    calibration = build_calibration(rows, config.screen.width_px, config.screen.height_px)
+    pipeline = Pipeline(
+        config, SyntheticInputSource(path), DryRunOutputAdapter(echo=None), calibration=calibration
+    )
+    statuses = pipeline.run().statuses
+    return [
+        s.move_allowed
+        for row, s in zip(rows, statuses, strict=True)
+        if row["segment"] == "on_target"
+    ]
+
+
+def _two_noise_free_blocks_session(path: Path) -> None:
+    """Calibration rows, then two adjacent noise-free on_target blocks >400px apart, so
+    Gate 4's speed limit suppresses each block's switch frame and true jitter is ~0."""
+    rows = [row for row in generate_rows() if row["segment"] == "calibration"]
+    t = float(rows[-1]["timestamp_s"]) + DT
+    for target in [(300.0, 200.0), (1600.0, 900.0)]:
+        landmarks = make_landmarks(*offset_for_target(*target))
+        for _ in range(15):
+            rows.append(make_row(t, landmarks, target, "on_target"))
+            t += DT
+    write_csv(path, rows)
 
 
 def test_generate_rows_is_deterministic_for_a_given_seed():
@@ -25,22 +65,38 @@ def test_generate_rows_different_seeds_give_different_noise():
     assert rows_a != rows_b
 
 
+def test_calibration_frames_carry_noise_within_each_dot():
+    rows = [row for row in generate_rows() if row["segment"] == "calibration"]
+    by_dot: dict[tuple[str, str], set[str]] = {}
+    for row in rows:
+        by_dot.setdefault((row["target_x"], row["target_y"]), set()).add(row["left_iris_center_x"])
+    assert len(by_dot) == 9
+    assert all(len(xs) > 1 for xs in by_dot.values())
+
+
 def test_generate_rows_covers_all_four_segments():
     rows = generate_rows()
     segments = {row["segment"] for row in rows}
     assert segments == {"calibration", "on_target", "looking_away", "just_reading"}
 
 
-def test_committed_fixture_exists_and_is_the_current_generator_output():
+def test_committed_fixture_is_the_current_generator_output():
+    from eval.run_eval import load_raw_rows
+
     assert FIXTURE_PATH.exists(), "run `python -m eval.generate_synthetic` to (re)generate it"
-    committed_rows = compute_metrics(FIXTURE_PATH)  # just needs to not raise / parse cleanly
-    assert committed_rows["frame_count"] > 0
+    assert (
+        load_raw_rows(FIXTURE_PATH) == generate_rows()
+    ), "fixture is stale: run python -m eval.generate_synthetic"
 
 
 def test_compute_metrics_on_the_committed_fixture_matches_documented_expectations():
     metrics = compute_metrics(FIXTURE_PATH)
 
-    assert metrics["calibration_validation_error_px"] < 5.0
+    # The calibration frames are noisy too, so the error measures something, and it stays
+    # under Gate 2's limit (at or above it the cursor would freeze and every zero below
+    # would be vacuous).
+    max_error = Config().gates.calibration_max_error_px
+    assert 1.0 < metrics["calibration_validation_error_px"] < max_error
     # The fixture's whole point: gates never false-accept a "looking away" frame, and
     # no click ever fires during "just reading" without confirmation.
     assert metrics["gate_false_accept_rate"] == 0.0
@@ -52,6 +108,31 @@ def test_compute_metrics_on_the_committed_fixture_matches_documented_expectation
     assert metrics["steady_state_jitter_filtered_px"] < metrics["steady_state_jitter_raw_px"]
 
 
+def test_filtered_pixel_error_uses_the_same_frames_as_raw():
+    # Only meaningful if the gates suppress some on-target frames in the fixture.
+    assert not all(_on_target_move_allowed(FIXTURE_PATH))
+    metrics = compute_metrics(FIXTURE_PATH)
+    assert metrics["on_target_frame_count_filtered"] == metrics["on_target_frame_count"]
+
+
+def test_jitter_never_pairs_frames_across_a_target_switch(tmp_path):
+    p = tmp_path / "two_blocks.csv"
+    _two_noise_free_blocks_session(p)
+    assert not all(_on_target_move_allowed(p))
+
+    metrics = compute_metrics(p, jitter_warmup_frames=1)
+
+    assert metrics["on_target_frame_count_filtered"] == metrics["on_target_frame_count"]
+    assert metrics["steady_state_jitter_raw_px"] < 1.0
+    assert metrics["steady_state_jitter_filtered_px"] < 1.0
+
+    # With no warm-up only the filter's step response is left; a single cross-block
+    # pair (>400px over 28 pairs) would push the mean well past this bound.
+    no_warmup = compute_metrics(p, jitter_warmup_frames=0)
+    assert no_warmup["steady_state_jitter_raw_px"] < 1.0
+    assert no_warmup["steady_state_jitter_filtered_px"] < 5.0
+
+
 def test_compute_metrics_on_a_small_generated_session(tmp_path):
     rows = generate_rows(seed=7)
     p = tmp_path / "small_session.csv"
@@ -61,3 +142,120 @@ def test_compute_metrics_on_a_small_generated_session(tmp_path):
     assert metrics["on_target_frame_count"] > 0
     assert metrics["looking_away_frame_count"] > 0
     assert metrics["just_reading_frame_count"] > 0
+
+
+def test_dwell_reachability_is_reported_next_to_the_false_click_rate():
+    metrics = compute_metrics(FIXTURE_PATH)
+
+    # Documented negative result: at the fixture's noise level dwell never holds on target,
+    # while the static just-reading hold satisfies it almost all the time.
+    assert metrics["on_target_dwell_satisfied_frames"] == 0
+    assert (
+        metrics["just_reading_dwell_satisfied_frames"] > 0.9 * metrics["just_reading_frame_count"]
+    )
+
+
+def test_looking_away_covers_gate2_and_off_screen_modes_with_per_mode_rates():
+    metrics = compute_metrics(FIXTURE_PATH)
+    by_mode = metrics["looking_away_by_mode"]
+
+    assert set(by_mode) == {
+        "two_faces",
+        "low_confidence",
+        "no_face",
+        "head_turned",
+        "eyes_off_screen",
+    }
+    for mode in ("two_faces", "low_confidence", "no_face", "head_turned"):
+        assert by_mode[mode]["false_accepts"] == 0, mode
+    # Documented negative result: an eyes-only glance past the screen edge passes every gate.
+    assert by_mode["eyes_off_screen"] == {"frames": 10, "false_accepts": 10}
+    # The aggregate stays over the Gate-1 modes only, as the README row says.
+    assert metrics["looking_away_frame_count"] == 30
+
+
+def _closed_eyes(landmarks):
+    """The same face with both lids shut (both_irises_visible is False)."""
+    import dataclasses
+
+    from eyeos.landmarks import Point3D
+
+    return dataclasses.replace(
+        landmarks,
+        left_eye_top=Point3D(0.38, 0.40),
+        left_eye_bottom=Point3D(0.38, 0.40),
+        right_eye_top=Point3D(0.62, 0.40),
+        right_eye_bottom=Point3D(0.62, 0.40),
+    )
+
+
+def test_eval_calibration_uses_only_frames_the_live_calibration_would_use():
+    # A real recording blinks, and may catch a bystander, during the calibration dots.
+    # eyeos run --calibrate skips those frames (collect_dot_features), so the offline
+    # fit must too, or a closed lid's guessed iris would skew every prediction.
+    rows, t = [], 0.0
+    for target in target_points(1920, 1080):
+        landmarks = make_landmarks(*offset_for_target(*target))
+        for _ in range(5):
+            rows.append(make_row(t, landmarks, target, "calibration"))
+            t += DT
+        wrong = make_landmarks(0.9, -0.9)  # far from this dot
+        bystander = make_landmarks(0.9, -0.9, face_count=2)
+        rows.append(make_row(t, _closed_eyes(wrong), target, "calibration"))
+        rows.append(make_row(t + DT, bystander, target, "calibration"))
+        t += 2 * DT
+
+    calibration = build_calibration(rows, 1920.0, 1080.0)
+
+    assert len(calibration.samples) == 9 * 5
+    assert calibration.validation_error_px < 1.0  # ridge (lambda=1e-3) leaves ~0.04 px
+
+
+def _session_on_a_2560x1440_screen(path: Path) -> None:
+    """Noise-free calibration on a 2560x1440 screen, then one target past 1920x1080."""
+    w, h = 2560.0, 1440.0
+
+    def looking_at(x: float, y: float):
+        return make_landmarks((x - w / 2) / (w / 2), (y - h / 2) / (h / 2))
+
+    rows, t = [], 0.0
+    for target in target_points(w, h):
+        for _ in range(5):
+            rows.append(make_row(t, looking_at(*target), target, "calibration"))
+            t += DT
+    for _ in range(15):
+        rows.append(make_row(t, looking_at(2400.0, 1300.0), (2400.0, 1300.0), "on_target"))
+        t += DT
+    write_csv(path, rows)
+
+
+def test_compute_metrics_takes_the_screen_from_a_config(tmp_path):
+    from eyeos.config import load_config
+
+    session = tmp_path / "big_screen.csv"
+    _session_on_a_2560x1440_screen(session)
+    config_path = tmp_path / "config.yaml"
+    config_path.write_text("screen:\n  width_px: 2560\n  height_px: 1440\n")
+
+    # The default config's 1920x1080 screen clamps the cursor short of the target.
+    assert compute_metrics(session)["mean_pixel_error_filtered_px"] > 400
+    metrics = compute_metrics(session, config=load_config(config_path))
+    assert metrics["mean_pixel_error_raw_px"] < 1.0
+    assert metrics["mean_pixel_error_filtered_px"] < 1.0
+
+
+def test_run_eval_cli_accepts_a_config(tmp_path):
+    import json
+
+    from eval.run_eval import main as run_eval_main
+
+    session = tmp_path / "big_screen.csv"
+    _session_on_a_2560x1440_screen(session)
+    config_path = tmp_path / "config.yaml"
+    config_path.write_text("screen:\n  width_px: 2560\n  height_px: 1440\n")
+    out = tmp_path / "results.json"
+
+    argv = ["--session", str(session), "--config", str(config_path), "--out", str(out)]
+    assert run_eval_main(argv) == 0
+
+    assert json.loads(out.read_text())["mean_pixel_error_filtered_px"] < 1.0

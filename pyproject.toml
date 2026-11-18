@@ -13,8 +13,10 @@ authors = [{ name = "Mitansh" }]
 dependencies = ["numpy>=1.24", "PyYAML>=6.0"]
 
 [project.optional-dependencies]
-webcam = ["opencv-python>=4.8", "mediapipe>=0.10"]
+webcam = ["opencv-contrib-python>=4.8", "mediapipe>=0.10,<0.10.30"]
 windows-fallback = ["pynput>=1.7"]
+# eval/public/: public gaze datasets (MPIIFaceGaze). scipy reads the .mat calibration files.
+public-eval = ["scipy>=1.10", "opencv-contrib-python>=4.8", "mediapipe>=0.10,<0.10.30"]
 dev = [
     "pytest>=7.4",
     "pytest-cov>=4.1",
@@ -22,10 +24,11 @@ dev = [
     "black>=24.1",
     "mypy>=1.8",
     "types-PyYAML>=6.0",
+    "scipy>=1.10",  # the public-dataset tests write and read .mat files
 ]
 
 [project.scripts]
-eyeos = "eyeos.cli:main"
+eyeos = "eyeos.cli:console_main"
 
 [tool.setuptools.packages.find]
 include = ["eyeos*"]

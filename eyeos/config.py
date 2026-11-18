@@ -2,11 +2,13 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, fields
 from pathlib import Path
 from typing import Any
 
 import yaml
+
+from eyeos.hotkeys import parse_key_name
 
 
 @dataclass(frozen=True)
@@ -46,6 +48,9 @@ class NoClickZone:
         return self.x_min <= x <= self.x_max and self.y_min <= y <= self.y_max
 
 
+CONFIRMATION_MODES = ("either", "blink_hold", "keypress")
+
+
 @dataclass(frozen=True)
 class GatesConfig:
     presence_confidence_threshold: float = 0.5
@@ -57,6 +62,11 @@ class GatesConfig:
     max_clicks_per_window: int = 5
     click_window_s: float = 10.0
     confirmation_hold_s: float = 0.4
+    # PRD §2: "a blink-hold >= 400 ms *or* a keypress, configurable".
+    confirmation_mode: str = "either"  # either | blink_hold | keypress
+    # A longer gap between frames (a camera stall) fails Gate 1 for that frame and
+    # restarts the dwell, so the gap never counts as observed time.
+    max_frame_gap_s: float = 0.25
     no_click_zones: tuple[NoClickZone, ...] = ()
 
 
@@ -64,11 +74,12 @@ class GatesConfig:
 class OutputConfig:
     backend: str = "dry_run"
     kill_hotkey: str = "esc"
+    confirm_key: str | None = None
 
 
 @dataclass(frozen=True)
 class LoggingConfig:
-    session_log_dir: str = "logs"
+    session_log_dir: str | None = "logs"  # null disables the default session log
 
 
 @dataclass(frozen=True)
@@ -82,8 +93,48 @@ class Config:
     logging: LoggingConfig = field(default_factory=LoggingConfig)
 
 
-def _dc(cls: type, data: dict[str, Any] | None) -> Any:
-    return cls(**(data or {}))
+def _check_keys(section: str, data: Any, cls: type) -> None:
+    if not isinstance(data, dict):
+        raise ValueError(f"{section} must be a mapping of keys, got {type(data).__name__}")
+    known = {f.name for f in fields(cls)}
+    unknown = sorted(set(data) - known)
+    if unknown:
+        raise ValueError(
+            f"unknown config key(s) {', '.join(f'{section}.{k}' for k in unknown)}; "
+            f"{section} accepts: {', '.join(sorted(known))}"
+        )
+
+
+def _dc(cls: type, data: dict[str, Any] | None, section: str) -> Any:
+    data = data or {}
+    _check_keys(section, data, cls)
+    return cls(**data)
+
+
+class _UniqueKeyLoader(yaml.SafeLoader):
+    """A SafeLoader that refuses a key repeated in one mapping. Plain YAML keeps only the
+    last copy, so a second pasted ``gates:`` section would silently drop the first one's
+    no-click zones."""
+
+    def construct_mapping(self, node: yaml.MappingNode, deep: bool = False) -> dict[Any, Any]:
+        seen: set[Any] = set()
+        for key_node, _ in node.value:
+            if key_node.tag == "tag:yaml.org,2002:merge":
+                continue  # a "<<" merge key; overriding what it merges in is legal
+            key = self.construct_object(key_node, deep=deep)
+            try:
+                duplicate = key in seen
+            except TypeError:
+                continue  # unhashable; the base class reports it
+            if duplicate:
+                raise yaml.constructor.ConstructorError(
+                    None,
+                    None,
+                    f"duplicate key {key!r} (YAML would keep only the last one)",
+                    key_node.start_mark,
+                )
+            seen.add(key)
+        return super().construct_mapping(node, deep=deep)
 
 
 def load_config(path: str | Path | None) -> Config:
@@ -91,21 +142,68 @@ def load_config(path: str | Path | None) -> Config:
 
     ``path=None`` returns the all-defaults Config (useful for tests).
     """
-    raw: dict[str, Any] = {}
+    raw: Any = {}
     if path is not None:
         text = Path(path).read_text()
-        raw = yaml.safe_load(text) or {}
+        try:
+            raw = yaml.load(text, Loader=_UniqueKeyLoader) or {}  # a SafeLoader subclass
+        except yaml.YAMLError as e:
+            raise ValueError(f"{path} is not valid YAML: {e}") from e
 
-    gates_raw = dict(raw.get("gates") or {})
+    _check_keys("config", raw, Config)
+    gates_raw = raw.get("gates") or {}
+    _check_keys("gates", gates_raw, GatesConfig)
+    gates_raw = dict(gates_raw)
     zones_raw = gates_raw.pop("no_click_zones", []) or []
+    if not isinstance(zones_raw, list):
+        raise ValueError("gates.no_click_zones must be a list of zones")
+    for i, zone in enumerate(zones_raw):
+        _check_keys(f"gates.no_click_zones[{i}]", zone, NoClickZone)
     zones = tuple(NoClickZone(**z) for z in zones_raw)
 
+    output = _dc(OutputConfig, raw.get("output"), "output")
+    for name in ("kill_hotkey", "confirm_key"):
+        value = getattr(output, name)
+        if value is not None and not isinstance(value, str):
+            raise ValueError(f"output.{name} must be a key name in quotes, not {value!r}")
+    try:
+        kill_key = parse_key_name(output.kill_hotkey)
+    except ValueError as e:
+        raise ValueError(f"output.kill_hotkey: {e}") from e
+    if output.confirm_key is not None:
+        try:
+            confirm_key = parse_key_name(output.confirm_key)
+        except ValueError as e:
+            raise ValueError(f"output.confirm_key: {e}") from e
+        if confirm_key == kill_key:
+            raise ValueError("output.confirm_key must differ from output.kill_hotkey")
+
+    calibration = _dc(CalibrationConfig, raw.get("calibration"), "calibration")
+    if calibration.points != 9:
+        raise ValueError("calibration.points: PRD §3 fixes a 9-point calibration")
+
+    gates = GatesConfig(**gates_raw, no_click_zones=zones)
+    if not 0.0 <= gates.presence_confidence_threshold <= 1.0:
+        raise ValueError("gates.presence_confidence_threshold must be between 0 and 1")
+    if not gates.max_frame_gap_s > 0:
+        raise ValueError("gates.max_frame_gap_s must be positive")
+    if gates.confirmation_mode not in CONFIRMATION_MODES:
+        raise ValueError(
+            f"gates.confirmation_mode must be one of {', '.join(CONFIRMATION_MODES)}, "
+            f"not {gates.confirmation_mode!r}"
+        )
+    if gates.confirmation_mode == "keypress" and output.confirm_key is None:
+        raise ValueError(
+            "gates.confirmation_mode 'keypress' needs output.confirm_key: without a "
+            "confirm key no click can ever be confirmed"
+        )
+
     return Config(
-        screen=_dc(ScreenConfig, raw.get("screen")),
-        input=_dc(InputConfig, raw.get("input")),
-        calibration=_dc(CalibrationConfig, raw.get("calibration")),
-        filter=_dc(FilterConfig, raw.get("filter")),
-        gates=GatesConfig(**gates_raw, no_click_zones=zones),
-        output=_dc(OutputConfig, raw.get("output")),
-        logging=_dc(LoggingConfig, raw.get("logging")),
+        screen=_dc(ScreenConfig, raw.get("screen"), "screen"),
+        input=_dc(InputConfig, raw.get("input"), "input"),
+        calibration=calibration,
+        filter=_dc(FilterConfig, raw.get("filter"), "filter"),
+        gates=gates,
+        output=output,
+        logging=_dc(LoggingConfig, raw.get("logging"), "logging"),
     )

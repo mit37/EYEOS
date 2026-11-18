@@ -1,15 +1,21 @@
 """Input sources: the synthetic CSV reader (fully exercised) and the camera/video
-sources (only their guarded-missing-dependency path — this container has neither
-opencv-python nor mediapipe installed, matching the "no webcam in the cloud"
-constraint in docs/PLAN.md).
+sources. This container has neither OpenCV nor MediaPipe installed, matching the "no
+webcam in the cloud" constraint in docs/PLAN.md, so the camera/video sources are tested
+on their missing-dependency path and against the fakes in tests/fake_capture.py.
 """
 
 from __future__ import annotations
 
 import csv
+import sys
+import types
+from pathlib import Path
 
 import pytest
+from packaging.requirements import Requirement
 
+from eyeos.config import GatesConfig
+from eyeos.gates import GateStateMachine
 from eyeos.input_sources import Frame
 from eyeos.input_sources._mediapipe_common import landmarks_from_mediapipe
 from eyeos.input_sources.synthetic import SyntheticInputSource
@@ -17,6 +23,7 @@ from eyeos.input_sources.video_file import VideoFileInputSource
 from eyeos.input_sources.webcam import WebcamInputSource
 from eyeos.landmarks import FaceLandmarks, Point3D
 from eyeos.synthetic_format import CSV_FIELDNAMES, landmarks_to_row, row_to_frame
+from tests.fake_capture import FakeCv2, FakeMediapipe, fake_face, install_fakes
 
 SAMPLE_LANDMARKS = FaceLandmarks(
     face_count=1,
@@ -138,12 +145,243 @@ def test_landmarks_from_mediapipe_indexes_the_right_points():
 # ---------------------------------------------------------------------------
 
 
-def test_webcam_source_raises_clear_error_without_opencv_mediapipe():
-    with pytest.raises(RuntimeError, match="opencv-python and mediapipe"):
+@pytest.fixture
+def no_capture_libraries(monkeypatch):
+    # Hide OpenCV and MediaPipe even where the webcam extra is installed (a dev laptop).
+    monkeypatch.setitem(sys.modules, "cv2", None)
+    monkeypatch.setitem(sys.modules, "mediapipe", None)
+
+
+def test_webcam_source_raises_clear_error_without_opencv_mediapipe(no_capture_libraries):
+    with pytest.raises(RuntimeError, match="needs OpenCV and MediaPipe"):
         next(iter(WebcamInputSource(device_index=0).frames()))
 
 
-def test_video_file_source_raises_clear_error_without_opencv_mediapipe(tmp_path):
+def test_video_file_source_raises_clear_error_without_opencv_mediapipe(
+    tmp_path, no_capture_libraries
+):
     missing = tmp_path / "does_not_matter.mp4"
-    with pytest.raises(RuntimeError, match="opencv-python and mediapipe"):
+    with pytest.raises(RuntimeError, match="needs OpenCV and MediaPipe"):
         next(iter(VideoFileInputSource(missing).frames()))
+
+
+# ---------------------------------------------------------------------------
+# Webcam / video-file sources: MediaPipe without the Solutions API, and cleanup
+# ---------------------------------------------------------------------------
+
+
+def _video_file_source(tmp_path):
+    video = tmp_path / "clip.mp4"
+    video.touch()
+    return VideoFileInputSource(video)
+
+
+def _webcam_source(tmp_path):
+    return WebcamInputSource(device_index=0)
+
+
+CAPTURE_SOURCES = pytest.mark.parametrize(
+    "make_source", [_video_file_source, _webcam_source], ids=["video_file", "webcam"]
+)
+
+
+@CAPTURE_SOURCES
+@pytest.mark.parametrize(
+    "mediapipe, shown_version",
+    [
+        (types.ModuleType("mediapipe"), "?"),
+        (FakeMediapipe(solutions=False, version="1.2.3"), "1.2.3"),
+    ],
+    ids=["bare", "1.2.3"],
+)
+def test_source_raises_clear_error_when_mediapipe_lacks_solutions_api(
+    make_source, mediapipe, shown_version, tmp_path, monkeypatch
+):
+    fake_cv2 = FakeCv2(n_frames=3)
+    install_fakes(monkeypatch, cv2=fake_cv2, mediapipe=mediapipe)
+
+    with pytest.raises(RuntimeError, match=r"Solutions API|mediapipe<0\.10\.30") as excinfo:
+        next(iter(make_source(tmp_path).frames()))
+
+    message = str(excinfo.value)
+    assert f"installed mediapipe {shown_version} " in message
+    assert "aren't installed" not in message
+    assert all(cap.release_calls == 1 for cap in fake_cv2.captures)
+
+
+@CAPTURE_SOURCES
+def test_face_mesh_failure_leaves_no_capture_open(make_source, tmp_path, monkeypatch):
+    fake_cv2 = FakeCv2(n_frames=3)
+    fake_mp = FakeMediapipe(face_mesh_error=RuntimeError("face mesh model failed to load"))
+    install_fakes(monkeypatch, cv2=fake_cv2, mediapipe=fake_mp)
+
+    with pytest.raises(RuntimeError, match="face mesh model failed to load"):
+        next(iter(make_source(tmp_path).frames()))
+
+    assert all(cap.release_calls == 1 for cap in fake_cv2.captures)
+
+
+@CAPTURE_SOURCES
+def test_capture_open_failure_closes_face_mesh(make_source, tmp_path, monkeypatch):
+    fake_mp = FakeMediapipe()
+    install_fakes(monkeypatch, cv2=FakeCv2(opened=False), mediapipe=fake_mp)
+
+    with pytest.raises(RuntimeError, match="could not open"):
+        next(iter(make_source(tmp_path).frames()))
+
+    # FaceMesh is built before the capture is opened, so exactly one exists to close.
+    assert len(fake_mp.face_meshes) == 1
+    assert fake_mp.face_meshes[0].close_calls == 1
+
+
+@CAPTURE_SOURCES
+def test_full_read_releases_capture_and_closes_face_mesh_once(make_source, tmp_path, monkeypatch):
+    fake_cv2 = FakeCv2(n_frames=3)
+    fake_mp = FakeMediapipe()
+    install_fakes(monkeypatch, cv2=fake_cv2, mediapipe=fake_mp)
+
+    frames = list(make_source(tmp_path).frames())
+
+    assert len(frames) == 3
+    assert all(f.landmarks is not None for f in frames)
+    [cap] = fake_cv2.captures
+    [mesh] = fake_mp.face_meshes
+    assert cap.release_calls == 1
+    assert mesh.close_calls == 1
+    assert mesh.kwargs["refine_landmarks"] is True
+
+
+def test_webcam_extra_pins_a_mediapipe_with_the_solutions_api():
+    tomllib = pytest.importorskip("tomllib")
+    pyproject = Path(__file__).resolve().parents[1] / "pyproject.toml"
+    with open(pyproject, "rb") as f:
+        extra = tomllib.load(f)["project"]["optional-dependencies"]["webcam"]
+    requirements = {r.name: r for r in map(Requirement, extra)}
+
+    # mediapipe itself depends on opencv-contrib-python; opencv-python would share its cv2/.
+    assert "opencv-python" not in requirements
+    assert "opencv-contrib-python" in requirements
+    mediapipe = requirements["mediapipe"].specifier
+    assert mediapipe.contains("0.10.21")
+    assert not mediapipe.contains("0.10.30")
+    assert not mediapipe.contains("1.2.3")
+
+
+@pytest.mark.parametrize("pos_msec", [0.0, -1.0], ids=["avfoundation-0", "dshow-minus-1"])
+def test_webcam_stamps_frames_with_the_host_clock(pos_msec, monkeypatch):
+    import itertools
+    import time
+
+    ticks = itertools.count(start=100.0, step=1 / 30)
+    monkeypatch.setattr(time, "perf_counter", lambda: next(ticks))
+    install_fakes(
+        monkeypatch, cv2=FakeCv2(n_frames=5, pos_msec=pos_msec), mediapipe=FakeMediapipe()
+    )
+
+    stamps = [f.timestamp_s for f in WebcamInputSource(device_index=0).frames()]
+
+    assert len(stamps) == 5
+    assert all(b > a for a, b in zip(stamps, stamps[1:], strict=False))
+
+
+def test_video_file_keeps_the_container_timestamps(tmp_path, monkeypatch):
+    install_fakes(monkeypatch, cv2=FakeCv2(n_frames=4, fps=25.0), mediapipe=FakeMediapipe())
+
+    stamps = [f.timestamp_s for f in _video_file_source(tmp_path).frames()]
+
+    assert stamps == pytest.approx([0.0, 0.04, 0.08, 0.12])
+
+
+@CAPTURE_SOURCES
+def test_gate1_threshold_reaches_mediapipe_detection_and_tracking(
+    make_source, tmp_path, monkeypatch
+):
+    fake_mp = FakeMediapipe()
+    install_fakes(monkeypatch, cv2=FakeCv2(n_frames=2), mediapipe=fake_mp)
+    source = make_source(tmp_path)
+    source.min_detection_confidence = source.min_tracking_confidence = 0.9
+
+    frames = list(source.frames())
+
+    [mesh] = fake_mp.face_meshes
+    assert mesh.kwargs["min_detection_confidence"] == 0.9
+    assert mesh.kwargs["min_tracking_confidence"] == 0.9
+    # Exactly the enforced floor: lower would fail Gate 1 on every live frame.
+    assert [f.landmarks.detection_confidence for f in frames] == pytest.approx([0.9, 0.9])
+    gates = GateStateMachine(GatesConfig(presence_confidence_threshold=0.9))
+    assert all(gates.step(_gate_input(f)).gate1_presence for f in frames)
+
+
+def _gate_input(frame):
+    from eyeos.gates import FrameInput
+
+    lm = frame.landmarks
+    return FrameInput(
+        timestamp_s=frame.timestamp_s,
+        face_count=lm.face_count,
+        detection_confidence=lm.detection_confidence,
+        both_irises_visible=True,
+        gaze_point_px=None,
+        head_pose_deg=(0.0, 0.0, 0.0),
+    )
+
+
+@CAPTURE_SOURCES
+def test_landmarks_are_rescaled_to_one_unit_on_a_wide_frame(make_source, tmp_path, monkeypatch):
+    # MediaPipe's x is a fraction of the width, y of the height. On a 1280x720 frame
+    # x must be scaled by 16/9 so a head roll stays a rotation (see features.py).
+    install_fakes(
+        monkeypatch,
+        cv2=FakeCv2(n_frames=1, frame_shape=(720, 1280, 3)),
+        mediapipe=FakeMediapipe(),
+    )
+    [frame] = list(make_source(tmp_path).frames())
+    raw = fake_face().landmark[468]
+    assert frame.landmarks.left_iris_center.x == pytest.approx(raw.x * 1280 / 720)
+    assert frame.landmarks.left_iris_center.y == pytest.approx(raw.y)
+
+
+def test_rolled_face_on_a_wide_frame_keeps_its_iris_offsets_and_true_roll():
+    import math
+    import types
+
+    from eyeos.features import extract_features
+    from eyeos.input_sources._mediapipe_common import landmarks_from_mediapipe
+    from tests.test_features import make_landmarks
+
+    # Take a face in pixel space, roll it 8 deg, then normalise it the way MediaPipe
+    # does for a 1280x720 frame (x / 1280, y / 720).
+    width, height = 1280, 720
+    face = make_landmarks(left_iris_center=Point3D(0.39, 0.41))
+    names = [n for n in face.__dataclass_fields__ if isinstance(getattr(face, n), Point3D)]
+
+    def normalised(roll_deg):
+        c, s_ = math.cos(math.radians(roll_deg)), math.sin(math.radians(roll_deg))
+        points = [None] * 478
+        indices = {
+            "left_iris_center": 468,
+            "right_iris_center": 473,
+            "left_eye_inner": 133,
+            "left_eye_outer": 33,
+            "left_eye_top": 159,
+            "left_eye_bottom": 145,
+            "right_eye_inner": 362,
+            "right_eye_outer": 263,
+            "right_eye_top": 386,
+            "right_eye_bottom": 374,
+            "nose_tip": 1,
+            "chin": 152,
+            "forehead": 10,
+            "left_face_edge": 234,
+            "right_face_edge": 454,
+        }
+        for name in names:
+            p = getattr(face, name)
+            x, y = p.x * height - 360, p.y * height - 360  # pixels, about the centre
+            px, py = c * x - s_ * y + 640, s_ * x + c * y + 360
+            points[indices[name]] = types.SimpleNamespace(x=px / width, y=py / height, z=0.0)
+        return landmarks_from_mediapipe(points, 1, 0.9, aspect=width / height)
+
+    upright, rolled = extract_features(normalised(0)), extract_features(normalised(8))
+    assert rolled.iris_vector() == pytest.approx(upright.iris_vector(), abs=1e-9)
+    assert rolled.roll_deg - upright.roll_deg == pytest.approx(8.0)

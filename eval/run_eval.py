@@ -6,6 +6,11 @@ exactly what the shipped code does, not a separate "eval model" of it.
 
     python -m eval.run_eval --fixtures eval/fixtures --out eval/results.json
 
+A recorded session (``eyeos record``) is evaluated with the config it was recorded
+with, so the pipeline sees the same screen size, filter and gate settings:
+
+    python -m eval.run_eval --session recordings/s1.csv --config config.yaml --out s1.json
+
 Per STANDARDS.md §1.3: every number below comes from this script, running against
 this repo's code, and is reproducible with the command above. Numbers this synthetic
 fixture cannot support (see "notes" in the output) are reported as not measured, not
@@ -22,7 +27,7 @@ from pathlib import Path
 from typing import Any
 
 from eyeos.calibration import Calibration
-from eyeos.config import Config
+from eyeos.config import Config, load_config
 from eyeos.features import extract_features
 from eyeos.input_sources.synthetic import SyntheticInputSource
 from eyeos.output.dry_run import DryRunOutputAdapter
@@ -31,9 +36,11 @@ from eyeos.synthetic_format import row_to_frame
 
 ScreenPoint = tuple[float, float]
 
-# Frames to skip at the start of each on-target dwell block before counting jitter,
-# so the filter's settling lag after a target switch isn't counted as jitter.
-_JITTER_WARMUP_FRAMES = 5
+GATE1_AWAY_MODES = ("two_faces", "low_confidence", "no_face")
+
+# Leading frames of each on-target block kept out of jitter pairs: frame 0 is the target
+# switch, where the filter output is still mid-step toward the new point.
+_JITTER_WARMUP_FRAMES = 1
 
 
 def _mean(xs: list[float]) -> float | None:
@@ -50,12 +57,16 @@ def load_raw_rows(path: Path) -> list[dict[str, str]]:
 
 
 def build_calibration(rows: list[dict[str, str]], screen_w: float, screen_h: float) -> Calibration:
+    """Fit on every calibration-segment frame that ``eyeos run --calibrate`` would use:
+    one face, both eyes open (eyeos.calibration_session.collect_dot_features). A blink's
+    iris position under a closed lid is MediaPipe's guess, and a second face may be a
+    bystander's."""
     cal = Calibration(screen_w, screen_h)
     for row in rows:
         if row.get("segment") != "calibration":
             continue
         _, landmarks = row_to_frame(row)
-        if landmarks is None:
+        if landmarks is None or landmarks.face_count != 1 or not landmarks.both_irises_visible:
             continue
         features = extract_features(landmarks)
         target = (float(row["target_x"]), float(row["target_y"]))
@@ -77,9 +88,15 @@ def raw_predictions(
     return preds
 
 
-def compute_metrics(path: Path) -> dict[str, Any]:
+def compute_metrics(
+    path: Path, jitter_warmup_frames: int = _JITTER_WARMUP_FRAMES, config: Config | None = None
+) -> dict[str, Any]:
+    """``config`` defaults to the built-in one, whose 1920x1080 screen matches the
+    synthetic fixture's ground truth. The pipeline clamps the cursor to the config's
+    screen, so a session recorded on another screen needs its own config."""
     rows = load_raw_rows(path)
-    config = Config()  # screen defaults (1920x1080) match the fixture's ground truth
+    if config is None:
+        config = Config()
     calibration = build_calibration(rows, config.screen.width_px, config.screen.height_px)
     raw_preds = raw_predictions(rows, calibration)
 
@@ -100,47 +117,55 @@ def compute_metrics(path: Path) -> dict[str, Any]:
 
     looking_away_total = 0
     looking_away_false_accepts = 0
+    looking_away_by_mode: dict[str, dict[str, int]] = {}
     just_reading_total = 0
     just_reading_false_clicks = 0
+    on_target_dwell_frames = 0
+    just_reading_dwell_frames = 0
 
     for row, raw_pred, status in zip(rows, raw_preds, result.statuses, strict=True):
         segment = row.get("segment", "")
-        target_key = (row["target_x"], row["target_y"])
+        target_key = (row["target_x"], row["target_y"]) if segment == "on_target" else None
+        filtered = status.smoothed_gaze_px
 
         if segment == "on_target" and raw_pred is not None:
             target = (float(row["target_x"]), float(row["target_y"]))
             on_target_errors_raw.append(_dist(raw_pred, target))
-            if status.cursor_target_px is not None:
-                on_target_errors_filtered.append(_dist(status.cursor_target_px, target))
+            on_target_dwell_frames += status.gate3_stability
+            if filtered is not None:
+                on_target_errors_filtered.append(_dist(filtered, target))
 
-            same_block = target_key == prev_target_key
-            block_frame_index = block_frame_index + 1 if same_block else 0
-            # Skip each dwell block's first few frames for the jitter metric: right
-            # after a target switch the filter is still lagging toward the new point
-            # (settling, not jitter), which would otherwise swamp the steady-state
-            # jitter number — see the README's Results section for what this looks
-            # like if you don't skip it.
-            past_warmup = same_block and block_frame_index >= _JITTER_WARMUP_FRAMES
-            if past_warmup and prev_raw is not None:
-                jitter_raw.append(_dist(raw_pred, prev_raw))
-            if past_warmup and prev_filtered is not None and status.cursor_target_px is not None:
-                jitter_filtered.append(_dist(status.cursor_target_px, prev_filtered))
-            prev_raw = raw_pred
-            if status.cursor_target_px is not None:
-                prev_filtered = status.cursor_target_px
-            prev_target_key = target_key
+        if target_key is not None and target_key == prev_target_key:
+            block_frame_index += 1
         else:
-            prev_raw = prev_filtered = None
-            prev_target_key = None
             block_frame_index = 0
+            prev_raw = prev_filtered = None
+        # The earlier frame of the pair (block_frame_index - 1) must be past the warm-up.
+        if (
+            block_frame_index > jitter_warmup_frames
+            and raw_pred is not None
+            and prev_raw is not None
+            and filtered is not None
+            and prev_filtered is not None
+        ):
+            jitter_raw.append(_dist(raw_pred, prev_raw))
+            jitter_filtered.append(_dist(filtered, prev_filtered))
+        prev_raw, prev_filtered = raw_pred, filtered
+        prev_target_key = target_key
 
         if segment == "looking_away":
-            looking_away_total += 1
-            if status.move_allowed:
-                looking_away_false_accepts += 1
+            mode = row.get("away_mode") or "unlabelled"
+            stats = looking_away_by_mode.setdefault(mode, {"frames": 0, "false_accepts": 0})
+            stats["frames"] += 1
+            stats["false_accepts"] += int(status.move_allowed)
+            if mode in GATE1_AWAY_MODES:
+                looking_away_total += 1
+                if status.move_allowed:
+                    looking_away_false_accepts += 1
 
         if segment == "just_reading":
             just_reading_total += 1
+            just_reading_dwell_frames += status.gate3_stability
             if status.click_fired:
                 just_reading_false_clicks += 1
 
@@ -148,21 +173,40 @@ def compute_metrics(path: Path) -> dict[str, Any]:
         "frame_count": len(rows),
         "calibration_validation_error_px": calibration.validation_error_px,
         "on_target_frame_count": len(on_target_errors_raw),
+        "on_target_frame_count_filtered": len(on_target_errors_filtered),
         "mean_pixel_error_raw_px": _mean(on_target_errors_raw),
         "mean_pixel_error_filtered_px": _mean(on_target_errors_filtered),
         "mean_angular_error_deg": None,
         "steady_state_jitter_raw_px": _mean(jitter_raw),
         "steady_state_jitter_filtered_px": _mean(jitter_filtered),
+        "looking_away_by_mode": looking_away_by_mode,
         "looking_away_frame_count": looking_away_total,
         "gate_false_accept_rate": (
             looking_away_false_accepts / looking_away_total if looking_away_total else None
         ),
+        "on_target_dwell_satisfied_frames": on_target_dwell_frames,
+        "just_reading_dwell_satisfied_frames": just_reading_dwell_frames,
         "just_reading_frame_count": just_reading_total,
         "just_reading_false_click_count": just_reading_false_clicks,
         "click_false_trigger_rate": (
             just_reading_false_clicks / just_reading_total if just_reading_total else None
         ),
         "notes": {
+            "looking_away": (
+                "looking_away_frame_count and gate_false_accept_rate aggregate the Gate-1 "
+                "modes only (two faces, low confidence, no face). looking_away_by_mode adds "
+                "a head turned ~21 deg away (Gate 2's pose check) and eyes glancing past "
+                "the screen edge with the head still. No gate covers the last one by "
+                "design: the gaze is clamped to the screen edge and the cursor follows it."
+            ),
+            "dwell_reachability": (
+                "how often Gate 3 (dwell) was satisfied. A false-click rate means little "
+                "without this: if dwell never holds on the noisy on-target gaze, no "
+                "intended click could fire either. At this fixture's injected noise the "
+                "filtered frame-to-frame jitter exceeds gates.dwell_jitter_px, so dwell "
+                "never holds on target; the noise level itself is an assumption, not a "
+                "measurement of real webcam noise."
+            ),
             "mean_angular_error_deg": (
                 "not measured: this synthetic fixture only has normalized image-plane "
                 "landmark offsets, no real screen size or viewing distance, so there is "
@@ -174,26 +218,43 @@ def compute_metrics(path: Path) -> dict[str, Any]:
                 "uses a 30s stand-in (300 frames at 10fps) to keep CI fast — scaled "
                 "down, not the real target length."
             ),
+            "mean_pixel_error": (
+                "raw is the calibration output; filtered is the One Euro output the gates "
+                "see (GateStatus.smoothed_gaze_px). Both are averaged over the same "
+                "on-target frames, including frames where the gates held the cursor still "
+                "(e.g. Gate 4's speed limit on each target switch)."
+            ),
             "steady_state_jitter": (
-                f"the first {_JITTER_WARMUP_FRAMES} frames of every on-target dwell "
-                "block are excluded from the jitter numbers: right after a target "
-                "switch the One Euro filter is still settling toward the new point, "
-                "and that lag isn't jitter. Including those frames makes the filtered "
-                "number look *worse* than the raw one (a real, reported effect — see "
-                "the README) even though the filter clearly reduces steady-state "
-                "jitter once it has settled."
+                "mean frame-to-frame displacement in px per frame (the committed fixture "
+                "runs at 10 fps), raw vs One Euro output, over the same pairs of "
+                "consecutive frames within one on-target block. Pairs that touch the "
+                f"first {jitter_warmup_frames} frame(s) of a block are left out: frame 0 "
+                "is the target switch, where the filter is still mid-step toward the new "
+                "point. An earlier version of this eval reported 88.6px filtered vs 42.5px "
+                "raw jitter and blamed filter settling. That was an eval bookkeeping bug, "
+                "now fixed, not a property of the filter: Gate 4 suppressed each block's "
+                "switch frame, so the block's second frame was compared with the previous "
+                "block's last cursor position."
             ),
         },
     }
 
 
 def main(argv: list[str] | None = None) -> int:
-    parser = argparse.ArgumentParser(description=__doc__)
+    parser = argparse.ArgumentParser(
+        description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter
+    )
     parser.add_argument(
         "--fixtures", default="eval/fixtures", help="directory holding synthetic_session.csv"
     )
     parser.add_argument(
         "--session", default=None, help="explicit session CSV path (overrides --fixtures)"
+    )
+    parser.add_argument(
+        "--config",
+        default=None,
+        help="config YAML the session was recorded with (screen size, filter, gates); "
+        "default: built-in defaults, which match the synthetic fixture",
     )
     parser.add_argument("--out", default="eval/results.json")
     args = parser.parse_args(argv)
@@ -201,7 +262,7 @@ def main(argv: list[str] | None = None) -> int:
     session_path = (
         Path(args.session) if args.session else Path(args.fixtures) / "synthetic_session.csv"
     )
-    metrics = compute_metrics(session_path)
+    metrics = compute_metrics(session_path, config=load_config(args.config))
 
     out_path = Path(args.out)
     out_path.parent.mkdir(parents=True, exist_ok=True)

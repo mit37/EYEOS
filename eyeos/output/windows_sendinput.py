@@ -43,7 +43,7 @@ class _Input(ctypes.Structure):
 
 
 class WindowsSendInputOutput(OutputAdapter):
-    def __init__(self) -> None:
+    def __init__(self, expected_size: tuple[int, int] | None = None) -> None:
         if sys.platform != "win32":
             raise RuntimeError(
                 "WindowsSendInputOutput only works on Windows (sys.platform == 'win32')"
@@ -51,6 +51,12 @@ class WindowsSendInputOutput(OutputAdapter):
         self._user32: Any = ctypes.windll.user32
         self._screen_w: int = self._user32.GetSystemMetrics(_SM_CXSCREEN)
         self._screen_h: int = self._user32.GetSystemMetrics(_SM_CYSCREEN)
+        if expected_size is not None and expected_size != (self._screen_w, self._screen_h):
+            raise ValueError(
+                f"config screen is {expected_size[0]}x{expected_size[1]} but Windows reports "
+                f"{self._screen_w}x{self._screen_h}: set screen.width_px/height_px to match "
+                "(display scaling changes the reported size)"
+            )
 
     def _send(self, dx: int, dy: int, flags: int) -> None:
         extra = ctypes.c_ulong(0)
@@ -61,8 +67,8 @@ class WindowsSendInputOutput(OutputAdapter):
     def move_cursor(self, x: int, y: int) -> None:
         # Absolute mouse-move coordinates are normalized to [0, 65535] across the
         # primary screen, per the SendInput/MOUSEEVENTF_ABSOLUTE contract.
-        norm_x = int(x * 65535 / max(self._screen_w - 1, 1))
-        norm_y = int(y * 65535 / max(self._screen_h - 1, 1))
+        norm_x = min(max(int(x * 65535 / max(self._screen_w - 1, 1)), 0), 65535)
+        norm_y = min(max(int(y * 65535 / max(self._screen_h - 1, 1)), 0), 65535)
         self._send(norm_x, norm_y, _MOUSEEVENTF_MOVE | _MOUSEEVENTF_ABSOLUTE)
 
     def click(self) -> None:

@@ -9,13 +9,15 @@ data, reproducible with one command:
 
 The session simulates, in order:
 
-1. ``calibration``  -- the standard 9-point grid, clean (no noise): the calibration
-   a real session would collect.
-2. ``on_target``    -- 6 held gaze targets, WITH per-frame noise on the (synthetic)
+1. ``calibration``  -- the standard 9-point grid, with the same per-frame iris-offset
+   noise as ``on_target``, so the calibration's leave-one-out validation error
+   measures something rather than being ~0 by construction.
+2. ``on_target``    -- 6 held gaze targets, with per-frame noise on the (synthetic)
    iris offset, so run_eval.py has something for the One Euro filter to smooth and a
    noisy-vs-calibrated pixel error to report.
 3. ``looking_away`` -- three failure modes in turn (two faces, low confidence, no
-   face at all) that Gate 1 must reject, for the gate false-accept-rate metric.
+   face at all) that Gate 1 must reject, for the gate false-accept-rate metric; two
+   more modes (head turned away, eyes off screen) are appended at the very end.
 4. ``just_reading`` -- a long steady, in-calibration, never-confirmed gaze hold, for
    the click false-trigger-rate metric (target: 0 clicks).
 
@@ -34,18 +36,19 @@ from pathlib import Path
 
 from eyeos.calibration import target_points
 from eyeos.landmarks import FaceLandmarks, Point3D
-from eyeos.synthetic_format import CSV_FIELDNAMES, landmarks_to_row
+from eyeos.synthetic_format import SESSION_FIELDNAMES, session_row
 
 SCREEN_W, SCREEN_H = 1920.0, 1080.0
 DT = 0.1  # 10 fps
+NOISE_SIGMA = 0.03  # per-frame iris-offset noise on calibration and on-target frames
 
-FIELDNAMES = [*CSV_FIELDNAMES, "target_x", "target_y", "segment"]
+FIELDNAMES = SESSION_FIELDNAMES  # the frame columns, then target_x/target_y/segment/away_mode
 
 # A frontal, centered eye/face geometry, held fixed for every synthetic frame — only
 # the iris offset (within each eye box) and face_count/detection_confidence vary.
 _LEFT_EYE_CENTER = (0.38, 0.40)
 _RIGHT_EYE_CENTER = (0.62, 0.40)
-_HALF_W, _HALF_H = 0.04, 0.02
+_HALF_W, _HALF_H = 0.04, 0.02  # eye half-width; lids 0.02 above and below the corners
 
 
 def make_landmarks(
@@ -53,13 +56,18 @@ def make_landmarks(
     offset_y: float,
     face_count: int = 1,
     detection_confidence: float = 0.9,
+    nose_x: float = 0.50,
 ) -> FaceLandmarks:
-    """A frontal face with both irises offset by (offset_x, offset_y) — the same
-    offset units features.py's extract_features() reads back out (roughly -1..1 =
-    fully toward one eye corner)."""
+    """A frontal face with both irises offset by (offset_x, offset_y), each roughly
+    -1..1 (fully toward one corner, or one lid). extract_features() reads offset_x
+    back unchanged and offset_y as half of it (it measures in eye half-widths); the
+    calibration absorbs that scale."""
     return FaceLandmarks(
         face_count=face_count,
         detection_confidence=detection_confidence,
+        # Vertical travel stays inside the lids (offset_y * half-height), so the iris is
+        # never drawn outside the eye opening. features.py measures both offsets in
+        # half-widths, so it reads offset_y back as offset_y * _HALF_H / _HALF_W.
         left_iris_center=Point3D(
             _LEFT_EYE_CENTER[0] + offset_x * _HALF_W, _LEFT_EYE_CENTER[1] + offset_y * _HALF_H
         ),
@@ -74,7 +82,7 @@ def make_landmarks(
         right_eye_outer=Point3D(0.66, 0.40),
         right_eye_top=Point3D(0.62, 0.38),
         right_eye_bottom=Point3D(0.62, 0.42),
-        nose_tip=Point3D(0.50, 0.50),
+        nose_tip=Point3D(nose_x, 0.50),
         chin=Point3D(0.50, 0.70),
         forehead=Point3D(0.50, 0.30),
         left_face_edge=Point3D(0.30, 0.50),
@@ -89,13 +97,13 @@ def offset_for_target(target_x: float, target_y: float) -> tuple[float, float]:
 
 
 def make_row(
-    t: float, landmarks: FaceLandmarks | None, target: tuple[float, float] | None, segment: str
+    t: float,
+    landmarks: FaceLandmarks | None,
+    target: tuple[float, float] | None,
+    segment: str,
+    away_mode: str = "",
 ) -> dict[str, str]:
-    row = landmarks_to_row(t, landmarks)
-    row["target_x"] = repr(target[0]) if target else ""
-    row["target_y"] = repr(target[1]) if target else ""
-    row["segment"] = segment
-    return row
+    return session_row(t, landmarks, target, segment, away_mode)
 
 
 def generate_rows(seed: int = 20260925) -> list[dict[str, str]]:
@@ -103,11 +111,14 @@ def generate_rows(seed: int = 20260925) -> list[dict[str, str]]:
     rows: list[dict[str, str]] = []
     t = 0.0
 
-    # 1. Calibration: the standard 9-point grid, clean.
+    noise_sigma = NOISE_SIGMA
+
+    # 1. Calibration: the standard 9-point grid, with the same noise as on-target gaze.
     for target in target_points(SCREEN_W, SCREEN_H):
         ox, oy = offset_for_target(*target)
         for _ in range(5):
-            rows.append(make_row(t, make_landmarks(ox, oy), target, "calibration"))
+            noisy = (ox + rng.gauss(0, noise_sigma), oy + rng.gauss(0, noise_sigma))
+            rows.append(make_row(t, make_landmarks(*noisy), target, "calibration"))
             t += DT
 
     # 2. On-target dwell, with noise: what the filter and pixel-error metrics use.
@@ -119,7 +130,6 @@ def generate_rows(seed: int = 20260925) -> list[dict[str, str]]:
         (1600.0, 900.0),
         (960.0, 150.0),
     ]
-    noise_sigma = 0.03  # in iris-offset units
     for target in on_target_points:
         ox, oy = offset_for_target(*target)
         for _ in range(15):
@@ -129,20 +139,31 @@ def generate_rows(seed: int = 20260925) -> list[dict[str, str]]:
 
     # 3. Looking away: three failure modes Gate 1 must catch.
     for _ in range(10):
-        rows.append(make_row(t, make_landmarks(0.0, 0.0, face_count=2), None, "looking_away"))
+        lm = make_landmarks(0.0, 0.0, face_count=2)
+        rows.append(make_row(t, lm, None, "looking_away", "two_faces"))
         t += DT
     for _ in range(10):
-        rows.append(
-            make_row(t, make_landmarks(0.0, 0.0, detection_confidence=0.2), None, "looking_away")
-        )
+        lm = make_landmarks(0.0, 0.0, detection_confidence=0.2)
+        rows.append(make_row(t, lm, None, "looking_away", "low_confidence"))
         t += DT
     for _ in range(10):
-        rows.append(make_row(t, None, None, "looking_away"))
+        rows.append(make_row(t, None, None, "looking_away", "no_face"))
         t += DT
 
     # 4. Just reading: long steady in-calibration hold, never confirmed.
     for _ in range(300):
         rows.append(make_row(t, make_landmarks(0.0, 0.0), (960.0, 540.0), "just_reading"))
+        t += DT
+
+    # 5. More looking away, appended last so the seeded segments above are unchanged.
+    # Head turned ~21 deg away (Gate 2's pose check should catch it), then the head
+    # still but the eyes glancing past the screen edge (no gate covers this by design).
+    for _ in range(10):
+        lm = make_landmarks(0.0, 0.0, nose_x=0.57)
+        rows.append(make_row(t, lm, None, "looking_away", "head_turned"))
+        t += DT
+    for _ in range(10):
+        rows.append(make_row(t, make_landmarks(1.2, 0.0), None, "looking_away", "eyes_off_screen"))
         t += DT
 
     return rows

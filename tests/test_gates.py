@@ -7,6 +7,11 @@ has no clock of its own (see gates.py's module docstring), so controlling
 
 from __future__ import annotations
 
+import itertools
+import math
+
+import pytest
+
 from eyeos.calibration import CalibrationStatus
 from eyeos.config import GatesConfig, NoClickZone
 from eyeos.gates import FrameInput, GateStateMachine
@@ -27,6 +32,8 @@ def make_config(**overrides) -> GatesConfig:
         max_clicks_per_window=2,
         click_window_s=5.0,
         confirmation_hold_s=0.4,
+        # These tests pick sparse timestamps freely; the gap check has its own tests.
+        max_frame_gap_s=10.0,
         no_click_zones=(NoClickZone(1800, 0, 1920, 50),),
     )
     defaults.update(overrides)
@@ -131,6 +138,20 @@ def test_gate2_fails_at_validation_error_boundary():
     assert status.gate2_calibration is False
 
 
+@pytest.mark.parametrize("error", [math.inf, math.nan])  # nan >= 60 is False: fail open
+def test_gate2_fails_when_calibration_was_not_validated(error):
+    m = machine(calibrated=False)
+    m.set_calibration(
+        CalibrationStatus(exists=True, validation_error_px=error, calibration_head_pose=(0, 0, 0))
+    )
+    status = m.step(make_frame())
+    assert status.gate2_calibration is False
+    assert status.move_allowed is False
+    assert "not validated" in status.reasons["gate2"]
+    assert "recalibrate" in status.reasons["gate2"]
+    assert "inf" not in status.reasons["gate2"] and "nan" not in status.reasons["gate2"]
+
+
 def test_gate2_fails_when_head_pose_drifted_too_far():
     status = machine().step(make_frame(head_pose_deg=(20.0, 0.0, 0.0)))
     assert status.gate2_calibration is False
@@ -183,6 +204,90 @@ def test_gate4_passes_when_cursor_speed_within_limit():
     # 100px in 0.1s = 1000px/s, under the 2000px/s test limit.
     status = m.step(make_frame(timestamp_s=0.1, gaze_point_px=(100.0, 0.0)))
     assert status.gate4_kill_and_limits is True
+
+
+FPS = 30.0
+SPEED_LIMIT_PX_S = 4000.0
+POINT_A = (100.0, 500.0)
+POINT_B = (1800.0, 500.0)  # 1700px from POINT_A, outside the test no-click zone
+
+
+def _speed_machine() -> GateStateMachine:
+    return machine(make_config(max_cursor_speed_px_s=SPEED_LIMIT_PX_S))
+
+
+def _settle_at_a(m: GateStateMachine, frames: int = 5) -> int:
+    for i in range(frames):
+        assert m.step(make_frame(timestamp_s=i / FPS, gaze_point_px=POINT_A)).move_allowed
+    return frames
+
+
+def test_gate4_persistent_jump_waits_until_average_speed_since_last_emit_is_within_limit():
+    m = _speed_machine()
+    i = _settle_at_a(m)
+    emitted = [((i - 1) / FPS, POINT_A)]
+    max_jump_frames = math.ceil(1700.0 / SPEED_LIMIT_PX_S * FPS) + 1
+    reached_at = None
+    for k in range(1, max_jump_frames + 1):
+        t = i / FPS
+        status = m.step(make_frame(timestamp_s=t, gaze_point_px=POINT_B))
+        last_t, last_px = emitted[-1]
+        within_limit = math.dist(POINT_B, last_px) / (t - last_t) <= SPEED_LIMIT_PX_S
+        assert status.gate4_kill_and_limits is within_limit
+        if status.move_allowed:
+            emitted.append((t, status.cursor_target_px))
+            reached_at = k
+            break
+        assert "cursor speed" in status.reasons["gate4"]
+        i += 1
+
+    assert reached_at is not None, "cursor never relocated: the speed gate deadlocked"
+    assert reached_at > 1, "a 1700px jump went straight through the speed limit"
+    for (t0, p0), (t1, p1) in itertools.pairwise(emitted):
+        assert math.dist(p0, p1) / (t1 - t0) <= SPEED_LIMIT_PX_S
+
+
+def test_gate4_speed_is_checked_on_the_first_frame_after_a_dropout():
+    m = _speed_machine()
+    i = _settle_at_a(m)
+    m.step(make_frame(timestamp_s=i / FPS, face_count=0, gaze_point_px=None))
+    status = m.step(make_frame(timestamp_s=(i + 1) / FPS, gaze_point_px=POINT_B))
+    assert status.gate4_kill_and_limits is False
+    assert "cursor speed" in status.reasons["gate4"]
+    assert status.move_allowed is False
+
+
+def test_gate4_blocks_a_glitch_after_a_dropout_and_allows_the_return():
+    m = _speed_machine()
+    i = _settle_at_a(m)
+    m.step(make_frame(timestamp_s=i / FPS, face_count=0, gaze_point_px=None))
+    glitch = m.step(make_frame(timestamp_s=(i + 1) / FPS, gaze_point_px=POINT_B))
+    back = m.step(make_frame(timestamp_s=(i + 2) / FPS, gaze_point_px=POINT_A))
+    assert glitch.move_allowed is False
+    assert back.move_allowed is True
+    assert back.cursor_target_px == POINT_A
+
+
+def test_gate4_one_frame_spike_is_blocked_and_the_return_is_allowed():
+    m = _speed_machine()
+    i = _settle_at_a(m)
+    spike = m.step(make_frame(timestamp_s=i / FPS, gaze_point_px=POINT_B))
+    back = m.step(make_frame(timestamp_s=(i + 1) / FPS, gaze_point_px=POINT_A))
+    assert spike.move_allowed is False
+    assert back.move_allowed is True
+
+
+def test_gate4_short_gate1_freeze_does_not_reset_the_speed_reference():
+    m = _speed_machine()
+    i = _settle_at_a(m)
+    frozen = m.step(
+        make_frame(timestamp_s=i / FPS, detection_confidence=0.1, gaze_point_px=POINT_B)
+    )
+    assert frozen.gate1_presence is False
+    status = m.step(make_frame(timestamp_s=(i + 1) / FPS, gaze_point_px=POINT_B))
+    assert status.gate4_kill_and_limits is False
+    assert "cursor speed" in status.reasons["gate4"]
+    assert status.move_allowed is False
 
 
 def test_gate4_fails_inside_no_click_zone():
@@ -437,18 +542,43 @@ def test_click_requires_confirmation_release_before_firing_again():
     assert "release" in second.reasons["click"]
 
 
-def test_click_can_fire_again_after_confirmation_is_released_and_reapplied():
-    m = machine()
+def test_click_can_fire_again_after_release_and_a_fresh_dwell():
+    m = machine()  # dwell_time_s=0.5
     t = _dwell_in(m)
     first = m.step(make_frame(timestamp_s=t, gaze_point_px=(500.0, 500.0), confirm_keypress=True))
     assert first.click_fired is True
     # Release the confirmation gesture.
     m.step(make_frame(timestamp_s=t + 0.1, gaze_point_px=(500.0, 500.0)))
-    # Re-confirm.
-    second = m.step(
+    # Re-confirming at once doesn't click: the click used the dwell up.
+    early = m.step(
         make_frame(timestamp_s=t + 0.2, gaze_point_px=(500.0, 500.0), confirm_keypress=True)
     )
+    assert early.click_fired is False
+    assert early.gate3_stability is False
+    for dt in (0.3, 0.4, 0.5):  # released; the fresh dwell started at t + 0.1
+        m.step(make_frame(timestamp_s=t + dt, gaze_point_px=(500.0, 500.0)))
+    # 0.6 s of fresh dwell by t + 0.7 re-arms it.
+    second = m.step(
+        make_frame(timestamp_s=t + 0.7, gaze_point_px=(500.0, 500.0), confirm_keypress=True)
+    )
     assert second.click_fired is True
+
+
+def test_a_click_uses_the_dwell_up_even_while_the_eyes_stay_closed():
+    m = machine()  # dwell_time_s=0.5
+    t = _dwell_in(m)
+    assert m.step(make_frame(timestamp_s=t)).gate3_stability is True  # observed, satisfied
+    t += 0.1
+    clicks = 0
+    # A long blink-hold with the gaze held, broken by single barely-open (observed)
+    # frames: each one ends the gesture, but the click already used the dwell up.
+    for k in range(20):
+        if k % 5 == 4:
+            frame = make_frame(timestamp_s=t + k / 10)
+        else:
+            frame = make_frame(timestamp_s=t + k / 10, gaze_held=True, confirm_hold_s=0.4)
+        clicks += m.step(frame).click_fired
+    assert clicks == 1
 
 
 def test_awaiting_confirmation_flag_clears_once_gesture_ends_without_a_click():
@@ -509,3 +639,248 @@ def test_kill_switch_freezes_mid_session_and_recovers_after_release():
     recovered = m.step(make_frame(timestamp_s=t, gaze_point_px=(400.0, 300.0)))
     assert recovered.move_allowed is True
     assert recovered.gate3_stability is False  # has to dwell again from scratch
+
+
+# ---------------------------------------------------------------------------
+# Confirmation mode (PRD §2: blink-hold or keypress, configurable)
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    "mode, keypress, hold_s, fires",
+    [
+        ("either", True, None, True),
+        ("either", False, 0.4, True),
+        ("blink_hold", True, None, False),
+        ("blink_hold", False, 0.4, True),
+        ("keypress", True, None, True),
+        ("keypress", False, 0.4, False),
+    ],
+)
+def test_confirmation_mode_filters_signals(mode, keypress, hold_s, fires):
+    m = machine(make_config(confirmation_mode=mode))
+    t = _dwell_in(m)
+    status = m.step(
+        make_frame(
+            timestamp_s=t,
+            gaze_point_px=(500.0, 500.0),
+            confirm_keypress=keypress,
+            confirm_hold_s=hold_s,
+        )
+    )
+    assert status.click_fired is fires
+    if not fires:
+        assert "confirmation_mode" in status.reasons["click"]
+
+
+@pytest.mark.parametrize("mode", ["either", "blink_hold", "keypress"])
+def test_kill_switch_wins_in_every_confirmation_mode(mode):
+    m = machine(make_config(confirmation_mode=mode))
+    t = _dwell_in(m)
+    status = m.step(
+        make_frame(
+            timestamp_s=t,
+            gaze_point_px=(500.0, 500.0),
+            kill_switch_pressed=True,
+            confirm_keypress=True,
+            confirm_hold_s=0.5,
+        )
+    )
+    assert status.click_fired is False
+    assert status.gate4_kill_and_limits is False
+
+
+# ---------------------------------------------------------------------------
+# Non-advancing timestamps fail closed (a frozen clock breaks every timing check)
+# ---------------------------------------------------------------------------
+
+
+def test_repeated_or_backward_timestamps_fail_gate1():
+    m = machine()
+    assert m.step(make_frame(timestamp_s=1.0)).gate1_presence is True
+
+    repeated = m.step(make_frame(timestamp_s=1.0, confirm_keypress=True))
+    backward = m.step(make_frame(timestamp_s=0.5, confirm_keypress=True))
+
+    for status in (repeated, backward):
+        assert status.gate1_presence is False
+        assert "timestamp not advancing" in status.reasons["gate1"]
+        assert status.move_allowed is False
+        assert status.click_fired is False
+
+    assert m.step(make_frame(timestamp_s=1.1)).gate1_presence is True
+
+
+# ---------------------------------------------------------------------------
+# Non-finite inputs fail closed (NaN comparisons are always False, i.e. fail open)
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    "overrides, gate",
+    [
+        ({"detection_confidence": float("nan")}, "gate1_presence"),
+        ({"head_pose_deg": (float("nan"), 0.0, 0.0)}, "gate2_calibration"),
+        ({"gaze_point_px": (float("nan"), 500.0)}, "gate4_kill_and_limits"),
+        ({"gaze_point_px": (500.0, float("inf"))}, "gate4_kill_and_limits"),
+    ],
+)
+def test_non_finite_inputs_fail_closed(overrides, gate):
+    m = machine()
+    m.step(make_frame(timestamp_s=1.0))
+    t = 1.1
+    for _ in range(8):  # long enough that dwell would otherwise be satisfied
+        status = m.step(make_frame(timestamp_s=t, confirm_keypress=True, **overrides))
+        t += 0.1
+        assert getattr(status, gate) is False
+        assert status.move_allowed is False
+        assert status.click_fired is False
+
+
+@pytest.mark.parametrize("bad_t", [math.nan, math.inf, -math.inf])
+def test_a_non_finite_timestamp_fails_gate1_and_is_never_stored(bad_t):
+    m = machine()
+    first = m.step(make_frame(timestamp_s=bad_t, confirm_keypress=True))
+    assert first.gate1_presence is False
+    assert first.reasons["gate1"] == "timestamp is not finite"
+    assert first.click_fired is False
+
+    m.step(make_frame(timestamp_s=1.0))
+    assert m.step(make_frame(timestamp_s=bad_t)).gate1_presence is False
+    # The bad value was never stored, so the clock is still judged against 1.0.
+    assert m.step(make_frame(timestamp_s=1.1)).gate1_presence is True
+
+
+# ---------------------------------------------------------------------------
+# A frame gap (camera stall) is not observed time
+# ---------------------------------------------------------------------------
+
+
+def test_a_frame_gap_fails_gate1_and_restarts_the_dwell():
+    m = machine(make_config(max_frame_gap_s=0.25))
+    t = 0.0
+    for _ in range(4):  # 0.3 s of dwell, short of 0.5 s
+        m.step(make_frame(timestamp_s=t))
+        t += 0.1
+    gap = m.step(make_frame(timestamp_s=t + 0.4, confirm_keypress=True))
+
+    assert gap.gate1_presence is False
+    assert gap.reasons["gate1"].startswith("frame gap 0.50s")
+    assert gap.click_fired is False
+    # Without the gap check this frame would sit 0.8 s into the dwell and click.
+    after = m.step(make_frame(timestamp_s=t + 0.5, confirm_keypress=True))
+    assert after.gate1_presence is True
+    assert after.gate3_stability is False
+    assert after.click_fired is False
+
+
+# ---------------------------------------------------------------------------
+# A held gaze point (eyes closed in the blink-hold grace window) is not observed dwell
+# ---------------------------------------------------------------------------
+
+
+def test_held_frames_neither_advance_nor_reset_the_dwell():
+    # Timestamps in eighths of a second, so the sums are exact.
+    m = machine()  # dwell_time_s=0.5, confirmation_hold_s=0.4
+    for k in range(3):  # observed 0 .. 0.25 s
+        m.step(make_frame(timestamp_s=k / 8))
+    held = m.step(make_frame(timestamp_s=3 / 8, gaze_held=True, confirm_hold_s=0.0))
+    assert held.gate3_stability is False
+    assert held.click_fired is False
+    # The 1/8 s blink counts neither way: 0.375 s observed at 0.5, 0.5 s at 0.625.
+    assert m.step(make_frame(timestamp_s=4 / 8)).gate3_stability is False
+    assert m.step(make_frame(timestamp_s=5 / 8)).gate3_stability is True
+
+
+def test_a_dwell_restarts_when_the_eyes_were_closed_longer_than_open():
+    m = machine()  # dwell_time_s=0.5
+    m.step(make_frame(timestamp_s=0.0))
+    m.step(make_frame(timestamp_s=1 / 8))  # open until the first closed frame: 1/4 s
+    for k in range(2, 5):  # closed 3/8 s: longer than the eyes were open
+        m.step(make_frame(timestamp_s=k / 8, gaze_held=True, confirm_hold_s=(k - 2) / 8))
+    # The dwell starts over at 5/8 s, so it is met at 9/8 s, not 7/8 s.
+    statuses = [m.step(make_frame(timestamp_s=k / 8)) for k in range(5, 10)]
+    assert [s.gate3_stability for s in statuses] == [False, False, False, False, True]
+
+
+def test_a_confirm_length_closure_that_does_not_click_ends_the_dwell():
+    m = machine()  # dwell_time_s=0.5, confirmation_hold_s=0.4
+    for k in range(4):  # 0.3 s observed: not yet satisfied
+        m.step(make_frame(timestamp_s=k / 10))
+    for k in range(4, 9):  # held 0.0 .. 0.4 s: the last frame is confirm-length
+        m.step(make_frame(timestamp_s=k / 10, gaze_held=True, confirm_hold_s=(k - 4) / 10))
+    # The dwell starts over: 0.3 s observed before the closure no longer counts.
+    statuses = [m.step(make_frame(timestamp_s=k / 10)) for k in range(9, 14)]
+    assert [s.gate3_stability for s in statuses] == [False, False, False, False, False]
+    m.step(make_frame(timestamp_s=1.4))
+    assert m.step(make_frame(timestamp_s=1.5)).gate3_stability is True
+
+
+def test_a_dwell_observed_before_the_hold_carries_through_it():
+    m = machine()  # dwell_time_s=0.5
+    for k in range(7):  # 0.6 s observed: satisfied
+        m.step(make_frame(timestamp_s=k / 10))
+    held = m.step(make_frame(timestamp_s=0.7, gaze_held=True, confirm_hold_s=0.4))
+    assert held.gate3_stability is True
+    assert held.click_fired is True
+
+
+def test_a_held_frame_never_starts_a_dwell():
+    m = machine()
+    for k in range(10):
+        status = m.step(make_frame(timestamp_s=k / 10, gaze_held=True, confirm_hold_s=k / 10))
+        assert status.gate3_stability is False
+        assert status.click_fired is False
+
+
+def test_a_rejected_frame_mid_hold_clears_the_carried_dwell():
+    m = machine()  # dwell_time_s=0.5
+    t = _dwell_in(m)
+    assert m.step(make_frame(timestamp_s=t)).gate3_stability is True
+    m.step(make_frame(timestamp_s=t + 0.1, gaze_held=True, confirm_hold_s=0.1))
+    m.step(make_frame(timestamp_s=t + 0.2, face_count=2, gaze_held=True, confirm_hold_s=0.2))
+    held = m.step(make_frame(timestamp_s=t + 0.5, gaze_held=True, confirm_hold_s=0.5))
+    assert held.gate3_stability is False
+    assert held.click_fired is False
+
+
+@pytest.mark.parametrize("bad_t", [math.nan, math.inf])
+def test_a_non_finite_timestamp_never_resets_the_click_rate_limit(bad_t):
+    m = machine()  # 2 clicks per 5 s
+    clicks = []
+    t = 0.0
+
+    def dwell_and_click(t):
+        m.step(make_frame(timestamp_s=t))
+        for k in range(1, 7):
+            m.step(make_frame(timestamp_s=t + k / 10))
+        status = m.step(make_frame(timestamp_s=t + 0.7, confirm_keypress=True))
+        m.step(make_frame(timestamp_s=t + 0.8))  # release
+        return status, t + 0.9
+
+    for _ in range(2):
+        status, t = dwell_and_click(t)
+        clicks.append(status.click_fired)
+    assert clicks == [True, True]
+
+    m.step(make_frame(timestamp_s=bad_t))
+    third, _t = dwell_and_click(t)
+    assert third.click_fired is False
+    assert "click limit reached" in third.reasons["gate4"]
+
+
+@pytest.mark.parametrize("t0", [0.0, 1 / 30, 100.0])
+def test_eyes_closed_as_long_as_open_always_restart_the_dwell(t0):
+    # A strict open/closed alternation: closed time equals open time, which is not
+    # "open more than closed", so the dwell never completes, whatever the clock offset.
+    m = machine()  # dwell_time_s=0.5
+    for k in range(4 * 30):
+        held = k % 2 == 1
+        status = m.step(
+            make_frame(
+                timestamp_s=t0 + k / 30,
+                gaze_held=held,
+                confirm_hold_s=0.0 if held else None,
+            )
+        )
+        assert status.gate3_stability is False
