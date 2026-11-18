@@ -9,8 +9,7 @@ exactly what the shipped code does, not a separate "eval model" of it.
 A recorded session (``eyeos record``) is evaluated with the config it was recorded
 with, so the pipeline sees the same screen size, filter and gate settings:
 
-    python -m eval.run_eval --session recordings/session1.csv --config config.yaml \
-        --out recordings/session1-results.json
+    python -m eval.run_eval --session recordings/s1.csv --config config.yaml --out s1.json
 
 Per STANDARDS.md §1.3: every number below comes from this script, running against
 this repo's code, and is reproducible with the command above. Numbers this synthetic
@@ -242,7 +241,9 @@ def compute_metrics(
 
 
 def main(argv: list[str] | None = None) -> int:
-    parser = argparse.ArgumentParser(description=__doc__)
+    parser = argparse.ArgumentParser(
+        description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter
+    )
     parser.add_argument(
         "--fixtures", default="eval/fixtures", help="directory holding synthetic_session.csv"
     )
