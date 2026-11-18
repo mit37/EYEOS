@@ -170,4 +170,7 @@ ran next to the numbers.
 - Whether the bell is audible.
 - Saving to a real FAT or exFAT drive, and the hard link on Windows. The no-hard-link
   copy is tested only by making `os.link` fail on Linux.
+- The printed evaluate command in PowerShell. On Windows a path with spaces,
+  apostrophes or `$` is printed in PowerShell single quotes; that is checked as text
+  only. The sh form is tested by running it through `sh`.
 - How well the fixed 0.6 s settle window and 2 s lead-in match real reaction times.
