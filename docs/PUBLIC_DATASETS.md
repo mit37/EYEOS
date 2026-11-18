@@ -333,11 +333,26 @@ The calibration's leave-one-out validation error averages 319 px; Gate 2 needs <
 - **About 6° (258 px, 16 % of the screen diagonal) is too coarse for clicking.** On a
   1440x900 laptop screen that is a radius of roughly a fifth of the screen width: enough
   to tell which region of the screen someone looks at, not to hit a button.
-- **This setup is harder than a live session, so these numbers are pessimistic for
-  live use, by an amount this run cannot measure.** One calibration is fitted on images
-  from many days and postures and tested on all the others; MediaPipe runs from scratch
-  on each still photo; there is no smoothing. A live session calibrates and runs in one
-  sitting. Only a recorded live session (`eyeos record`) can say how much better it is.
+- **How these numbers compare with live use is not measured, in either direction.**
+  This setup differs from a live session in ways that push both ways.
+  - Harder here: one calibration is fitted on photos from many days and postures and
+    tested on all the others, while a live session calibrates and runs in one sitting;
+    MediaPipe detects each still photo from scratch instead of tracking; nothing is
+    smoothed; and photos whose head pose live Gate 2 would freeze are still scored (on
+    average 90 % of test photos are within the head-pose limit, 65 % for p13: the
+    JSON's `head_pose_within_limit_share`).
+  - Easier here: the calibration has 45 photos, while a live one has 9 samples, each a
+    10-frame average of one moment (with 9 single photos, `per-dot-1`, the mean error
+    here is 16 % higher); and every photo is 1280x720, while the live webcam source
+    requests no resolution and gets the camera driver's default, which may be lower.
+  - Not known either way: each calibration photo is labelled with the target shown when
+    it was taken, a live sample with the dot shown. Both carry the person's fixation
+    error, and nothing here compares the two.
+  - The cross-sitting part can be measured without new data: the landmark cache keeps
+    each image's `dayNN` folder, so a calibration tested within one day can be compared
+    with the cross-day numbers here (a day can hold more than one sitting). That
+    same-day split is being added as a diagnostic and has not run on the real data yet.
+    The rest needs a recorded live session (`eyeos record`).
 - **Head pose matters.** Adding EyeOS's own yaw, pitch and roll (`with-head-pose`)
   cuts the mean error by 13 % (258 to 224 px), and learning from the other 14 people
   first (`global-lopo`) by 15 % (to 220 px). The gain is biggest for the people whose
