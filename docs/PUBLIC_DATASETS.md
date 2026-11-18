@@ -382,11 +382,14 @@ averages 319 px; Gate 2 needs < 60 px.
     calibrates and runs in one sitting; nothing is smoothed; and photos whose head pose
     live Gate 2 would freeze are still scored (on average 90 % of test photos are within
     the head-pose limit, 65 % for p13: the JSON's `head_pose_within_limit_share`).
-  - Easier here: the calibration has 45 photos, while a live one has 9 samples, each an
-    average of up to 10 frames from one moment (with 9 single photos, `per-dot-1`, the
-    mean error here is 16 % higher); and every photo is 1280x720, while the live webcam
-    source requests no resolution and gets the camera driver's default, which may be
-    lower.
+  - Easier here: the calibration photos are drawn from the same multi-day pool as the
+    test photos, so the fit has already seen some of the days and postures it is
+    scored on, while a live calibration is taken once, at the start, and never samples
+    any drift later in the sitting; the calibration has 45 photos, while a live one has
+    9 samples, each an average of up to 10 frames from one moment (with 9 single
+    photos, `per-dot-1`, the mean error here is 16 % higher); and every photo is
+    1280x720, while the live webcam source requests no resolution and gets the camera
+    driver's default, which may be lower.
   - Not known either way: each calibration photo is labelled with the target shown when
     it was taken, a live sample with the dot shown. Both carry the person's fixation
     error, and nothing here compares the two. And MediaPipe runs on each photo in

@@ -156,6 +156,15 @@ def test_the_live_comparison_lists_static_image_detection_with_no_direction():
     assert "from scratch" not in items["Harder here"]
 
 
+def test_the_live_comparison_lists_the_shared_calibration_pool_as_easier_here():
+    # Both protocol/F4 verifiers: calibration and test photos come from one multi-day
+    # pool, while a live calibration never samples the drift later in its own sitting.
+    easier = _live_comparison_items()["Easier here"]
+
+    assert "same multi-day pool" in easier
+    assert "drift later in the sitting" in easier
+
+
 def _table_headers(text: str) -> list[str]:
     """Every header cell of every Markdown table in ``text``."""
     lines = text.splitlines()
