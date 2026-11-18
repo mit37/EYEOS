@@ -222,17 +222,16 @@ def results_notes(m: dict[str, Any]) -> str:
     )
 
 
-PUBLIC_RESULTS = ROOT / "eval" / "results" / "mpiifacegaze.json"
+PUBLIC_RESULTS_PATH = "eval/results/mpiifacegaze.json"  # as README text and commands name it
+PUBLIC_RESULTS = ROOT / PUBLIC_RESULTS_PATH
 
 PUBLIC_NOT_MEASURED = (
     "**Public dataset: not measured yet.** `eval/public/` scores the same calibration on "
     "MPIIFaceGaze, 15 people's real laptop-webcam photos with known on-screen targets "
-    "(`docs/PUBLIC_DATASETS.md`). No results file (`eval/results/mpiifacegaze.json`) has "
+    f"(`docs/PUBLIC_DATASETS.md`). No results file (`{PUBLIC_RESULTS_PATH}`) has "
     "been committed yet, so no MPIIFaceGaze number exists."
 )
 
-
-PUBLIC_RESULTS_PATH = "eval/results/mpiifacegaze.json"  # as the README's commands write it
 SHIPPING = "eyeos"
 LIVE_STYLE = "eyeos-live9"  # the shipping calibration fitted as a live session fits it
 BASELINES = ("centre", "calibration-mean")  # constant predictors that ignore the image
