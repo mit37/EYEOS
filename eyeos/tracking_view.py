@@ -283,6 +283,9 @@ _CURSOR_RADIUS = 5
 # clipped anyway.
 _MAX_COORD = 100_000
 
+# The keys that close the view (with Shift or Caps Lock, some backends report Q).
+_QUIT_KEYS = (ord("q"), ord("Q"))
+
 # OpenCV's Hershey fonts only cover ASCII.
 _ASCII = {"—": "-", "–": "-", "°": "deg", "≥": ">=", "≤": "<="}
 
@@ -550,8 +553,10 @@ class TrackingView:
                 raise
             raise _window_error(e) from e
         self._shown = True
-        key = cv2.waitKey(1)
-        if key != -1 and (key & 0xFF) in (ord("q"), ord("Q")):
+        # waitKeyEx, not waitKey: waitKey keeps only the low byte of the key code, and
+        # on X11 the Left arrow (keysym 0xFF51) would then read as "Q".
+        key = cv2.waitKeyEx(1)
+        if key in _QUIT_KEYS:
             self.close()
         elif self._closed_by_user():
             self.close()

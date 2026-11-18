@@ -513,7 +513,7 @@ def test_update_draws_the_pupils_their_shift_the_map_and_the_lights(fake_cv2):
     # frame itself is never drawn on.
     (shown,) = fake_cv2.shown
     assert shown == camera and shown is not camera
-    assert _after_startup(fake_cv2)[:2] == [("imshow", "EyeOS tracking", shown), ("waitKey", 1)]
+    assert _after_startup(fake_cv2)[:2] == [("imshow", "EyeOS tracking", shown), ("waitKeyEx", 1)]
     assert all(call.image is shown for call in fake_cv2.drawn)
 
     circles = _centers(fake_cv2)
@@ -671,6 +671,25 @@ def test_other_keys_leave_the_window_open(monkeypatch):
 
     assert not view.closed
     assert len(cv2.shown) == 3
+
+
+# The arrow keys, as waitKeyEx() returns them on X11 (OpenCV 4.11 with Qt, checked on
+# Xvfb): their keysyms. waitKey() keeps only the low byte, which makes Left 0x51, "Q".
+ARROW_KEYS = {"Left": 0xFF51, "Up": 0xFF52, "Right": 0xFF53, "Down": 0xFF54}
+
+
+@pytest.mark.parametrize("key", ARROW_KEYS.values(), ids=ARROW_KEYS.keys())
+def test_arrow_keys_leave_the_window_open(monkeypatch, key):
+    from eyeos.tracking_view import TrackingView
+
+    cv2 = _install_cv2(monkeypatch, keys=[key])
+    view = TrackingView(SCREEN)
+
+    _update(view, 3)
+
+    assert not view.closed
+    assert len(cv2.shown) == 3
+    assert ("waitKeyEx", 1) in _after_startup(cv2)
 
 
 def test_a_window_closed_by_the_user_stops_drawing(monkeypatch):

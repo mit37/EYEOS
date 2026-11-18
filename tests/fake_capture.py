@@ -148,7 +148,9 @@ class FakeCv2(types.ModuleType):
         window_property_error: Exception | None = None,
         destroy_error: Exception | None = None,
     ) -> None:
-        """``keys``: what successive waitKey() calls return (then -1, no key).
+        """``keys``: the key codes successive waitKeyEx() or waitKey() calls see (then
+        -1, no key), in full as waitKeyEx() returns them; waitKey() keeps only the low
+        byte, as OpenCV does (so the X11 Left arrow, 0xFF51, reads as 0x51, "Q").
         ``window_visible``: what getWindowProperty(WND_PROP_VISIBLE) returns, or a
         function of how many images imshow() has shown so far (a user closing the
         window). The ``*_error`` arguments make that call raise instead."""
@@ -167,7 +169,8 @@ class FakeCv2(types.ModuleType):
         self.destroy_error = destroy_error
         self.drawn: list[FakeCv2Call] = []
         # ("namedWindow", name), ("imshow", name, image), ("waitKey", delay),
-        # ("getWindowProperty", name, prop), ("destroyWindow", name), in call order.
+        # ("waitKeyEx", delay), ("getWindowProperty", name, prop), ("destroyWindow",
+        # name), in call order.
         self.window_calls: list[tuple[Any, ...]] = []
 
     def VideoCapture(self, source: object) -> FakeVideoCapture:
@@ -277,9 +280,14 @@ class FakeCv2(types.ModuleType):
             raise self.imshow_error
         self.window_calls.append(("imshow", winname, mat))
 
+    def waitKeyEx(self, delay: int = 0) -> int:
+        self.window_calls.append(("waitKeyEx", delay))
+        return self.keys.pop(0) if self.keys else -1
+
     def waitKey(self, delay: int = 0) -> int:
         self.window_calls.append(("waitKey", delay))
-        return self.keys.pop(0) if self.keys else -1
+        code = self.keys.pop(0) if self.keys else -1
+        return code if code == -1 else code & 0xFF
 
     def getWindowProperty(self, winname: str, prop_id: int) -> float:
         self.window_calls.append(("getWindowProperty", winname, prop_id))
