@@ -467,10 +467,11 @@ class MediaPipeImageDetector:
 @dataclass(frozen=True)
 class ExtractSummary:
     person: str
-    images: int
+    images: int  # rows in the cache when extract_person returns
     with_face: int
     skipped: bool
     path: Path
+    note: str | None = None  # why an existing cache that is not exactly the request was kept
 
 
 def cache_path(cache_dir: Path, person: str) -> Path:
@@ -508,13 +509,31 @@ def extract_person(
     """Detect landmarks in one person's images and cache them as ``<cache>/<person>.csv``.
 
     The file is written under a temporary name and renamed when complete, so an
-    interrupted run never leaves a cache that looks finished. An existing cache is reused
-    when it holds exactly the requested images (the first ``limit``, or all).
+    interrupted run never leaves a cache that looks finished. Unless ``force`` is set, an
+    existing complete cache is kept when it starts with the requested images (the first
+    ``limit``, or all), and is never replaced by a shorter one: a quick ``limit`` trial
+    run after a full extraction must not throw away hours of detection.
     """
     annotations = load_annotations(root, person)[:limit]
+    requested = [a.image for a in annotations]
     out = cache_path(cache_dir, person)
-    if not force and _cached_images(out) == [a.image for a in annotations]:
-        return ExtractSummary(person, len(annotations), _with_face(out), True, out)
+    cached = None if force else _cached_images(out)
+    if cached is not None:
+        note = None
+        if len(cached) > len(requested):
+            n, m = len(cached), len(requested)
+            if cached[:m] == requested:
+                note = (
+                    f"kept the cache of {n} images, which starts with the {m} requested "
+                    "(--force replaces it)"
+                )
+            else:
+                note = (
+                    f"kept the cache of {n} images rather than replace it with {m}, although "
+                    f"its images differ from the first {m} in {person}.txt (--force replaces it)"
+                )
+        if cached == requested or note is not None:
+            return ExtractSummary(person, len(cached), _with_face(out), True, out, note)
 
     out.parent.mkdir(parents=True, exist_ok=True)
     partial = out.with_name(out.name + ".partial")
@@ -858,7 +877,9 @@ def _run_extract(
         detector_factory=detector_factory or MediaPipeImageDetector,
     )
     for s in summaries:
-        state = "cached already, skipped (--force redoes it)" if s.skipped else "extracted"
+        state = "extracted"
+        if s.skipped:
+            state = s.note or "cached already, skipped (--force redoes it)"
         print(f"{s.person}: {s.images} images, {s.with_face} with a face; {state} -> {s.path}")
     return 0
 

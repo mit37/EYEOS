@@ -71,8 +71,11 @@ Useful options:
 
 - `extract --persons p00,p01` limits the run to some participants.
 - `extract --limit N` takes the first N images per participant (a quick trial run). A
-  later run without `--limit` redoes that participant in full.
-- `extract --force` redoes participants that are already cached.
+  later run without `--limit` redoes that participant in full. A `--limit` run after a
+  full one keeps the full cache: without `--force`, a cache is never replaced by a
+  shorter one.
+- `extract --force` redoes participants that are already cached (with `--limit`, it
+  replaces a full cache with the first N images).
 - `evaluate --variants eyeos,with-head-pose,global-lopo` compares only some models.
 - `evaluate --persons ...` and `evaluate --k-per-dot K` are also available.
 
@@ -102,8 +105,10 @@ webcam source uses. Each participant becomes one CSV in `eyeos.synthetic_format`
 columns plus `image`, `target_x/y`, `fc_x/y/z` and `gt_x/y/z`.
 
 A CSV is written under a temporary name and renamed when complete, so an interrupted run
-never leaves a cache that looks finished. A participant is skipped when their cache
-holds exactly the requested images.
+never leaves a cache that looks finished. Without `--force`, a participant is skipped
+when their cache starts with the requested images (it holds exactly them, or more), and
+a cache is never replaced by a shorter one; the run prints that the cache was kept. A
+cache that is shorter than the request, or holds other images, is redone.
 
 ## What `evaluate` does (the protocol)
 

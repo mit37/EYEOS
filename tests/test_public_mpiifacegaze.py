@@ -671,6 +671,50 @@ def test_extract_limit_takes_the_first_n_images_and_a_later_full_run_redoes_them
     assert len(_read_cache(cache / "p00.csv")) == 7
 
 
+def test_a_limited_trial_run_keeps_a_complete_cache_that_starts_with_those_images(tmp_path, capsys):
+    root, cache = tmp_path / "MPIIFaceGaze", tmp_path / "cache"
+    write_person(root, FakePerson("p00", n_images=7, write_mat=False))
+    mpii.extract(root, cache, detector_factory=_CountingFactory())
+    before = (cache / "p00.csv").read_text()
+    capsys.readouterr()
+
+    trial = _CountingFactory()
+    code = mpii.main(
+        ["extract", "--root", str(root), "--cache", str(cache), "--limit", "3"],
+        detector_factory=trial,
+    )
+
+    assert code == 0
+    assert trial.detectors == []
+    assert (cache / "p00.csv").read_text() == before
+    assert len(_read_cache(cache / "p00.csv")) == 7
+    out = capsys.readouterr().out
+    assert "p00: 7 images" in out and "kept" in out
+
+
+def test_extract_never_replaces_a_cache_with_a_shorter_one_without_force(tmp_path, capsys):
+    root, cache = tmp_path / "MPIIFaceGaze", tmp_path / "cache"
+    write_person(root, FakePerson("p00", n_images=7, write_mat=False))
+    mpii.extract(root, cache, detector_factory=_CountingFactory())
+    # A cache whose first image is not the annotation file's first, e.g. from another copy.
+    path = cache / "p00.csv"
+    path.write_text(path.read_text().replace("day01/0000.jpg", "day02/0000.jpg", 1))
+    before = path.read_text()
+
+    trial = _CountingFactory()
+    (summary,) = mpii.extract(root, cache, limit=3, detector_factory=trial)
+
+    assert summary.skipped and trial.detectors == []
+    assert path.read_text() == before
+    assert summary.images == 7
+    assert summary.note is not None and "--force" in summary.note
+
+    forced = _CountingFactory()
+    (summary,) = mpii.extract(root, cache, limit=3, force=True, detector_factory=forced)
+    assert not summary.skipped and forced.images_seen == 3
+    assert [r["image"] for r in _read_cache(path)] == [f"day01/{i:04d}.jpg" for i in range(3)]
+
+
 def test_an_interrupted_extract_leaves_no_cache_and_the_rerun_completes_it(tmp_path):
     root, cache = tmp_path / "MPIIFaceGaze", tmp_path / "cache"
     write_person(root, FakePerson("p00", n_images=5, write_mat=False))
