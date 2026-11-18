@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import ast
 import csv
+import errno
 import math
 import shlex
 import sys
@@ -623,7 +624,28 @@ def test_a_camera_error_mid_run_is_raised_once_the_screen_has_closed(fake_tk, tm
     assert list(tmp_path.iterdir()) == []
 
 
-def test_a_failed_write_leaves_no_partial_file(fake_tk, tmp_path):
+def test_a_write_that_fails_part_way_leaves_no_partial_file(fake_tk, tmp_path, monkeypatch):
+    # The disk fills up after the header and the first row are written.
+    on_disk_mid_write = []
+
+    def disk_full(writer, rows):
+        writer.writerow(rows[0])
+        on_disk_mid_write.extend(p.name for p in tmp_path.iterdir())
+        raise OSError(errno.ENOSPC, "No space left on device")
+
+    monkeypatch.setattr(csv.DictWriter, "writerows", disk_full)
+    recorder = _recorder(tmp_path, FakeUser(), reading=False)
+    recorder.root.on_poll = _press_space_when_asked
+
+    with pytest.raises(OSError, match="No space left"):
+        recorder.run()
+
+    assert on_disk_mid_write  # the failure came after a file was started
+    assert list(tmp_path.iterdir()) == []
+    assert recorder.root.destroyed
+
+
+def test_an_out_directory_that_cannot_be_made_is_an_error(fake_tk, tmp_path):
     (tmp_path / "not-a-dir").write_text("")
     user = FakeUser()
     recorder = _recorder(tmp_path, user, out_name="not-a-dir/session.csv", reading=False)
