@@ -22,6 +22,7 @@ ROOT = Path(__file__).resolve().parents[1]
 RESULTS = ROOT / "eval" / "results" / "mpiifacegaze.json"
 README = ROOT / "README.md"
 PUBLIC_DOC = ROOT / "docs" / "PUBLIC_DATASETS.md"
+LOCAL_SETUP = ROOT / "docs" / "LOCAL_SETUP.md"
 DOWNLOADER = ROOT / "scripts" / "download_mpiifacegaze.py"
 
 needs_results = pytest.mark.skipif(
@@ -89,6 +90,29 @@ def test_the_readme_prose_has_no_claim_the_real_run_made_false(stale):
     prose = " ".join(_without_generated_regions(README.read_text(encoding="utf-8")).split())
 
     assert stale not in prose
+
+
+@pytest.mark.parametrize(
+    ("doc", "unsupported"),
+    [
+        # The gap to live use was never measured, in either direction.
+        (PUBLIC_DOC, "pessimistic for live use"),
+        (PUBLIC_DOC, "how much better it is"),
+        # The harness's validation error is not the statistic live Gate 2 computes.
+        (PUBLIC_DOC, "A live EyeOS session on these photos would refuse"),
+        # Setup notes and wall times were recorded by hand; only the metrics are in it.
+        (PUBLIC_DOC, "Every number here is in"),
+        # p08 ranks 5th of 15 by relative gain; the relation with head motion is loose.
+        (PUBLIC_DOC, "biggest for the people whose head moved most"),
+        # The real run timed the extraction.
+        (LOCAL_SETUP, "not timed here"),
+    ],
+    ids=lambda v: v.name if isinstance(v, Path) else v,
+)
+def test_the_docs_make_no_claim_the_real_run_does_not_support(doc, unsupported):
+    prose = " ".join(doc.read_text(encoding="utf-8").split())
+
+    assert unsupported not in prose
 
 
 def test_the_synthetic_caveat_sits_with_the_synthetic_table_not_under_the_real_one():
