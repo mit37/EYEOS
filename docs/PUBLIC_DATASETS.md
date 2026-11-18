@@ -281,6 +281,17 @@ frames of one; and their true targets are on average `calibration_mean_distance_
 from the dot. A live user does not look exactly at the dot either, but by how much is
 not measured anywhere in this repo.
 
+**The environment record.** MediaPipe and OpenCV versions change the landmarks, so a
+result is only reproducible with them known. `extract` now writes
+`<cache>/manifest.json`: for each person it (re)extracts, the date, the image counts,
+the detector and its FaceMesh settings, Python, the platform, and the mediapipe and
+OpenCV versions. A person kept from an earlier run keeps its entry. `evaluate` writes
+an `environment` block into the results: its own Python, platform and numpy, scipy,
+OpenCV and mediapipe versions (null when not installed), and under `extract` the
+manifest entries of the evaluated persons. `extract` is null for a cache made before
+manifests existed, such as the 2026-11-18 run's, and a person the manifest does not
+list is null. Neither file holds paths.
+
 ## The results JSON
 
 `--out` gets: `dataset`, `license`, `citation`, `generated` (UTC date and time),

@@ -1554,6 +1554,66 @@ def test_evaluate_cli_writes_the_results_json(tmp_path, scipy_io, capsys):
     assert "eyeos" in capsys.readouterr().out
 
 
+def test_package_versions_come_from_the_installed_distributions():
+    assert mpii.package_version("numpy") == np.__version__
+    assert mpii.package_version("no-such-distribution-eyeos") is None
+
+
+def test_evaluate_records_where_it_ran_and_what_extract_ran_with(tmp_path, scipy_io, monkeypatch):
+    _fake_versions(monkeypatch)
+    root, cache = _extracted(
+        tmp_path, [FakePerson("p00"), _second_screen("p01", seed=1), FakePerson("p02", seed=2)]
+    )
+    manifest = _manifest(cache)["persons"]
+
+    results = mpii.evaluate_dataset(root, cache, persons=["p00", "p02"], variants=["eyeos"])
+
+    environment = results["environment"]
+    assert environment["python"] == platform.python_version()
+    assert environment["platform"] == platform.platform()
+    assert environment["packages"] == {
+        "numpy": "1.26.4",
+        "scipy": "1.17.1",
+        "opencv": "4.11.0.86",
+        "mediapipe": "0.10.21",
+    }
+    assert environment["opencv_distribution"] == "opencv-contrib-python"
+    # Only the evaluated persons' extract records, exactly as the manifest has them.
+    assert environment["extract"] == {"p00": manifest["p00"], "p02": manifest["p02"]}
+    assert list(results)[:7] == [
+        "dataset",
+        "license",
+        "citation",
+        "generated",
+        "git_commit",
+        "git_dirty",
+        "environment",
+    ]
+
+
+def test_evaluate_marks_extract_versions_unknown_for_a_cache_without_a_manifest(tmp_path, scipy_io):
+    root, cache = _extracted(tmp_path, [FakePerson("p00"), _second_screen("p01", seed=1)])
+    manifest = json.loads((cache / "manifest.json").read_text())
+    del manifest["persons"]["p01"]
+    (cache / "manifest.json").write_text(json.dumps(manifest))
+
+    partial = mpii.evaluate_dataset(root, cache, variants=["eyeos"])
+    (cache / "manifest.json").unlink()  # a cache extracted before manifests existed
+    old = mpii.evaluate_dataset(root, cache, variants=["eyeos"])
+
+    assert partial["environment"]["extract"] == {"p00": manifest["persons"]["p00"], "p01": None}
+    assert old["environment"]["extract"] is None
+    assert old["environment"]["packages"]["numpy"] == np.__version__
+
+
+def test_evaluate_fails_loudly_on_a_damaged_manifest(tmp_path, scipy_io):
+    root, cache = _extracted(tmp_path, [FakePerson("p00")])
+    (cache / "manifest.json").write_text("{not json")
+
+    with pytest.raises(mpii.DatasetFormatError, match="manifest.json"):
+        mpii.evaluate_dataset(root, cache, variants=["eyeos"])
+
+
 def test_evaluate_cli_rejects_an_unknown_variant(tmp_path, capsys):
     with pytest.raises(SystemExit) as excinfo:
         mpii.main(

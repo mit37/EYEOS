@@ -839,6 +839,27 @@ def _git(*args: str) -> str | None:
     return done.stdout.strip()
 
 
+def environment(cache_dir: Path, persons: Sequence[str]) -> dict[str, Any]:
+    """Where evaluate runs (Python, platform, library versions; None = not installed),
+    and under ``extract`` what each evaluated person's cache was extracted with, from
+    ``<cache>/manifest.json``: None for a cache without a manifest, and None for a person
+    the manifest does not list."""
+    distribution, opencv = opencv_version()
+    manifest = read_manifest(cache_dir)
+    return {
+        "python": platform.python_version(),
+        "platform": platform.platform(),
+        "packages": {
+            "numpy": package_version("numpy"),
+            "scipy": package_version("scipy"),
+            "opencv": opencv,
+            "mediapipe": package_version("mediapipe"),
+        },
+        "opencv_distribution": distribution,
+        "extract": (None if manifest is None else {p: manifest["persons"].get(p) for p in persons}),
+    }
+
+
 def evaluate_dataset(
     root: Path,
     cache_dir: Path,
@@ -873,6 +894,7 @@ def evaluate_dataset(
         "generated": datetime.now(timezone.utc).isoformat(timespec="seconds"),
         "git_commit": _git("rev-parse", "HEAD"),
         "git_dirty": None if dirty is None else bool(dirty),
+        "environment": environment(cache_dir, names),
         "config": {
             "root": str(root),
             "cache": str(cache_dir),
