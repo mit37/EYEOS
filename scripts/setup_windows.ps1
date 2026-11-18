@@ -40,8 +40,9 @@ $ErrorActionPreference = "Continue"
 
 $Extras = "dev,webcam,windows-fallback,public-eval"
 $Candidates = @("3.12", "3.11", "3.10")
-$Why312 = "EyeOS's webcam extra needs mediapipe<0.10.30 (the last versions with the " +
-    "legacy Solutions API), which has wheels for Python 3.10-3.12 only."
+$Why312 = "EyeOS needs Python 3.10-3.12: its webcam extra needs mediapipe<0.10.30 " +
+    "(the last versions with the legacy Solutions API), which has no wheels for " +
+    "Python 3.13 or newer."
 
 function Fail([string]$Message) {
     Write-Host ""

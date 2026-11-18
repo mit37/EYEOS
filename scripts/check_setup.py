@@ -51,9 +51,10 @@ def check_python(version: tuple[int, int]) -> Result:
     return Result(
         name,
         "fail",
-        "EyeOS's webcam extra needs mediapipe<0.10.30 (the last versions with the "
-        "legacy Solutions API), which has wheels for Python 3.10-3.12 only. Make the "
-        ".venv with Python 3.12 (Windows: py -3.12 -m venv .venv) and install again.",
+        "EyeOS needs Python 3.10-3.12: its webcam extra needs mediapipe<0.10.30 (the "
+        "last versions with the legacy Solutions API), which has no wheels for Python "
+        "3.13 or newer. Make the .venv with Python 3.12 (Windows: py -3.12 -m venv .venv) "
+        "and install again.",
     )
 
 
@@ -103,8 +104,8 @@ def check_webcam_stack() -> list[Result]:
                 name,
                 "fail",
                 f"mediapipe {version} has no legacy Solutions API (removed in 0.10.30). "
-                "EyeOS needs mediapipe<0.10.30, which installs on Python 3.10-3.12 only: "
-                f"recreate .venv with Python 3.12 and run {WEBCAM_INSTALL} again.",
+                "EyeOS needs mediapipe<0.10.30, which has no wheels for Python 3.13 or "
+                f"newer: recreate .venv with Python 3.12 and run {WEBCAM_INSTALL} again.",
             ),
         ]
     return [cv2_result, _run_face_mesh(mp, name)]

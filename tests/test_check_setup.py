@@ -49,6 +49,8 @@ def test_other_pythons_fail_and_say_why(version):
     assert result.status == "fail"
     assert "3.10-3.12" in result.detail
     assert "mediapipe<0.10.30" in result.detail
+    # Not "wheels for 3.10-3.12 only": mediapipe 0.10.21 also ships 3.9 wheels.
+    assert "no wheels for Python 3.13 or newer" in result.detail
 
 
 def test_a_complete_install_passes_and_runs_face_mesh_once(all_installed, capsys):
@@ -75,7 +77,7 @@ def test_mediapipe_without_the_solutions_api_fails_with_the_python_hint(
     out = capsys.readouterr().out
     assert "Solutions API" in out
     assert "0.10.31" in out
-    assert "Python 3.10-3.12" in out
+    assert "no wheels for Python 3.13 or newer" in out
 
 
 @pytest.mark.parametrize("missing", ["cv2", "mediapipe"])

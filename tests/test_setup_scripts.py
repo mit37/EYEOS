@@ -111,6 +111,7 @@ def test_no_supported_python_fails_and_says_why(tmp_path, pythons):
     assert _commands(result) == []
     assert "3.10-3.12" in result.stderr
     assert "mediapipe<0.10.30" in result.stderr
+    assert "no wheels for Python 3.13 or newer" in result.stderr
     for name, version in pythons.items():
         assert f"{name} is {version}" in result.stderr
 
@@ -206,6 +207,15 @@ def test_windows_script_asks_the_py_launcher_for_3_12_then_3_11_then_3_10():
     assert candidates is not None
     assert re.findall(r'"([^"]+)"', candidates.group(1)) == ["3.12", "3.11", "3.10"]
     assert '& py "-$v"' in text
+
+
+def test_windows_script_explains_the_python_limit_accurately():
+    source = re.search(r"^\$Why312 = (.*?)\n\n", WINDOWS_SCRIPT.read_text(), re.M | re.S)
+    assert source is not None
+    # The message as PowerShell builds it: its "..." + "..." pieces joined.
+    message = "".join(re.findall(r'"([^"]*)"', source.group(1)))
+    assert "no wheels for Python 3.13 or newer" in message
+    assert "3.10-3.12 only" not in message  # mediapipe 0.10.21 also ships 3.9 wheels
 
 
 def test_windows_script_requires_a_64_bit_x86_python():

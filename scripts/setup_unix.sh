@@ -58,8 +58,8 @@ is_supported() {
     return 1
 }
 
-why_312="EyeOS's webcam extra needs mediapipe<0.10.30 (the last versions with the legacy \
-Solutions API), which has wheels for Python 3.10-3.12 only."
+why_312="EyeOS needs Python 3.10-3.12: its webcam extra needs mediapipe<0.10.30 (the last \
+versions with the legacy Solutions API), which has no wheels for Python 3.13 or newer."
 
 # --- 1. the repo root ----------------------------------------------------------------
 script_dir=${BASH_SOURCE[0]%/*}
