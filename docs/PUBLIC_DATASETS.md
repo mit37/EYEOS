@@ -269,11 +269,12 @@ directly with every other row.
 **Why `eyeos-live9`.** Every other variant's `validation_error_px` is the leave-one-out
 over its 9 × K calibration photos, each labelled with its own true target, with the
 other photos of the same dot left in the fit. Live Gate 2 judges something else.
-`eyeos.calibration_session` averages about 10 frames per dot into one feature vector
-(`collect_dot_features`: the 4 iris offsets and the 3 head-pose angles) and adds it at
-the dot itself, so the leave-one-out runs over 9 samples. The two statistics react to
-noise differently and can disagree on pass or fail. `eyeos-live9` does what live
-calibration does, with the same averaging code path (a test checks it against
+`eyeos.calibration_session` averages up to 10 usable frames per dot (`SAMPLE_FRAMES`)
+into one feature vector (`collect_dot_features`: the 4 iris offsets and the 3 head-pose
+angles) and adds it at the dot itself, so the leave-one-out runs over 9 samples. They
+are different statistics, and nothing makes them agree on pass or fail. `eyeos-live9`
+does what live calibration does: it averages exactly as `collect_dot_features` does
+(a test checks the two bit for bit, and another the whole fit against
 `calibrate_interactively` on the same frames), so its `passes_gate2` applies live
 Gate 2's statistic and threshold to these photos. It is still not a live session: each
 dot's K photos are separate moments, often from different days, not 10 consecutive
@@ -281,8 +282,14 @@ frames of one; and their true targets are on average `calibration_mean_distance_
 from the dot. A live user does not look exactly at the dot either, but by how much is
 not measured anywhere in this repo.
 
-**The environment record.** MediaPipe and OpenCV versions change the landmarks, so a
-result is only reproducible with them known. `extract` now writes
+**In the README.** `scripts/update_readme.py` lists the baselines first, says how far
+`eyeos`'s mean error is below `centre`'s, counts for each variant the persons it beats
+`eyeos` for, and, when the results have `eyeos-live9`, gives its statistic and pass
+count next to the 45-photo one. With a results file that predates the three variants,
+it leaves out what needs them.
+
+**The environment record.** A different MediaPipe or OpenCV version can give different
+landmarks, so a result is only reproducible with them known. `extract` now writes
 `<cache>/manifest.json`: for each person it (re)extracts, the date, the image counts,
 the detector and its FaceMesh settings, Python, the platform, and the mediapipe and
 OpenCV versions. A person kept from an earlier run keeps its entry. `evaluate` writes
