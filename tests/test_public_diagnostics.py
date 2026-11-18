@@ -26,7 +26,7 @@ import pytest
 from eval.generate_synthetic import make_landmarks
 from eval.public import diagnostics, models, protocol
 from eval.public import mpiifacegaze as mpii
-from eyeos.calibration import Calibration
+from eyeos.calibration import Calibration, target_points
 from eyeos.features import FeatureVector, extract_features
 from eyeos.landmarks import FaceLandmarks, Point3D
 from tests.fake_mpiifacegaze import FakePerson, offsets_for_target, write_calibration
@@ -120,6 +120,8 @@ class Spec:
     pitch_range_deg: float = 0.0
     roll_range_deg: float = 0.0
     shift_per_yaw_deg: float = 0.0  # iris x offset added per degree of the dataset's yaw
+    shift_per_roll_deg: float = 0.0  # iris x offset added per degree of the dataset's roll
+    shift_per_mm: float = 0.0  # iris x offset added per mm of the head's sideways position
     # The head turns toward where the eyes look: yaw changes by this many degrees from the
     # screen's left edge to its right (on top of the uniform +-yaw_range_deg).
     yaw_per_screen_deg: float = 0.0
@@ -154,7 +156,8 @@ def _frames(spec: Spec) -> list[Frame]:
             noise = [rng.gauss(0.0, spec.noise) for _ in range(4)]
             tvec = (rng.uniform(-30, 30), rng.uniform(-30, 30), rng.uniform(450, 650))
             ox, oy = offsets_for_target(x, y, W, H)
-            ox += spec.shift_per_yaw_deg * yaw + bias
+            ox += spec.shift_per_yaw_deg * yaw + spec.shift_per_roll_deg * roll + bias
+            ox += spec.shift_per_mm * tvec[0]
             oy += bias
             face = None
             if index not in spec.no_face:
@@ -282,6 +285,32 @@ def test_feature_sanity_reads_the_eyeos_roll_spread():
     assert 7.0 < roll["p95"] <= 10.0
 
 
+def test_feature_sanity_and_the_ceiling_read_each_eyes_y_on_its_own():
+    person = _person(Spec())
+    rng = np.random.default_rng(5)
+    # The left eye's y keeps the target with some noise; the right eye's y ignores it.
+    person.data.landmarks = [
+        dataclasses.replace(
+            lm,
+            left_iris_center=Point3D(
+                lm.left_iris_center.x, lm.left_iris_center.y + rng.normal(0.0, 0.006)
+            ),
+            right_iris_center=Point3D(lm.right_iris_center.x, 0.40 + rng.normal(0.0, 0.01)),
+        )
+        for lm in person.data.landmarks
+    ]
+
+    result = diagnostics.diagnose([person])["persons"]["p00"]
+
+    sanity, both = result["feature_sanity"], result["in_sample_ceiling"]["both_eyes"]
+    assert sanity["corr_left_y_target_y"] > 0.8
+    assert abs(sanity["corr_right_y_target_y"]) < 0.2
+    assert abs(sanity["corr_left_right_y"]) < 0.2
+    # x is untouched and fits exactly; y does not.
+    assert both["r2_x"] == pytest.approx(1.0)
+    assert 0.5 < both["r2_y"] < 0.95
+
+
 def test_landmark_noise_lowers_the_agreement_between_the_eyes():
     sanity = _one(Spec(noise=0.3))["feature_sanity"]
 
@@ -320,6 +349,16 @@ def test_noise_free_ceiling_is_about_0_px_for_both_eyes_each_eye_and_with_head_p
         assert ceiling[model]["rms_px"] < 0.75, model
         assert ceiling[model]["r2_x"] == pytest.approx(1.0), model
         assert ceiling[model]["r2_y"] == pytest.approx(1.0), model
+
+
+def test_the_with_head_pose_ceiling_uses_eyeos_roll_too():
+    # The iris offsets shift with the head's roll, which EyeOS reads from the eye corners.
+    ceiling = _one(Spec(roll_range_deg=10.0, roll_landmarks=True, shift_per_roll_deg=0.02))[
+        "in_sample_ceiling"
+    ]
+
+    assert ceiling["both_eyes"]["mean_px"] > 30
+    assert ceiling["with_head_pose"]["mean_px"] < 1.0
 
 
 def test_the_ceiling_of_a_noisy_person_is_proportionate_and_shows_a_dead_eye():
@@ -472,6 +511,44 @@ def test_a_per_day_iris_bias_hurts_the_cross_day_protocol_but_not_the_within_day
         within["mean_px"] / cross["mean_px"]
     )
     assert within["within_over_cross_mean_px"] < 0.25
+
+
+def test_within_day_summaries_are_the_means_of_the_per_day_values():
+    person = _person(Spec(noise=0.05, day_bias=(0.05, -0.05, 0.0)), with_3d=True)
+
+    result = diagnostics.diagnose([person])["persons"]["p00"]
+
+    within, per_day = result["within_day"], result["within_day"]["per_day"]
+    summaries = {
+        "mean_px": "mean_px",
+        "mean_deg": "mean_deg",
+        "validation_error_px_mean": "validation_error_px",
+        "calibration_mean_distance_px_mean": "calibration_mean_distance_px",
+    }
+    for summary, key in summaries.items():
+        assert within[summary] == pytest.approx(np.mean([d[key] for d in per_day]), rel=1e-9)
+    # The four differ, so a summary read from the wrong per-day value would show.
+    assert len({round(within[s], 3) for s in summaries}) == 4
+    cross = result["cross_day"]
+    assert within["cross_day_mean_deg"] == cross["mean_deg"] and cross["mean_deg"] > 0
+
+
+def test_calibration_days_counts_only_the_days_of_the_calibration_images():
+    person = _person(Spec(noise=0.02))
+    targets = np.asarray(person.data.targets_px)
+    dots = np.array(target_points(W, H))
+    near_a_dot = np.linalg.norm(targets[:, None, :] - dots[None], axis=2).min(axis=1) < 150
+    # Every image near a dot is in day01; the rest are split between day02 and day03.
+    person.days = [
+        "day01" if near else ("day02" if i % 2 else "day03") for i, near in enumerate(near_a_dot)
+    ]
+
+    result = diagnostics.diagnose([person])["persons"]["p00"]
+
+    assert result["within_day"]["days_total"] == 3
+    # The K = 5 images nearest each dot all lie within 150 px of it, so all in day01.
+    assert result["cross_day"]["calibration_mean_distance_px"] < 100
+    assert result["cross_day"]["calibration_days"] == 1
 
 
 def test_days_with_too_few_valid_images_are_skipped_and_listed():
@@ -799,6 +876,26 @@ def test_a_per_day_bias_shows_as_a_high_day_share():
     assert split["r2_head_pose_beyond_target"] < 0.05
 
 
+def test_head_pose_and_day_together_explain_more_than_either_alone():
+    split = _one(
+        Spec(noise=0.005, yaw_range_deg=15.0, shift_per_yaw_deg=0.01, day_bias=(0.1, -0.1, 0.0))
+    )["variance_split"]
+
+    assert split["r2_head_pose"] > 0.2 and split["r2_day"] > 0.2
+    assert split["r2_head_pose_and_day"] > split["r2_head_pose"] + 0.2
+    assert split["r2_head_pose_and_day"] > split["r2_day"] + 0.2
+    assert split["r2_head_pose_and_day"] > 0.9
+
+
+def test_the_head_pose_share_includes_the_heads_position():
+    # No head rotation at all; the iris offsets shift with the head's sideways position.
+    split = _one(Spec(shift_per_mm=0.005))["variance_split"]
+
+    assert split["residual_rms_px"] > 20
+    assert split["r2_head_pose"] > 0.9
+    assert split["r2_head_pose_beyond_target"] > 0.9
+
+
 def test_nothing_is_left_to_split_when_the_fit_is_exact():
     split = _one(Spec(yaw_range_deg=10.0))["variance_split"]
 
@@ -865,6 +962,17 @@ def test_aggregate_summarises_each_metric_across_persons():
     signs = result["aggregate"]["feature_sanity"]["target_x_signs_match"]
     assert signs == {"true": 2, "persons": 2}
     assert result["aggregate"]["persons"] == 2
+
+
+def test_aggregate_counts_a_text_metric_per_value():
+    result = _diagnose(
+        Spec(yaw_range_deg=10.0),
+        Spec("p01", seed=1, yaw_range_deg=10.0, axes="y180"),
+        Spec("p02", seed=2, yaw_range_deg=10.0, axes="y180"),
+    )
+
+    relabelled = result["aggregate"]["head_pose_agreement"]["dataset_axes_relabelled"]
+    assert relabelled == {"counts": {"none": 1, "y180": 2}, "persons": 3}
 
 
 def test_diagnose_is_deterministic_and_strict_json():
