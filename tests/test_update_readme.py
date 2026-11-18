@@ -520,6 +520,93 @@ def test_public_results_give_the_commands_that_reproduce_them():
     assert mpii.build_parser().parse_args(evaluate[3:]).k_per_dot == 10
 
 
+def _commands(text: str) -> tuple[str, list[list[str]]]:
+    """The line that introduces the reproducing commands, and the commands."""
+    before, block = text.split("```bash\n", 1)
+    intro = before.rstrip().rsplit("\n\n", 1)[-1]
+    return intro, [shlex.split(line) for line in block.split("```", 1)[0].splitlines()]
+
+
+def _arg(command: list[str], flag: str) -> str | None:
+    return command[command.index(flag) + 1] if flag in command else None
+
+
+@pytest.mark.parametrize(
+    "root, cache",
+    [
+        ("/home/someone/data/MPIIFaceGaze", "/home/someone/data/cache"),  # absolute
+        ("data/mpii", "data/cache/mpii"),  # the downloader writes <dest>/MPIIFaceGaze
+        ("C:\\Users\\someone\\MPIIFaceGaze", "C:\\Users\\someone\\cache"),  # Windows
+        ("~/MPIIFaceGaze", "~/cache"),  # the user's home
+        ("../elsewhere/MPIIFaceGaze", "../elsewhere/cache"),  # outside the repo
+        ("datasets/MPIIFaceGaze", "/home/someone/cache"),  # an absolute cache alone
+    ],
+)
+def test_reproducing_commands_use_the_documented_paths_when_the_runs_are_local(root, cache):
+    results = _public_results()
+    results["config"].update(root=root, cache=cache)
+
+    intro, (download, extract, evaluate) = _commands(update_readme.public_results(results))
+
+    assert _arg(download, "--dest") == "datasets"
+    for command in (extract, evaluate):
+        assert _arg(command, "--root") == "datasets/MPIIFaceGaze"
+        assert _arg(command, "--cache") == "datasets/cache/mpiifacegaze"
+    assert "the run itself used other local paths" in intro
+    text = update_readme.public_results(results)
+    assert "someone" not in text and "elsewhere" not in text and "data/mpii" not in text
+
+
+@pytest.mark.parametrize(
+    "root, cache, dest",
+    [
+        ("datasets/MPIIFaceGaze", "datasets/cache/mpiifacegaze", "datasets"),
+        ("./data/MPIIFaceGaze", "data/cache", "data"),
+        ("MPIIFaceGaze", "cache", "."),
+    ],
+)
+def test_reproducing_commands_keep_a_runs_own_repo_relative_paths(root, cache, dest):
+    results = _public_results()
+    results["config"].update(root=root, cache=cache)
+
+    intro, (download, extract, evaluate) = _commands(update_readme.public_results(results))
+
+    # The downloader unpacks into <dest>/MPIIFaceGaze, which is what extract reads.
+    assert _arg(download, "--dest") == dest
+    for command in (extract, evaluate):
+        assert Path(_arg(command, "--root") or "") == Path(dest) / "MPIIFaceGaze"
+        assert Path(_arg(command, "--cache") or "") == Path(cache)
+    assert "other local paths" not in intro
+
+
+def test_reproducing_commands_name_the_persons_and_variants_of_a_partial_run():
+    from eval.public import models
+    from eval.public import mpiifacegaze as mpii
+
+    everyone = [f"p{i:02d}" for i in range(15)]  # MPIIFaceGaze's 15 participants
+    results = _public_results()
+    results["config"].update(persons=everyone, variants=list(models.VARIANT_NAMES))
+
+    _, (_, extract, evaluate) = _commands(update_readme.public_results(results))
+
+    for command in (extract, evaluate):
+        assert "--persons" not in command and "--variants" not in command
+
+    results["config"].update(persons=["p00", "p03"], variants=["eyeos", "global-lopo"])
+
+    _, (_, extract, evaluate) = _commands(update_readme.public_results(results))
+
+    parser = mpii.build_parser()
+    assert parser.parse_args(extract[3:]).persons == "p00,p03"
+    assert parser.parse_args(evaluate[3:]).persons == "p00,p03"
+    assert parser.parse_args(evaluate[3:]).variants == "eyeos,global-lopo"
+    # A file from before some variants existed: today's default would add rows.
+    results["config"].update(persons=everyone, variants=list(models.VARIANT_NAMES)[:12])
+    _, (_, extract, evaluate) = _commands(update_readme.public_results(results))
+    assert "--persons" not in extract + evaluate
+    assert parser.parse_args(evaluate[3:]).variants == ",".join(models.VARIANT_NAMES[:12])
+
+
 def test_public_results_render_a_results_file_from_before_the_baselines():
     # The committed file, without whatever a later run added: no environment block, no
     # baselines and no eyeos-live9.

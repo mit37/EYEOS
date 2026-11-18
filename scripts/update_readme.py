@@ -26,6 +26,7 @@ import shlex
 import statistics
 import subprocess
 import sys
+from collections.abc import Sequence
 from contextlib import redirect_stdout
 from pathlib import Path, PurePosixPath
 from typing import Any
@@ -34,6 +35,7 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 
 from eval.generate_synthetic import NOISE_SIGMA  # noqa: E402
+from eval.public.models import VARIANT_NAMES  # noqa: E402
 from eval.public.protocol import DEFAULT_K_PER_DOT  # noqa: E402
 from eval.run_eval import compute_metrics, load_raw_rows  # noqa: E402
 from eyeos.calibration_session import SAMPLE_FRAMES  # noqa: E402
@@ -237,6 +239,9 @@ SHIPPING = "eyeos"
 LIVE_STYLE = "eyeos-live9"  # the shipping calibration fitted as a live session fits it
 BASELINES = ("centre", "calibration-mean")  # constant predictors that ignore the image
 CALIBRATION_DOTS = 9  # eyeos.calibration.target_points: the 3 x 3 grid
+MPII_PERSONS = tuple(f"p{i:02d}" for i in range(15))  # MPIIFaceGaze's participants
+DATASET_ROOT = "datasets/MPIIFaceGaze"  # where docs/PUBLIC_DATASETS.md puts the dataset
+DATASET_CACHE = "datasets/cache/mpiifacegaze"
 
 
 def _num(value: float | None, spec: str, unit: str = "") -> str:
@@ -401,24 +406,67 @@ def _check_footnote(results: dict[str, Any]) -> str:
     )
 
 
+def _repo_relative(path: str) -> bool:
+    """Is this a relative POSIX path inside the repo, safe to print in the README (no
+    absolute, home, Windows or ``..`` path that names one machine's folders)?"""
+    parts = PurePosixPath(path).parts
+    return (
+        bool(parts)
+        and not PurePosixPath(path).is_absolute()
+        and "\\" not in path
+        and ":" not in path
+        and not path.startswith("~")
+        and ".." not in parts
+    )
+
+
+def _paths(config: dict[str, Any]) -> tuple[str, str, bool]:
+    """(root, cache, the run's own?) for the reproducing commands: the run's paths when
+    they are repo-relative and root is the downloader's ``<dest>/MPIIFaceGaze``, else the
+    documented ones."""
+    root, cache = str(config.get("root", DATASET_ROOT)), str(config.get("cache", DATASET_CACHE))
+    if (
+        _repo_relative(root)
+        and _repo_relative(cache)
+        and PurePosixPath(root).name == "MPIIFaceGaze"
+    ):
+        return str(PurePosixPath(root)), str(PurePosixPath(cache)), True
+    return DATASET_ROOT, DATASET_CACHE, False
+
+
+def _subset(config: dict[str, Any], key: str, everything: Sequence[str]) -> str:
+    """``--persons``/``--variants`` with the run's list, when it is not the default."""
+    chosen = config.get(key)
+    if chosen is None or list(chosen) == list(everything):
+        return ""
+    return f" --{key} {shlex.quote(','.join(chosen))}"
+
+
 def _reproduce(results: dict[str, Any]) -> str:
-    """The commands that regenerate the results file, with its own root, cache and K."""
+    """The commands that regenerate the results file, with its persons, variants and K,
+    and its root and cache when they are repo-relative (else the documented ones)."""
     config = results["config"]
-    root = str(config.get("root", "datasets/MPIIFaceGaze"))
-    cache = str(config.get("cache", "datasets/cache/mpiifacegaze"))
+    root, cache, own = _paths(config)
     where = f"--root {shlex.quote(root)} --cache {shlex.quote(cache)}"
+    persons = _subset(config, "persons", MPII_PERSONS)
+    variants = _subset(config, "variants", VARIANT_NAMES)
     k = config.get("k_per_dot")
     k_flag = "" if k is None or k == DEFAULT_K_PER_DOT else f" --k-per-dot {k}"
+    note = (
+        ""
+        if own
+        else "; the run itself used other local paths, so these commands use the documented ones"
+    )
     return "\n".join(
         [
-            "Reproduce it with the dataset (`docs/PUBLIC_DATASETS.md`):",
+            f"Reproduce it with the dataset (`docs/PUBLIC_DATASETS.md`{note}):",
             "",
             "```bash",
             "python scripts/download_mpiifacegaze.py --accept-license "
             f"--dest {shlex.quote(str(PurePosixPath(root).parent))}",
-            f"python -m eval.public.mpiifacegaze extract {where}",
-            f"python -m eval.public.mpiifacegaze evaluate {where} --out {PUBLIC_RESULTS_PATH}"
-            f"{k_flag}",
+            f"python -m eval.public.mpiifacegaze extract {where}{persons}",
+            f"python -m eval.public.mpiifacegaze evaluate {where}{persons}{variants} "
+            f"--out {PUBLIC_RESULTS_PATH}{k_flag}",
             "```",
         ]
     )
