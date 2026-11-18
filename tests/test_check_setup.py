@@ -8,7 +8,9 @@ is touched.
 from __future__ import annotations
 
 import importlib.util
+import io
 import sys
+import types
 from pathlib import Path
 
 import pytest
@@ -135,7 +137,45 @@ def test_eyeos_from_another_checkout_warns(tmp_path):
     assert check_setup.check_eyeos(repo_root=REPO_ROOT).status == "ok"
 
 
-def test_output_is_plain_ascii(all_installed, capsys):
-    """Windows consoles and redirected output may not be UTF-8."""
+NON_ASCII_PYTHON = "C:\\Users\\Jos\u00e9\\eyeos\\.venv\\Scripts\\python.exe"
+NON_ASCII_EYEOS = "/home/Zo\u00eb/\u773c\u775b/eyeos/eyeos/__init__.py"
+
+
+def _fake_eyeos(monkeypatch, file: str) -> None:
+    """Make ``import eyeos`` (inside check_eyeos) find a package at ``file``."""
+    module = types.ModuleType("eyeos")
+    module.__file__ = file
+    module.__version__ = "2.0.0"
+    monkeypatch.setitem(sys.modules, "eyeos", module)
+
+
+def test_output_is_plain_ascii_even_with_non_ascii_paths(all_installed, monkeypatch, capsys):
+    """Windows consoles and redirected output may not be UTF-8, and the guide clones into
+    $HOME\\eyeos, so the Python and eyeos paths it prints can hold any character."""
+    monkeypatch.setattr(sys, "executable", NON_ASCII_PYTHON)
+    _fake_eyeos(monkeypatch, NON_ASCII_EYEOS)
+
     check_setup.main([])
-    capsys.readouterr().out.encode("ascii")
+
+    out = capsys.readouterr().out
+    out.encode("ascii")
+    # Escaped, not dropped: the paths stay recognisable.
+    assert "Jos\\xe9" in out and "Zo\\xeb" in out
+
+
+def test_a_stdout_that_cannot_encode_the_paths_does_not_crash(all_installed, monkeypatch):
+    """A redirected stdout in a legacy code page: print() itself must not raise."""
+    monkeypatch.setattr(sys, "executable", NON_ASCII_PYTHON)
+    _fake_eyeos(monkeypatch, NON_ASCII_EYEOS)
+    raw = io.BytesIO()
+    stdout = io.TextIOWrapper(raw, encoding="ascii", errors="strict")
+    monkeypatch.setattr(sys, "stdout", stdout)
+
+    status = check_setup.main([])
+
+    stdout.flush()
+    out = raw.getvalue().decode("ascii")
+    assert status == 0
+    assert "Jos\\xe9" in out.splitlines()[0]
+    assert "[warn] eyeos 2.0.0: imported from /home/Zo\\xeb/" in out
+    assert out.rstrip().endswith("All required checks passed.")

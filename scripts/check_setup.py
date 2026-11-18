@@ -11,7 +11,9 @@ this check is what catches that.
 
 It opens no camera, shows no window and starts no keyboard listener. Exit code 0 when
 everything a live session needs is there, 1 otherwise. Output is plain ASCII, because a
-Windows console or a redirected output may not be UTF-8.
+Windows console or a redirected output may not be UTF-8: any other character (in the
+path of a user folder whose name has an accent, say) is printed as an escape such as
+\\xe9.
 """
 
 from __future__ import annotations
@@ -165,18 +167,25 @@ def run_checks() -> list[Result]:
     ]
 
 
+def _say(line: str) -> None:
+    """Print ``line`` as plain ASCII. Paths (sys.executable, where eyeos lives) and error
+    messages can hold any character, and print() raises on one that a console or a
+    redirected output in a legacy code page cannot encode."""
+    print(line.encode("ascii", "backslashreplace").decode("ascii"))
+
+
 def main(argv: list[str] | None = None) -> int:
     del argv  # no options; the parameter keeps the scripts' usual main(argv) shape
-    print(f"EyeOS setup check ({sys.executable})")
+    _say(f"EyeOS setup check ({sys.executable})")
     results = run_checks()
     for r in results:
         tag = {"ok": "[ok]  ", "warn": "[warn]", "fail": "[FAIL]"}[r.status]
-        print(f"  {tag} {r.name}: {r.detail}")
+        _say(f"  {tag} {r.name}: {r.detail}")
     failed = [r for r in results if r.status == "fail"]
     if failed:
-        print(f"{len(failed)} required check(s) failed; see docs/LOCAL_SETUP.md, Troubleshooting.")
+        _say(f"{len(failed)} required check(s) failed; see docs/LOCAL_SETUP.md, Troubleshooting.")
         return 1
-    print("All required checks passed.")
+    _say("All required checks passed.")
     return 0
 
 
