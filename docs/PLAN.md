@@ -123,8 +123,24 @@ Restated from `PRD.md` §8, per `STANDARDS.md` §6 step 1.
     16:9 frames; the iris axes flipped at 90 deg of roll; Ctrl+C during calibration
     was misreported; bad YAML gave a traceback; and README config values could go
     stale.
+- Moving to a local machine (2026-11-17/18), at the owner's request: four pieces
+  beyond the PRD's milestones, each built test-first by its own agent, reviewed
+  adversarially by another, and fixed before merging.
+  - `eyeos run --view`, a live tracking view: a marker on each pupil, the shift
+    arrow that drives the cursor, a mini screen map and the gate lights.
+  - `eyeos record`, a labelled session recorder for `eval/run_eval.py`, which now
+    takes the recording's `--config`.
+  - `eval/public/`, an MPIIFaceGaze harness: license-gated download, a landmark
+    cache, the shipping calibration and 11 variants. It has not run on the real
+    dataset (see the constraints below).
+  - `docs/LOCAL_SETUP.md` and the setup scripts for Windows and Linux/macOS.
+  - The reviews found 20 issues (1 high, 8 medium, 11 low). All were fixed;
+    what is still untested is listed below. One more fix came out of it: a config
+    that repeats a key (a second pasted `gates:` section, which plain YAML would let
+    silently drop the first one's no-click zones) is now refused.
 - Still open: the owner-only items (tag, repo description and topics, branch
-  protection) and hardware verification.
+  protection), hardware verification, a real recorded session, and the real
+  MPIIFaceGaze run.
 
 ## Cloud-instance constraints (PRD §7, STANDARDS §6.4)
 
