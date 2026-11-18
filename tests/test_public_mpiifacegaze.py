@@ -1743,3 +1743,87 @@ def test_global_lopo_per_user_correction_absorbs_a_quirk_the_others_do_not_share
     for person in results["variants"]["global-lopo"]["persons"].values():
         assert person["pixel_error_px"]["mean"] < 0.75
         assert person["validation_error_px"] < 0.5
+
+
+# Every pre-existing variant's results on _locked_persons(), recorded at f2bdf78, before
+# the baselines and the live-style variant were added: (mean px over the person's test
+# frames, validation_error_px, mean angular error in degrees) per person. Changes to the
+# protocol's interface, and every variant added since, must leave them as they were.
+_EYEOS_LOCKED = [
+    (33.16953157341305, 39.20958689732675, 0.8163544263757708),
+    (36.63416713405864, 43.54924607153392, 0.7329309329511899),
+    (32.66561085659284, 46.198042397550864, 0.8071310185953707),
+]
+_LOCKED_RESULTS: dict[str, list[tuple[float, float, float]]] = {
+    "eyeos": _EYEOS_LOCKED,
+    "eyeos-poly2": [
+        (34.51668799477168, 41.013938146549556, 0.8500688310903036),
+        (38.0076223817289, 45.03346993600006, 0.7602513316526346),
+        (35.11281429347641, 46.98266008658067, 0.868193151508361),
+    ],
+    "ridge-0.001": _EYEOS_LOCKED,
+    "ridge-0.1": [
+        (33.01254889110946, 39.28703230013042, 0.813031937384653),
+        (36.823989968693525, 43.63630092221682, 0.7367774822400601),
+        (32.37403618665354, 46.29350859159263, 0.7999294703786952),
+    ],
+    "ridge-1": [
+        (36.59162967001116, 48.23172209972332, 0.9057838058261496),
+        (42.32093548331619, 53.477437214404254, 0.8463388314100436),
+        (35.884580674889506, 54.79943111325116, 0.8861481438359093),
+    ],
+    "ridge-10": [
+        (121.62896590039581, 173.38577182050227, 3.019017843050903),
+        (139.3070438496091, 194.4784252794551, 2.780953052168525),
+        (123.25014347939756, 177.30384446874896, 3.0447323395809254),
+    ],
+    "per-dot-1": [
+        (42.70662984275944, 36.13442147633521, 1.0473364971186874),
+        (41.021272099505204, 54.29729965750892, 0.8190120808388855),
+        (34.30592819595783, 63.65389223802863, 0.8443917141641587),
+    ],
+    "per-dot-5": _EYEOS_LOCKED,
+    "per-dot-10": [
+        (32.316817576449985, 39.191598511292376, 0.801050932145085),
+        (37.155392615419345, 42.447885375648994, 0.7434716173250486),
+        (32.16520925086252, 41.861400732469534, 0.7956951280605054),
+    ],
+    "per-dot-20": [
+        (32.52380155628933, 38.05729341885414, 0.8108375174120739),
+        (39.34865435199855, 41.62115538823545, 0.7891978608537298),
+        (36.29758001475377, 37.894934792400946, 0.9048320607634069),
+    ],
+    "with-head-pose": [
+        (33.16688449860971, 39.209955963560056, 0.8162921491430469),
+        (36.638957613698004, 43.54964591575351, 0.7330306042809718),
+        (32.67018050308502, 46.19818470639086, 0.8072410989431981),
+    ],
+    "global-lopo": [
+        (33.176119471253145, 39.21003431421349, 0.8165179832396654),
+        (36.63514974631022, 43.54970460226067, 0.7329625944730479),
+        (32.66217029515252, 46.19821093916597, 0.8070525511264826),
+    ],
+}
+
+
+def _locked_persons(tmp_path: Path) -> list[protocol.PersonData]:
+    return [
+        _person_data_3d(tmp_path, FakePerson("p00", noise=0.05)),
+        _person_data_3d(tmp_path, _second_screen("p01", seed=1, noise=0.05)),
+        _person_data_3d(tmp_path, FakePerson("p02", seed=2, noise=0.05, iris_bias=(0.1, -0.05))),
+    ]
+
+
+def test_every_pre_existing_variant_still_gives_the_results_recorded_before_the_baselines(
+    tmp_path,
+):
+    # Every registered variant in one run, so a new one that disturbed the others shows.
+    results = protocol.evaluate(_locked_persons(tmp_path), list(models.build_variants().values()))
+
+    for name, locked in _LOCKED_RESULTS.items():
+        got = [
+            (p["pixel_error_px"]["mean"], p["validation_error_px"], p["angular_error_deg"]["mean"])
+            for p in results["variants"][name]["persons"].values()
+        ]
+        # Only the last bits may differ, between numpy builds.
+        assert got == [pytest.approx(row, rel=1e-9) for row in locked], name
