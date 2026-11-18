@@ -14,6 +14,7 @@ setup_unix.sh.
 from __future__ import annotations
 
 import re
+import shlex
 import shutil
 import subprocess
 import sys
@@ -167,6 +168,74 @@ def test_refuses_a_venv_made_with_an_unsupported_python(tmp_path):
     assert result.returncode != 0
     assert ".venv" in result.stderr and "3.13" in result.stderr
     assert _commands(result) == []
+
+
+def _fake_python_without_pip(path: Path, version: str) -> Path:
+    """The .venv python a failed ``python -m venv`` leaves behind: it runs, but has no pip."""
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(
+        "#!/bin/sh\n"
+        'if [ "$1" = "-m" ] && [ "$2" = "pip" ]; then\n'
+        '    echo "$0: No module named pip" >&2\n'
+        "    exit 1\n"
+        "fi\n"
+        f"echo {version}\n"
+    )
+    path.chmod(0o755)
+    return path
+
+
+def _fake_debian_python(path: Path, version: str, venv_python: Path) -> Path:
+    """Debian/Ubuntu's pythonX.Y without the pythonX.Y-venv package: ``-m venv DIR``
+    makes DIR/bin/python, then fails because ensurepip is missing."""
+    mkdir, cp = shutil.which("mkdir"), shutil.which("cp")
+    assert mkdir is not None and cp is not None
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(
+        "#!/bin/sh\n"
+        'if [ "$1" = "-m" ] && [ "$2" = "venv" ]; then\n'
+        f'    {shlex.quote(mkdir)} -p "$3/bin"\n'
+        f'    {shlex.quote(cp)} {shlex.quote(str(venv_python))} "$3/bin/python"\n'
+        '    echo "The virtual environment was not created successfully because ensurepip '
+        'is not available."\n'
+        "    exit 1\n"
+        "fi\n"
+        f"echo {version}\n"
+    )
+    path.chmod(0o755)
+    return path
+
+
+@unix_only
+def test_refuses_a_reused_venv_without_pip(tmp_path):
+    _fake_python_without_pip(tmp_path / "repo" / ".venv" / "bin" / "python", "3.12")
+    result = _run(tmp_path, {"python3.12": "3.12"})
+    assert result.returncode != 0
+    assert "no pip" in result.stderr
+    assert "rm -rf .venv" in result.stderr
+    assert "no network" not in result.stderr
+    assert _commands(result) == []  # not even the pip upgrade
+
+
+@unix_only
+def test_a_venv_left_by_a_failed_creation_is_not_reused(tmp_path):
+    """The Debian/Ubuntu path: no python3.12-venv, then a rerun after installing it.
+    Not a dry run: every interpreter here is a fake shell script."""
+    template = _fake_python_without_pip(tmp_path / "template" / "python", "3.12")
+    _fake_debian_python(tmp_path / "bin" / "python3.12", "3.12", template)
+
+    first = _run(tmp_path, {}, EYEOS_SETUP_DRY_RUN="")
+    assert first.returncode != 0
+    assert "sudo apt install python3.12-venv" in first.stderr
+    assert "rm -rf .venv" in first.stderr
+    assert (tmp_path / "repo" / ".venv" / "bin" / "python").exists()  # half made
+
+    _fake_python(tmp_path / "bin" / "python3.12", "3.12")  # python3.12-venv installed
+    second = _run(tmp_path, {}, EYEOS_SETUP_DRY_RUN="")
+    assert second.returncode != 0
+    assert "reusing .venv" not in second.stdout
+    assert "no pip" in second.stderr and "rm -rf .venv" in second.stderr
+    assert "no network" not in second.stderr
 
 
 @unix_only

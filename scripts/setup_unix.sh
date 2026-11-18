@@ -6,7 +6,8 @@
 #
 #   1. finds Python 3.12, 3.11 or 3.10 (python3.12, python3.11, python3.10, then python3
 #      and python if their version fits). mediapipe<0.10.30 has no wheels for 3.13+;
-#   2. creates .venv in the repo root, or reuses one made with a supported Python;
+#   2. creates .venv in the repo root, or reuses one made with a supported Python that
+#      has pip;
 #   3. installs EyeOS in editable mode with the extras dev,webcam,windows-fallback,public-eval;
 #   4. runs scripts/check_setup.py (the real OpenCV + MediaPipe) and the test suite;
 #   5. prints the next steps.
@@ -103,11 +104,18 @@ if [ -e "$VENV_PY" ]; then
         die ".venv already exists and holds Python ${venv_version:-that does not run}, not \
 3.10-3.12. Remove it (rm -rf .venv) and run this again."
     fi
+    # A venv creation that failed half way (Debian/Ubuntu without pythonX.Y-venv) leaves
+    # a .venv/bin/python without pip. Checked in a dry run too: it only reads.
+    "$VENV_PY" -m pip --version >/dev/null 2>&1 || die ".venv already exists but has no \
+pip, so an earlier venv creation probably failed half way. Remove it (rm -rf .venv) and run \
+this again. On Debian/Ubuntu install the venv module first: sudo apt install \
+python$venv_version-venv"
     say "reusing .venv (Python $venv_version)"
 else
     say "creating .venv with $PY (Python $PYV)"
     run "$PY" -m venv .venv || die "could not create .venv. On Debian/Ubuntu the venv module \
-is a separate package: sudo apt install python$PYV-venv"
+is a separate package: sudo apt install python$PYV-venv, then remove the half-made .venv \
+(rm -rf .venv) and run this again."
 fi
 
 # --- 4. install, check, test ---------------------------------------------------------
