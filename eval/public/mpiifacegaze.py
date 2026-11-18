@@ -746,8 +746,9 @@ REPO_ROOT = Path(__file__).resolve().parents[2]
 NOTES = {
     "license": (
         "The license field names the dataset's license (MPIIFaceGaze is CC BY-NC-SA 4.0). "
-        "This file holds only error metrics of EyeOS's models on that data, per person and "
-        "in aggregate: no images, landmarks or annotations."
+        "This file holds only metrics, counts and run metadata: EyeOS's models' errors on "
+        "that data per person and in aggregate, detection counts, the config, the git commit "
+        "and the environment; no images, landmarks or annotations."
     ),
     "static_photos": (
         "MPIIFaceGaze is still photos, not live video, so the One Euro filter, dwell (Gate 3) "
@@ -790,7 +791,8 @@ NOTES = {
         "for the eyeos.calibration variants, the same definition for the others). That is "
         "not what live Gate 2 judges: live, it is the leave-one-out over 9 samples, each a "
         "dot's averaged frames placed at the dot. eyeos-live9's validation_error_px is that "
-        "live statistic. passes_gate2 and gate2_passed: validation_error_px below "
+        "statistic, on these photos, not in a live session (see eyeos_live9). passes_gate2 "
+        "and gate2_passed: validation_error_px below "
         "config.gate2_max_validation_error_px."
     ),
     "restatements": (

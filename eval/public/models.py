@@ -30,9 +30,10 @@ The variants (``--variants``, default all):
 - ``calibration-mean``: baseline; always predicts the mean of the calibration targets.
   Its validation error is the true leave-one-out RMS of that mean predictor.
 
-The baselines run through the same protocol as every model (same calibration and test
-frames, same rounding and clamping), so their errors are directly comparable: they say
-how much of a model's error is left after it has used the image at all.
+The baselines run through the same protocol as every model (same rounding and
+clamping; the same calibration and test frames as eyeos and every variant fitted at the
+run's K, which per-dot-1/10/20 are not), so their errors compare directly with those:
+they say how much of a model's error is left after it has used the image at all.
 """
 
 from __future__ import annotations

@@ -253,18 +253,20 @@ dataset will.
 
 Two baselines ignore the image. They put every other error on a scale: how much of it
 is left once a model has used the photo at all. The third variant builds the shipping
-calibration the way a live session does, so its validation error is the number live
-Gate 2 judges.
+calibration the way a live session does, so its validation error is the statistic live
+Gate 2 judges, computed on these photos: not a live result (see below).
 
 | Variant | Model | Its `validation_error_px` |
 |---|---|---|
 | `centre` | baseline: predicts the screen centre (W/2, H/2) for every frame | the RMS distance of the calibration targets to the centre: the leave-one-out of a constant that ignores the data |
 | `calibration-mean` | baseline: predicts the mean of the calibration targets for every frame | the true leave-one-out RMS of that mean predictor |
-| `eyeos-live9` | the shipping `Calibration`, fitted on 9 samples: each dot's K images averaged into one sample, placed at the dot | the leave-one-out over those 9 samples: the statistic live Gate 2 judges |
+| `eyeos-live9` | the shipping `Calibration`, fitted on 9 samples: each dot's K images averaged into one sample, placed at the dot | the leave-one-out over those 9 samples: the statistic live Gate 2 judges, on these photos |
 
 All three go through the same protocol as `eyeos`: the same calibration and test
 frames, the same rounding and clamping, so their pixel and angular errors compare
-directly with every other row.
+directly with `eyeos` and every other row fitted at the run's K. (`per-dot-1`,
+`per-dot-10` and `per-dot-20` calibrate on another number of photos per dot, so they
+are tested on other frames.)
 
 **Why `eyeos-live9`.** Every other variant's `validation_error_px` is the leave-one-out
 over its 9 × K calibration photos, each labelled with its own true target, with the
@@ -277,16 +279,19 @@ does what live calibration does: it averages exactly as `collect_dot_features` d
 (a test checks the two bit for bit, and another the whole fit against
 `calibrate_interactively` on the same frames), so its `passes_gate2` applies live
 Gate 2's statistic and threshold to these photos. It is still not a live session: each
-dot's K photos are separate moments, often from different days, not 10 consecutive
-frames of one; and their true targets are on average `calibration_mean_distance_px`
+dot's K photos are separate moments, often from different days, not up to 10 frames
+of one look; and their true targets are on average `calibration_mean_distance_px`
 from the dot. A live user does not look exactly at the dot either, but by how much is
 not measured anywhere in this repo.
 
 **In the README.** `scripts/update_readme.py` lists the baselines first, says how far
 `eyeos`'s mean error is below `centre`'s, counts for each variant the persons it beats
 `eyeos` for, and, when the results have `eyeos-live9`, gives its statistic and pass
-count next to the 45-photo one. With a results file that predates the three variants,
-it leaves out what needs them.
+count next to the 45-photo one, with why it is still not a live result. The commands
+it prints to rebuild the file keep the run's paths only when they are repo-relative
+(else they use the documented ones), and name `--persons` or `--variants` when the run
+did not cover them all. With a results file that predates the three variants, it
+leaves out what needs them.
 
 **The environment record.** A different MediaPipe or OpenCV version can give different
 landmarks, so a result is only reproducible with them known. `extract` now writes
@@ -299,7 +304,8 @@ evaluated persons. Each version comes from the library's pip distribution, or, f
 installed without pip metadata (conda, a system package), from the module's
 `__version__`; it is null when neither is found. `extract` is null for a cache made before
 manifests existed, such as the 2026-11-18 run's, and a person the manifest does not
-list is null. Neither file holds paths.
+list is null. Neither the manifest nor the environment block holds paths; the results
+file's `config` does (`root` and `cache`, as given to `evaluate`).
 
 ## The results JSON
 
