@@ -219,6 +219,17 @@ AGGREGATE_NOTE = (
     "persons per value. Each person weighs the same."
 )
 
+# numpy's vectorised arctan2 and BLAS can return results one unit in the last place
+# apart for the same input at a different memory alignment, so two runs on the same
+# cache could differ in the 16th digit. Rounding makes the file reproducible.
+SIGNIFICANT_DIGITS = 10
+ZERO_BELOW = 1e-9
+NUMBER_FORMAT = (
+    f"every number is rounded to {SIGNIFICANT_DIGITS} significant digits, and any number "
+    f"smaller than {ZERO_BELOW:g} in size is written as 0, so that last-digit floating-point "
+    "noise cannot change the file between runs on the same cache"
+)
+
 
 @dataclass
 class DiagnosticPerson:
@@ -707,18 +718,27 @@ def _pool_bins(per_person: list[list[dict[str, Any]]]) -> list[dict[str, Any]]:
     return pooled
 
 
-def _clean(value: Any) -> Any:
-    """Plain JSON types; NaN and infinities become null."""
+def _round(value: float) -> float | None:
+    if not math.isfinite(value):
+        return None
+    if abs(value) < ZERO_BELOW:
+        return 0.0
+    return float(f"{value:.{SIGNIFICANT_DIGITS}g}")
+
+
+def clean_for_json(value: Any) -> Any:
+    """Plain JSON types, with every number rounded as NUMBER_FORMAT says; NaN and
+    infinities become null."""
     if isinstance(value, dict):
-        return {str(k): _clean(v) for k, v in value.items()}
+        return {str(k): clean_for_json(v) for k, v in value.items()}
     if isinstance(value, (list, tuple)):
-        return [_clean(v) for v in value]
+        return [clean_for_json(v) for v in value]
     if isinstance(value, (bool, np.bool_)):
         return bool(value)
     if isinstance(value, (int, np.integer)):
         return int(value)
     if isinstance(value, (float, np.floating)):
-        return float(value) if math.isfinite(value) else None
+        return _round(float(value))
     return value
 
 
@@ -732,8 +752,9 @@ def diagnose(
     description of every metric. Deterministic."""
     settings = _Settings(k_per_dot, min_day_images, limits or protocol.Limits())
     per_person = {p.name: diagnose_person(p, settings) for p in persons}
-    return _clean(
+    return clean_for_json(
         {
+            "number_format": NUMBER_FORMAT,
             "config": {
                 "protocol_variant": PROTOCOL_VARIANT,
                 "k_per_dot": settings.k_per_dot,

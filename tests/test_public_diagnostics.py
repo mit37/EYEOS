@@ -364,9 +364,10 @@ def test_cross_day_reproduces_evaluate_for_the_shipping_calibration():
 
     evaluated = protocol.evaluate([person.data], [models.build_variants()["eyeos"]])
     expected = evaluated["variants"]["eyeos"]["persons"]["p00"]
-    assert cross["mean_px"] == pytest.approx(expected["pixel_error_px"]["mean"], abs=1e-12)
-    assert cross["mean_deg"] == pytest.approx(expected["angular_error_deg"]["mean"], abs=1e-12)
-    assert cross["validation_error_px"] == pytest.approx(expected["validation_error_px"])
+    # The same numbers, to the 10 significant digits the diagnostics JSON keeps.
+    assert cross["mean_px"] == pytest.approx(expected["pixel_error_px"]["mean"], rel=1e-9)
+    assert cross["mean_deg"] == pytest.approx(expected["angular_error_deg"]["mean"], rel=1e-9)
+    assert cross["validation_error_px"] == pytest.approx(expected["validation_error_px"], rel=1e-9)
     assert cross["passes_gate2"] == expected["passes_gate2"]
     assert cross["n_calibration"] == 45 and cross["n_test"] == expected["n_test"] == 405
     assert cross["calibration_mean_distance_px"] == pytest.approx(
@@ -622,6 +623,55 @@ def test_diagnose_is_deterministic_and_strict_json():
 
     text = json.dumps(first, allow_nan=False, sort_keys=True)
     assert text == json.dumps(second, allow_nan=False, sort_keys=True)
+
+
+def _nudged(face: FaceLandmarks | None) -> FaceLandmarks | None:
+    """The same face with every iris coordinate moved by one unit in the last place."""
+    if face is None:
+        return None
+    return dataclasses.replace(
+        face,
+        left_iris_center=Point3D(
+            math.nextafter(face.left_iris_center.x, 1.0), face.left_iris_center.y
+        ),
+        right_iris_center=Point3D(
+            face.right_iris_center.x, math.nextafter(face.right_iris_center.y, 1.0)
+        ),
+    )
+
+
+def test_last_bit_noise_in_the_inputs_does_not_change_the_json():
+    # numpy's vectorised arctan2 and BLAS can return a result one unit in the last place
+    # apart for the same input at a different memory alignment, so the same cache could
+    # give a different file. The JSON is rounded to make that invisible.
+    spec = Spec(noise=0.05, yaw_range_deg=10.0)
+    plain = _person(spec)
+    nudged = _person(spec)
+    nudged.data.landmarks = [_nudged(lm) for lm in nudged.data.landmarks]
+
+    first = diagnostics.diagnose([plain])
+    assert json.dumps(first, sort_keys=True) == json.dumps(
+        diagnostics.diagnose([nudged]), sort_keys=True
+    )
+    assert "10 significant digits" in first["number_format"]
+
+
+def test_json_numbers_are_rounded_to_10_significant_digits_and_tiny_ones_to_0():
+    value = 23.331758796333283
+    clean = diagnostics.clean_for_json
+
+    assert clean(value) == clean(math.nextafter(value, 100.0)) == 23.3317588
+    assert clean(12345.678901234) == 12345.6789
+    assert clean(np.float64(0.1234567890123)) == 0.123456789
+    assert clean(1e-8) == 1e-8
+    # Rounding noise around 0 (|x| below 1e-9) is written as 0, never as -0.0.
+    for tiny in (-5.377642775528102e-16, 3e-16, -0.0, -9.99e-10):
+        assert json.dumps(clean(tiny)) == "0.0", tiny
+    assert clean(float("nan")) is None and clean(float("inf")) is None
+    assert clean({"a": [np.int64(3), True, np.bool_(False), "x", None]}) == {
+        "a": [3, True, False, "x", None]
+    }
+    assert type(clean(np.int64(3))) is int and type(clean(np.float64(2.0))) is float
 
 
 def test_a_person_with_too_few_valid_frames_is_skipped_section_by_section():
