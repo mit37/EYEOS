@@ -22,11 +22,11 @@ import numpy as np
 import pytest
 
 from eval.generate_synthetic import make_landmarks
-from eval.public import diagnostics, protocol
+from eval.public import diagnostics, models, protocol
 from eyeos.calibration import Calibration
 from eyeos.features import FeatureVector, extract_features
 from eyeos.landmarks import FaceLandmarks, Point3D
-from tests.fake_mpiifacegaze import offsets_for_target
+from tests.fake_mpiifacegaze import FakePerson, offsets_for_target
 
 W, H = 1280.0, 800.0
 
@@ -164,7 +164,9 @@ def _frames(spec: Spec) -> list[Frame]:
     return frames
 
 
-def _person(spec: Spec, with_days: bool = True, with_head: bool = True) -> Any:
+def _person(
+    spec: Spec, with_days: bool = True, with_head: bool = True, with_3d: bool = False
+) -> Any:
     frames = _frames(spec)
     data = protocol.PersonData(
         spec.name,
@@ -172,6 +174,19 @@ def _person(spec: Spec, with_days: bool = True, with_head: bool = True) -> Any:
         np.array([f.target for f in frames]),
         [None if f.face is None else _face(**f.face) for f in frames],
     )
+    if with_3d:
+        # The fake dataset's screen model (tests/fake_mpiifacegaze.py), for angular error.
+        screen = FakePerson(spec.name)
+
+        def to_camera_mm(points_px: np.ndarray) -> np.ndarray:
+            return np.array([screen.gaze_target_mm(x, y) for x, y in points_px])
+
+        data = dataclasses.replace(
+            data,
+            face_centers_mm=np.tile(screen.face_center, (len(frames), 1)),
+            gaze_targets_mm=to_camera_mm(data.targets_px),
+            to_camera_mm=to_camera_mm,
+        )
     return diagnostics.DiagnosticPerson(
         data=data,
         days=[f.image.split("/")[0] for f in frames] if with_days else None,
@@ -337,6 +352,136 @@ def test_constant_baselines_predict_the_centre_and_the_persons_own_mean_target()
 
 
 # ---------------------------------------------------------------------------
+# d. the standard (cross-day) protocol against a within-day one
+# ---------------------------------------------------------------------------
+
+
+def test_cross_day_reproduces_evaluate_for_the_shipping_calibration():
+    spec = Spec(noise=0.05, yaw_range_deg=10.0)
+    person = _person(spec, with_3d=True)
+
+    cross = diagnostics.diagnose([person])["persons"]["p00"]["cross_day"]
+
+    evaluated = protocol.evaluate([person.data], [models.build_variants()["eyeos"]])
+    expected = evaluated["variants"]["eyeos"]["persons"]["p00"]
+    assert cross["mean_px"] == pytest.approx(expected["pixel_error_px"]["mean"], abs=1e-12)
+    assert cross["mean_deg"] == pytest.approx(expected["angular_error_deg"]["mean"], abs=1e-12)
+    assert cross["validation_error_px"] == pytest.approx(expected["validation_error_px"])
+    assert cross["passes_gate2"] == expected["passes_gate2"]
+    assert cross["n_calibration"] == 45 and cross["n_test"] == expected["n_test"] == 405
+    assert cross["calibration_mean_distance_px"] == pytest.approx(
+        expected["calibration_mean_distance_px"]
+    )
+    # Targets are uniform over all three days, so the 45 calibration images mix them.
+    assert 2 <= cross["calibration_days"] <= 3
+
+
+def test_noise_free_within_day_calibration_is_about_0_px_on_every_day():
+    within = _one(Spec(), min_day_images=60)["within_day"]
+
+    assert within["days_total"] == within["days_used"] == 3
+    assert within["days_skipped"] == 0 and within["skipped_days"] == []
+    assert [d["day"] for d in within["per_day"]] == ["day01", "day02", "day03"]
+    for day in within["per_day"]:
+        assert day["n_valid"] == 150
+        assert day["n_calibration"] == 45 and day["n_test"] == 105
+        assert day["mean_px"] < 0.75, day
+        assert day["validation_error_px"] < 0.5, day
+        assert day["passes_gate2"] is True
+    assert within["mean_px"] < 0.75
+    assert within["gate2_passed_days"] == 3
+
+
+def test_within_day_angular_error_uses_each_days_own_3d_labels():
+    person = _person(Spec(days=(80, 80)), with_3d=True)
+
+    result = diagnostics.diagnose([person])["persons"]["p00"]
+
+    assert result["within_day"]["mean_deg"] < 0.02
+    assert result["cross_day"]["mean_deg"] < 0.02
+    for day in result["within_day"]["per_day"]:
+        assert day["mean_deg"] < 0.02
+
+
+def test_a_per_day_iris_bias_hurts_the_cross_day_protocol_but_not_the_within_day_one():
+    person = _one(Spec(noise=0.005, day_bias=(0.15, -0.15, 0.0)))
+
+    within, cross = person["within_day"], person["cross_day"]
+    # 0.15 of an eye half-width is about 0.15 * 640 = 96 px in x and 60 px in y.
+    assert cross["mean_px"] > 40
+    assert within["mean_px"] < 10
+    assert within["cross_day_mean_px"] == cross["mean_px"]
+    assert within["cross_day_validation_error_px"] == cross["validation_error_px"]
+    assert within["within_over_cross_mean_px"] == pytest.approx(
+        within["mean_px"] / cross["mean_px"]
+    )
+    assert within["within_over_cross_mean_px"] < 0.25
+
+
+def test_days_with_too_few_valid_images_are_skipped_and_listed():
+    spec = Spec(days=(150, 30, 70), no_face=frozenset(range(150, 155)))
+
+    within = _one(spec)["within_day"]
+    assert within["days_total"] == 3
+    assert [d["day"] for d in within["per_day"]] == ["day01", "day03"]
+    assert within["skipped_days"] == [{"day": "day02", "n_valid": 25}]
+    assert within["days_used"] == 2 and within["days_skipped"] == 1
+
+    assert [d["day"] for d in _one(spec, min_day_images=100)["within_day"]["per_day"]] == ["day01"]
+    # Below 5 per dot x 9 dots + 1 test image, a day cannot be run whatever the minimum.
+    low = _one(spec, min_day_images=10)["within_day"]
+    assert [d["day"] for d in low["per_day"]] == ["day01", "day03"]
+    assert [d["n_test"] for d in _one(spec, k_per_dot=2)["within_day"]["per_day"]] == [
+        150 - 18,
+        70 - 18,
+    ]
+
+
+def test_within_day_is_skipped_with_the_reason_when_no_image_has_a_day():
+    without = diagnostics.diagnose([_person(Spec(), with_days=False)])["persons"]["p00"]
+    assert "day" in without["within_day"]["skipped"]
+    assert without["cross_day"]["calibration_days"] is None
+
+    unfoldered = _person(Spec())
+    unfoldered.days = [None] * len(unfoldered.days)
+    result = diagnostics.diagnose([unfoldered])["persons"]["p00"]
+    assert "day" in result["within_day"]["skipped"]
+
+
+def test_a_person_too_small_for_the_protocol_keeps_the_in_sample_sections():
+    person = _one(Spec(days=(30,)))
+
+    # The protocol's own reason.
+    assert "30 valid frames; 5 per dot x 9 dots" in person["cross_day"]["skipped"]
+    assert person["within_day"]["days_used"] == 0
+    assert person["within_day"]["mean_px"] is None
+    assert person["within_day"]["cross_day_mean_px"] is None
+    assert "skipped" not in person["in_sample_ceiling"]
+
+
+def test_the_aggregate_compares_within_and_cross_day_on_the_same_persons():
+    result = _diagnose(
+        Spec(noise=0.02, day_bias=(0.1, -0.1, 0.0)),
+        Spec("p01", seed=1, noise=0.02),
+        Spec("p02", seed=2, noise=0.02, days=(40, 40)),  # cross-day only: no day has 60
+    )
+
+    aggregate = result["aggregate"]
+    assert aggregate["cross_day"]["mean_px"]["persons"] == 3
+    assert aggregate["within_day"]["mean_px"]["persons"] == 2
+    assert aggregate["within_day"]["cross_day_mean_px"]["persons"] == 2
+    persons = result["persons"]
+    assert aggregate["within_day"]["cross_day_mean_px"]["mean"] == pytest.approx(
+        (persons["p00"]["cross_day"]["mean_px"] + persons["p01"]["cross_day"]["mean_px"]) / 2
+    )
+    assert aggregate["within_day"]["days_used_total"] == 6
+    assert aggregate["within_day"]["gate2_passed_days_total"] == sum(
+        p["within_day"]["gate2_passed_days"] for p in persons.values()
+    )
+    assert aggregate["cross_day"]["passes_gate2"]["persons"] == 3
+
+
+# ---------------------------------------------------------------------------
 # the JSON: names, descriptions, aggregates, determinism
 # ---------------------------------------------------------------------------
 
@@ -362,6 +507,11 @@ def test_every_metric_has_a_name_and_a_one_line_description():
         assert text and "\n" not in text, name
     for section in diagnostics.SECTIONS:
         assert result["sections"][section], section
+        # Aggregate-only metrics (totals, pooled values) are described on their own.
+        per_person = {k for p in result["persons"].values() for k in p.get(section, {})}
+        for key in result["aggregate"][section]:
+            if key not in per_person:
+                assert f"aggregate.{section}.{key}" in described, (section, key)
 
 
 def test_aggregate_summarises_each_metric_across_persons():
