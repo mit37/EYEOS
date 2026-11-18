@@ -514,8 +514,9 @@ averages 319 px; Gate 2 needs < 60 px.
 **This has not been run on the real data yet.** The `diagnose` command was added after
 the run above. It is tested only on fake datasets (`tests/test_public_diagnostics.py`)
 whose cause of error is known: noise-free faces, iris offsets that shift with head yaw,
-a different iris bias on each day, pure landmark noise, and EyeOS head angles that are a
-known multiple of the dataset's. Until a session with the data runs it and commits
+a different iris bias on each day, pure landmark noise (also with a head that turns
+toward the target), and EyeOS head angles that are a known multiple of the dataset's.
+Until a session with the data runs it and commits
 the JSON, nothing here says where the 258 px mean in the table above comes from; this
 section says how to read the answer when it exists.
 
@@ -586,12 +587,14 @@ are bounds and explanations, not results. Only d and e follow the evaluation pro
   as the within-day mean is. `cross_day_mean_px` (every test frame) is kept beside it;
   a large gap between the two means the skipped days score differently. Within each
   day the two protocols still test slightly different frames, because each leaves out
-  its own calibration images. Within-day far below cross-day means drift
-  between sittings is a large share of the error; a live session calibrates in the same
-  sitting. Both high means the features are the bottleneck. A day folder can hold
-  several sittings, and a day has fewer images, so its calibration images lie further
-  from the dots (`calibration_mean_distance_px`). The two protocols are not matched in
-  size, and within-day is not a live session either.
+  its own calibration images. Within-day far below cross-day means drift between
+  sittings is a large share of the error; a live session calibrates in the same
+  sitting. Both high means drift between days is not the main cause;
+  `in_sample_ceiling.per_day` then says whether any affine calibration within a day
+  could do better. A day folder can hold several sittings, and a day has fewer images,
+  so its calibration images lie further from the dots (`calibration_mean_distance_px`).
+  The two protocols are not matched in size, and within-day is not a live session
+  either.
 - **e. `error_by_head_pose`: does the error grow as the head moves?** The cross-day
   test error binned by EyeOS's head-pose distance from the calibration pose (0-5, 5-10,
   10-15, 15-20 and over 20, in EyeOS's own "degrees", Gate 2's measure), and the error
@@ -616,13 +619,14 @@ are bounds and explanations, not results. Only d and e follow the evaluation pro
   they look, so the raw `r2_head_pose` can be high from landmark noise alone. A test
   checks exactly that case: on a fake with pure landmark noise and a head that turns
   toward the target, the raw share is far above chance and the share beyond the target
-  stays near 0. `r2_head_pose_beyond_target` (R² on target and head pose, minus `r2_target`) is the
-  share to read as head motion the iris offsets do not capture;
-  `r2_day_beyond_target` likewise for something constant within a day but different
-  between days. Both low means per-frame landmark noise, or effects that are not linear
-  in these. Regressors unrelated to the residual score about k/n by chance (k
-  regressors, n frames), which is small when n is in the thousands. The terminal
-  summary shows the two beyond-target shares (`pose|tgt`, `day|tgt`).
+  stays near 0. `r2_head_pose_beyond_target` (R² on target and head pose, minus
+  `r2_target`) is the share to read as head motion the iris offsets do not capture.
+  `r2_day_beyond_target` is the same for something constant within a day but different
+  between days; it also discounts days that differ only in where the targets were.
+  Both low means per-frame landmark noise, or effects that are not linear in these.
+  Regressors unrelated to the residual score about k/n by chance (k regressors, n
+  frames), which is small when n is in the thousands. The terminal summary shows the
+  two beyond-target shares (`pose|tgt`, `day|tgt`).
 
 ## Adding another dataset
 

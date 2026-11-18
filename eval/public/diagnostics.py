@@ -91,8 +91,9 @@ SECTIONS: dict[str, str] = {
         "not on every frame: days with too few images are left out of both. Within-day far "
         "below cross-day means drift between sittings is a large share of the error, which a "
         "live session (calibrated in the same sitting) would not have; both high means "
-        "the features themselves are the bottleneck. A day can hold several sittings, "
-        "and a day's calibration images lie further from the dots (see "
+        "drift between days is not the main cause, and in_sample_ceiling.per_day says "
+        "whether any affine calibration within a day could do better. A day can hold "
+        "several sittings, and a day's calibration images lie further from the dots (see "
         "calibration_mean_distance_px), so this is not a live session either."
     ),
     "error_by_head_pose": (

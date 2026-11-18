@@ -909,6 +909,9 @@ def test_the_json_says_the_all_days_ceiling_does_not_bound_a_per_sitting_calibra
         assert "per_day" in text
     assert "does not bound" in result["sections"]["in_sample_ceiling"]
     assert "validation_error_px" in result["sections"]["in_sample_ceiling"]
+    # Both protocols high does not by itself say the features are the limit.
+    assert "bottleneck" not in result["sections"]["within_day"]
+    assert "in_sample_ceiling.per_day" in result["sections"]["within_day"]
 
 
 def test_without_the_datasets_head_pose_f_and_g_say_so():
