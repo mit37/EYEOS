@@ -16,6 +16,7 @@ import json
 import math
 import random
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Any
 
 import numpy as np
@@ -23,10 +24,11 @@ import pytest
 
 from eval.generate_synthetic import make_landmarks
 from eval.public import diagnostics, models, protocol
+from eval.public import mpiifacegaze as mpii
 from eyeos.calibration import Calibration
 from eyeos.features import FeatureVector, extract_features
 from eyeos.landmarks import FaceLandmarks, Point3D
-from tests.fake_mpiifacegaze import FakePerson, offsets_for_target
+from tests.fake_mpiifacegaze import FakePerson, offsets_for_target, write_calibration
 
 W, H = 1280.0, 800.0
 
@@ -590,8 +592,6 @@ def test_dataset_head_angles_follow_the_documented_convention(angles):
 
 @pytest.mark.parametrize("axis, column", [(1, 0), (0, 1), (2, 2)])
 def test_a_rodrigues_vector_about_one_camera_axis_is_that_one_angle(axis, column):
-    from eval.public import mpiifacegaze as mpii
-
     for theta_deg in (-25.0, 10.0, 40.0):
         rvec = np.zeros(3)
         rvec[axis] = math.radians(theta_deg)
@@ -856,3 +856,252 @@ def test_the_summary_has_a_line_per_person_and_a_mean_line():
     cross = result["aggregate"]["cross_day"]["mean_px"]["mean"]
     assert f"{cross:.1f}" in lines[-1]
     assert lines[3].split()[1:3] == ["3", "-"]  # a skipped person shows dashes
+
+
+# ---------------------------------------------------------------------------
+# the diagnose command, on a fake MPIIFaceGaze written to disk
+# ---------------------------------------------------------------------------
+
+
+@pytest.fixture
+def scipy_io() -> Any:
+    return pytest.importorskip("scipy.io")
+
+
+def _rvec(rotation: np.ndarray) -> np.ndarray:
+    """The Rodrigues vector of a rotation by less than a half turn (the inverse of
+    mpiifacegaze.rodrigues), written out here so the loader is not checked against itself."""
+    theta = math.acos(max(-1.0, min(1.0, (float(np.trace(rotation)) - 1.0) / 2.0)))
+    if theta < 1e-12:
+        return np.zeros(3)
+    r = rotation
+    axis = np.array([r[2, 1] - r[1, 2], r[0, 2] - r[2, 0], r[1, 0] - r[0, 1]])
+    rvec: np.ndarray = axis / (2.0 * math.sin(theta)) * theta
+    return rvec
+
+
+def _annotation(frame: Frame, image: str, screen: FakePerson) -> str:
+    """One pXX.txt line: 28 fields, with this frame's own head pose (fields 16-21)."""
+    gaze_target = screen.gaze_target_mm(*frame.target)
+    landmarks = [500.0 + 10 * i for i in range(12)]  # six (x, y) points, unused by EyeOS
+    numbers = [
+        *frame.target,
+        *landmarks,
+        *_rvec(frame.rotation),
+        *frame.tvec,
+        *screen.face_center,
+        *gaze_target,
+    ]
+    return " ".join([image, *(repr(float(v)) for v in numbers), "left"])
+
+
+def _write_mpii(root: Path, spec: Spec, flat: bool = False) -> list[Frame]:
+    """A fake MPIIFaceGaze participant on disk: each "image" is a JSON file naming the
+    face _face should draw (null = no face), in its dayNN folder (or in none if ``flat``)."""
+    frames = _frames(spec)
+    folder = root / spec.name
+    screen = FakePerson(spec.name)  # a 1280x800 screen, like W x H
+    lines = []
+    for frame in frames:
+        image = frame.image.split("/")[-1] if flat else frame.image
+        (folder / image).parent.mkdir(parents=True, exist_ok=True)
+        (folder / image).write_text(json.dumps({"face": frame.face}))
+        lines.append(_annotation(frame, image, screen))
+    (folder / f"{spec.name}.txt").write_text("\n".join(lines) + "\n")
+    write_calibration(folder / "Calibration", screen)
+    return frames
+
+
+class FaceDetector:
+    """Stands in for MediaPipe: draws the face a fake image names."""
+
+    def __call__(self, image_path: Path) -> FaceLandmarks | None:
+        face = json.loads(Path(image_path).read_text())["face"]
+        return None if face is None else _face(**face)
+
+
+def write_and_extract(root: Path, cache: Path, *specs: Spec, flat: bool = False) -> None:
+    """Write the fake participants under ``root`` and extract them into ``cache``."""
+    for spec in specs:
+        _write_mpii(root, spec, flat=flat)
+    mpii.extract(root, cache, detector_factory=FaceDetector)
+
+
+def _on_disk(tmp_path: Path, *specs: Spec, flat: bool = False) -> tuple[Path, Path]:
+    root, cache = tmp_path / "MPIIFaceGaze", tmp_path / "cache"
+    write_and_extract(root, cache, *specs, flat=flat)
+    return root, cache
+
+
+def test_the_fake_annotation_holds_each_frames_own_head_pose():
+    spec = Spec(days=(3,), yaw_range_deg=20.0, pitch_range_deg=10.0, roll_range_deg=5.0)
+    frame = _frames(spec)[2]
+
+    line = mpii.parse_annotation_line(_annotation(frame, frame.image, FakePerson("p00")), "here")
+
+    assert mpii.rodrigues(np.array(line.head_rvec)) == pytest.approx(frame.rotation, abs=1e-12)
+    assert line.head_tvec == pytest.approx(frame.tvec)
+    assert line.target_px == frame.target
+
+
+def test_load_diagnostic_person_reads_days_from_the_cache_and_head_pose_from_pxx_txt(
+    tmp_path, scipy_io
+):
+    spec = Spec(days=(20, 30), yaw_range_deg=20.0, pitch_range_deg=10.0, no_face=frozenset({4}))
+    root, cache = _on_disk(tmp_path, spec)
+    frames = _frames(spec)
+
+    person = mpii.load_diagnostic_person(root, cache, "p00")
+
+    data, _ = mpii.load_person(root, cache, "p00")
+    assert person.name == "p00"
+    assert np.array_equal(person.data.targets_px, data.targets_px)
+    assert person.data.landmarks == data.landmarks
+    assert person.data.landmarks[4] is None
+    assert person.data.to_camera_mm is not None
+    assert person.days == ["day01"] * 20 + ["day02"] * 30
+    assert person.head_rotation is not None and person.head_translation_mm is not None
+    assert person.head_rotation == pytest.approx(np.array([f.rotation for f in frames]), abs=1e-12)
+    assert person.head_translation_mm == pytest.approx(np.array([f.tvec for f in frames]))
+    # The cache itself has no head-pose columns: they come from pXX.txt.
+    assert not any("rvec" in c or "tvec" in c or c.startswith("head") for c in mpii.CACHE_COLUMNS)
+
+
+def test_load_diagnostic_person_without_day_folders_has_no_days(tmp_path, scipy_io):
+    root, cache = _on_disk(tmp_path, Spec(days=(80,), yaw_range_deg=10.0), flat=True)
+
+    person = mpii.load_diagnostic_person(root, cache, "p00")
+
+    assert person.days == [None] * 80
+    result = diagnostics.diagnose([person])["persons"]["p00"]
+    assert "day" in result["within_day"]["skipped"]
+    assert "skipped" not in result["head_pose_agreement"]
+
+
+def test_load_diagnostic_person_fails_loudly_when_pxx_txt_no_longer_matches_the_cache(
+    tmp_path, scipy_io
+):
+    root, cache = _on_disk(tmp_path, Spec(days=(20,)))
+    annotations = root / "p00" / "p00.txt"
+    lines = annotations.read_text().splitlines()
+
+    annotations.write_text("\n".join(lines[:5] + lines[6:]) + "\n")  # one image dropped
+    with pytest.raises(mpii.DatasetFormatError, match=r"day01/0005\.jpg"):
+        mpii.load_diagnostic_person(root, cache, "p00")
+
+    moved = lines[5].split()
+    moved[1] = repr(float(moved[1]) + 3.0)  # the same image, another target
+    annotations.write_text("\n".join(lines[:5] + [" ".join(moved)] + lines[6:]) + "\n")
+    with pytest.raises(mpii.DatasetFormatError, match=r"day01/0005\.jpg the target"):
+        mpii.load_diagnostic_person(root, cache, "p00")
+
+
+def test_load_diagnostic_person_matches_pxx_txt_by_image_when_the_order_differs(tmp_path, scipy_io):
+    spec = Spec(days=(10, 10), yaw_range_deg=20.0)
+    root, cache = _on_disk(tmp_path, spec)
+    annotations = root / "p00" / "p00.txt"
+    annotations.write_text("\n".join(reversed(annotations.read_text().splitlines())) + "\n")
+
+    person = mpii.load_diagnostic_person(root, cache, "p00")
+
+    expected = np.array([f.rotation for f in _frames(spec)])
+    assert person.head_rotation == pytest.approx(expected, abs=1e-12)
+
+
+def test_diagnose_cli_writes_a_deterministic_json_and_a_summary(tmp_path, scipy_io, capsys):
+    root, cache = _on_disk(
+        tmp_path,
+        Spec(noise=0.02, yaw_range_deg=15.0, pitch_range_deg=8.0, eyeos_scale=(1.5, 0.4)),
+        Spec("p01", seed=1, noise=0.02, day_bias=(0.1, -0.1, 0.0), yaw_range_deg=5.0),
+    )
+    first, second = tmp_path / "out" / "diag.json", tmp_path / "out" / "again.json"
+    args = ["diagnose", "--root", str(root), "--cache", str(cache)]
+
+    assert mpii.main([*args, "--out", str(first)]) == 0
+    out = capsys.readouterr().out
+    assert mpii.main([*args, "--out", str(second)]) == 0
+
+    assert first.read_bytes() == second.read_bytes()
+    result = json.loads(first.read_text())
+    assert result["dataset"] == "MPIIFaceGaze" and result["license"] == "CC BY-NC-SA 4.0"
+    assert "generated" not in result  # no timestamp: the same cache gives the same file
+    assert "git_commit" in result
+    config = result["config"]
+    assert config["persons"] == ["p00", "p01"]
+    assert config["root"] == str(root) and config["cache"] == str(cache)
+    assert config["k_per_dot"] == 5 and config["min_day_images"] == 60
+    assert "pXX.txt" in result["notes"]["loading"]
+    assert list(result["persons"]) == ["p00", "p01"]
+    p00, p01 = result["persons"]["p00"], result["persons"]["p01"]
+    assert p00["head_pose_agreement"]["yaw"]["slope"] == pytest.approx(1.5, rel=1e-6)
+    assert p00["head_pose_agreement"]["pitch"]["slope"] == pytest.approx(0.4, rel=1e-6)
+    assert p00["within_day"]["days_used"] == 3
+    assert p01["within_day"]["mean_px"] < p01["cross_day"]["mean_px"]
+    assert p01["variance_split"]["r2_day"] > 0.5
+    # cross_day is evaluate's eyeos result on the same cache.
+    evaluated = mpii.evaluate_dataset(root, cache, variants=["eyeos"])["variants"]["eyeos"]
+    for name in ("p00", "p01"):
+        expected = evaluated["persons"][name]
+        cross = result["persons"][name]["cross_day"]
+        assert cross["mean_px"] == pytest.approx(expected["pixel_error_px"]["mean"], rel=1e-9)
+        assert cross["mean_deg"] == pytest.approx(expected["angular_error_deg"]["mean"], rel=1e-9)
+    lines = out.splitlines()
+    assert [line.split()[0] for line in lines[:4]] == ["person", "p00", "p01", "mean"]
+    assert f"wrote {first}" in out
+
+
+def test_diagnose_cli_passes_persons_k_and_the_day_minimum_through(tmp_path, scipy_io):
+    root, cache = _on_disk(tmp_path, Spec(days=(100, 50)), Spec("p01", seed=1, days=(100, 50, 100)))
+    out = tmp_path / "diag.json"
+
+    code = mpii.main(
+        ["diagnose", "--root", str(root), "--cache", str(cache), "--out", str(out)]
+        + ["--persons", "p01", "--k-per-dot", "3", "--min-day-images", "80"]
+    )
+
+    assert code == 0
+    result = json.loads(out.read_text())
+    assert result["config"]["persons"] == ["p01"]
+    assert result["config"]["k_per_dot"] == 3 and result["config"]["min_day_images"] == 80
+    within = result["persons"]["p01"]["within_day"]
+    assert [d["day"] for d in within["per_day"]] == ["day01", "day03"]
+    assert within["skipped_days"] == [{"day": "day02", "n_valid": 50}]
+    assert result["persons"]["p01"]["cross_day"]["n_calibration"] == 27
+
+
+def test_diagnose_cli_rejects_an_unknown_person(tmp_path, scipy_io, capsys):
+    root, cache = _on_disk(tmp_path, Spec(days=(10,)))
+
+    with pytest.raises(SystemExit) as excinfo:
+        mpii.main(
+            ["diagnose", "--root", str(root), "--cache", str(cache)]
+            + ["--out", str(tmp_path / "d.json"), "--persons", "p00,p07"]
+        )
+
+    assert excinfo.value.code == 2
+    assert "p07" in capsys.readouterr().err
+
+
+def test_diagnose_cli_reports_an_empty_cache(tmp_path, capsys):
+    out = tmp_path / "d.json"
+
+    code = mpii.main(
+        ["diagnose", "--root", str(tmp_path), "--cache", str(tmp_path / "empty")]
+        + ["--out", str(out)]
+    )
+
+    assert code == 1
+    assert "extract" in capsys.readouterr().err
+    assert not out.exists()
+
+
+def test_diagnose_cli_reports_a_missing_annotation_file(tmp_path, scipy_io, capsys):
+    root, cache = _on_disk(tmp_path, Spec(days=(10,)))
+    (root / "p00" / "p00.txt").unlink()
+    out = tmp_path / "d.json"
+
+    code = mpii.main(["diagnose", "--root", str(root), "--cache", str(cache), "--out", str(out)])
+
+    assert code == 1
+    assert "p00.txt" in capsys.readouterr().err
+    assert not out.exists()

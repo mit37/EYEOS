@@ -9,6 +9,8 @@ MediaPipe landmarks once (slow, cached, restartable) and evaluate (fast, repeata
     python -m eval.public.mpiifacegaze evaluate --root datasets/MPIIFaceGaze \\
         --cache datasets/cache/mpiifacegaze --out eval/results/mpiifacegaze.json \\
         [--variants NAMES]
+    python -m eval.public.mpiifacegaze diagnose --root datasets/MPIIFaceGaze \\
+        --cache datasets/cache/mpiifacegaze --out eval/results/mpiifacegaze-diagnostics.json
 
 The protocol itself (eval/public/protocol.py) and the models it compares
 (eval/public/models.py) know nothing about MPIIFaceGaze; this module only reads the
@@ -47,7 +49,7 @@ from typing import Any
 
 import numpy as np
 
-from eval.public import protocol
+from eval.public import diagnostics, protocol
 from eval.public.models import VARIANT_NAMES, build_variants
 from eyeos.config import Config
 from eyeos.input_sources._mediapipe_common import landmarks_from_mediapipe
@@ -89,7 +91,7 @@ class Annotation:
     image: str  # relative to the person's folder, e.g. day01/0005.jpg
     target_px: tuple[float, float]  # the on-screen gaze target, in screen pixels
     landmarks_px: tuple[float, ...]  # six (x, y) facial landmarks in the image; unused
-    head_rvec: Vec3  # the dataset's head pose (Rodrigues); unused, EyeOS estimates its own
+    head_rvec: Vec3  # the dataset's head pose (Rodrigues); only `diagnose` uses it
     head_tvec: Vec3
     face_center_mm: Vec3  # fc, camera coordinates
     gaze_target_mm: Vec3  # gt, camera coordinates
@@ -1001,6 +1003,108 @@ def summary_table(results: dict[str, Any]) -> str:
 
 
 # ---------------------------------------------------------------------------
+# diagnose: where the error comes from (eval/public/diagnostics.py)
+# ---------------------------------------------------------------------------
+
+DIAGNOSE_LOADING_NOTE = (
+    "Each image's day is the folder of its path in the extract cache's image column "
+    "(dayNN). The extract cache does not keep the dataset's head pose, so head_rvec and "
+    "head_tvec are read again from pXX.txt under --root and matched to the cache by image "
+    "path (a cached image missing from pXX.txt, or with another target there, is an error)."
+)
+
+
+def day_folder(image: str) -> str | None:
+    """The folder an image path starts with (``day01`` for ``day01/0005.jpg``), if any."""
+    parts = PurePosixPath(image).parts
+    return parts[0] if len(parts) > 1 else None
+
+
+def _matched_annotations(
+    root: Path, cache_dir: Path, person: str, rows: list[dict[str, str]]
+) -> list[Annotation]:
+    """The pXX.txt line of each cached image: by position when the cache holds the file's
+    first images in order (as extract writes them), otherwise by image path."""
+    images = [row["image"] for row in rows]
+    annotations = load_annotations(root, person)
+    if [a.image for a in annotations[: len(images)]] == images:
+        matched = annotations[: len(images)]
+    else:
+        by_image: dict[str, Annotation] = {}
+        for annotation in annotations:
+            by_image.setdefault(annotation.image, annotation)
+        missing = [image for image in images if image not in by_image]
+        if missing:
+            raise DatasetFormatError(
+                f"{annotation_path(root, person)} has no line for {missing[0]}"
+                + (f" (nor for {len(missing) - 1} more)" if len(missing) > 1 else "")
+                + f", which {cache_path(cache_dir, person)} holds: was it extracted from "
+                f"another copy? Rerun `extract --force --persons {person}`"
+            )
+        matched = [by_image[image] for image in images]
+    for row, annotation in zip(rows, matched, strict=True):
+        cached = (float(row["target_x"]), float(row["target_y"]))
+        if max(abs(c - a) for c, a in zip(cached, annotation.target_px, strict=True)) > 1e-6:
+            raise DatasetFormatError(
+                f"{annotation_path(root, person)} gives {annotation.image} the target "
+                f"{annotation.target_px}, but the cache has {cached}: rerun "
+                f"`extract --force --persons {person}`"
+            )
+    return matched
+
+
+def load_diagnostic_person(
+    root: Path, cache_dir: Path, person: str
+) -> diagnostics.DiagnosticPerson:
+    """One person for eval/public/diagnostics.py: load_person's data, plus each image's day
+    folder and the dataset's own head pose (see DIAGNOSE_LOADING_NOTE)."""
+    data, _ = load_person(root, cache_dir, person)
+    rows = read_cache(cache_dir, person)
+    matched = _matched_annotations(root, cache_dir, person, rows)
+    return diagnostics.DiagnosticPerson(
+        data=data,
+        days=[day_folder(row["image"]) for row in rows],
+        head_rotation=np.array([rodrigues(np.array(a.head_rvec)) for a in matched]),
+        head_translation_mm=np.array([a.head_tvec for a in matched], dtype=float),
+    )
+
+
+def diagnose_dataset(
+    root: Path,
+    cache_dir: Path,
+    persons: Sequence[str] | None = None,
+    k_per_dot: int = protocol.DEFAULT_K_PER_DOT,
+    min_day_images: int = diagnostics.DEFAULT_MIN_DAY_IMAGES,
+) -> dict[str, Any]:
+    """The diagnostics document for the cached persons (default: every pXX.csv). It has no
+    timestamp, so the same cache and code give the same file."""
+    names = list(persons) if persons is not None else cached_persons(cache_dir)
+    if not names:
+        raise DatasetFormatError(
+            f"no pXX.csv caches in {cache_dir}: run `python -m eval.public.mpiifacegaze "
+            "extract` first"
+        )
+    loaded = [load_diagnostic_person(root, cache_dir, name) for name in names]
+    result = diagnostics.diagnose(loaded, k_per_dot=k_per_dot, min_day_images=min_day_images)
+    dirty = _git("status", "--porcelain", "--untracked-files=no")
+    return {
+        "dataset": DATASET,
+        "license": LICENSE,
+        "citation": list(CITATION),
+        "git_commit": _git("rev-parse", "HEAD"),
+        "git_dirty": None if dirty is None else bool(dirty),
+        **result,
+        "config": {
+            "root": str(root),
+            "cache": str(cache_dir),
+            "persons": names,
+            **result["config"],
+        },
+        "notes": {"loading": DIAGNOSE_LOADING_NOTE, **result["notes"]},
+    }
+
+
+# ---------------------------------------------------------------------------
 # command line
 # ---------------------------------------------------------------------------
 
@@ -1069,6 +1173,28 @@ def build_parser() -> argparse.ArgumentParser:
         default=protocol.DEFAULT_K_PER_DOT,
         help="images per calibration dot for variants that do not set their own (default: 5)",
     )
+
+    diag = sub.add_parser(
+        "diagnose", help="where the error comes from (eval/public/diagnostics.py)"
+    )
+    diag.add_argument(
+        "--root", required=True, type=Path, help="the extracted MPIIFaceGaze folder (pXX.txt)"
+    )
+    diag.add_argument("--cache", required=True, type=Path, help="the extract cache folder")
+    diag.add_argument("--out", required=True, type=Path, help="diagnostics JSON to write")
+    diag.add_argument("--persons", help="comma-separated, e.g. p00,p01 (default: all cached)")
+    diag.add_argument(
+        "--k-per-dot",
+        type=_positive_int,
+        default=protocol.DEFAULT_K_PER_DOT,
+        help="images per calibration dot (default: 5)",
+    )
+    diag.add_argument(
+        "--min-day-images",
+        type=_positive_int,
+        default=diagnostics.DEFAULT_MIN_DAY_IMAGES,
+        help="valid images a day folder needs for the within-day protocol (default: 60)",
+    )
     return parser
 
 
@@ -1114,12 +1240,30 @@ def _run_evaluate(args: argparse.Namespace, parser: argparse.ArgumentParser) -> 
     return 0
 
 
+def _run_diagnose(args: argparse.Namespace, parser: argparse.ArgumentParser) -> int:
+    persons = _persons_arg(cached_persons(args.cache), args.persons, parser, str(args.cache))
+    result = diagnose_dataset(
+        args.root,
+        args.cache,
+        persons=persons,
+        k_per_dot=args.k_per_dot,
+        min_day_images=args.min_day_images,
+    )
+    args.out.parent.mkdir(parents=True, exist_ok=True)
+    args.out.write_text(json.dumps(result, indent=2, allow_nan=False) + "\n")
+    print(diagnostics.summary_table(result))
+    print(f"wrote {args.out}")
+    return 0
+
+
 def main(argv: list[str] | None = None, detector_factory: DetectorFactory | None = None) -> int:
     parser = build_parser()
     args = parser.parse_args(argv)
     try:
         if args.command == "evaluate":
             return _run_evaluate(args, parser)
+        if args.command == "diagnose":
+            return _run_diagnose(args, parser)
         return _run_extract(args, parser, detector_factory)
     except (DatasetFormatError, MissingDependencyError) as e:
         print(f"error: {e}", file=sys.stderr)
