@@ -264,6 +264,37 @@ def test_downloader_extracts_a_zip_without_a_top_level_folder_into_mpiifacegaze(
     assert (tmp_path / "MPIIFaceGaze" / "p03" / "p03.txt").read_bytes() == b"x"
 
 
+def test_downloader_does_not_nest_the_dataset_when_the_zip_has_other_top_level_files(
+    tmp_path, monkeypatch
+):
+    downloader = _load_downloader()
+    members = {**_FAKE_ZIP_MEMBERS, "readme.txt": b"about", "__MACOSX/._p00": b"junk"}
+    server = _FakeServer(_zip_bytes(members))
+    monkeypatch.setattr(urllib.request, "urlopen", server.urlopen)
+
+    assert downloader.main(["--accept-license", "--dest", str(tmp_path)]) == 0
+
+    target = tmp_path / "MPIIFaceGaze"
+    assert (target / "p00" / "p00.txt").read_bytes() == b"day01/0001.jpg 1 2\n"
+    assert not (target / "MPIIFaceGaze").exists()
+    assert (target / downloader.DONE_MARKER).exists()
+    assert mpii.find_persons(target) == ["p00"]
+
+
+def test_downloader_fails_and_marks_nothing_done_when_no_participant_folder_comes_out(
+    tmp_path, monkeypatch, capsys
+):
+    downloader = _load_downloader()
+    server = _FakeServer(_zip_bytes({"Data/p00/p00.txt": b"x", "readme.txt": b"about"}))
+    monkeypatch.setattr(urllib.request, "urlopen", server.urlopen)
+
+    assert downloader.main(["--accept-license", "--dest", str(tmp_path)]) == 1
+
+    err = capsys.readouterr().err
+    assert "pXX/pXX.txt" in err and "'Data'" in err and "'readme.txt'" in err
+    assert not (tmp_path / "MPIIFaceGaze" / downloader.DONE_MARKER).exists()
+
+
 def test_downloader_resumes_a_partial_download_with_a_range_request(tmp_path, monkeypatch):
     downloader = _load_downloader()
     server = _FakeServer(_zip_bytes(_FAKE_ZIP_MEMBERS))

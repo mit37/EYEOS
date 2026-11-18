@@ -53,7 +53,8 @@ pip install -e ".[public-eval]"   # scipy, OpenCV, mediapipe<0.10.30 (Python 3.1
 
 # 1. Download (prints the license and citation; refuses without --accept-license, exit 2).
 #    Streams with progress, resumes a cut-off download, CRC-checks the zip, extracts to
-#    datasets/MPIIFaceGaze. A rerun skips what is done.
+#    datasets/MPIIFaceGaze and fails unless a pXX/pXX.txt came out. A rerun skips what
+#    is done.
 python scripts/download_mpiifacegaze.py --accept-license [--dest datasets]
 #    (scripts/download_mpiifacegaze.sh is a thin wrapper around the same script)
 

@@ -6,9 +6,9 @@
 It prints the dataset's license and citation and refuses to download anything until you
 pass --accept-license (exit code 2). Then it streams the zip to <dest>/MPIIFaceGaze.zip
 with progress, resumes a cut-off download with an HTTP Range request, checks every member
-with zipfile.testzip, and extracts it to <dest>/MPIIFaceGaze. A rerun skips whatever is
-already done. datasets/ is gitignored: the images show real people's faces and must never
-be committed.
+with zipfile.testzip, and extracts it to <dest>/MPIIFaceGaze, failing unless at least one
+participant's pXX/pXX.txt came out. A rerun skips whatever is already done. datasets/ is
+gitignored: the images show real people's faces and must never be committed.
 
 Standard library only, so it runs the same way on Windows (python
 scripts\\download_mpiifacegaze.py --accept-license). scripts/download_mpiifacegaze.sh is
@@ -18,6 +18,7 @@ a thin wrapper around it.
 from __future__ import annotations
 
 import argparse
+import re
 import sys
 import urllib.error
 import urllib.request
@@ -148,16 +149,26 @@ def _members(zf: zipfile.ZipFile) -> list[zipfile.ZipInfo]:
     return [i for i in zf.infolist() if not i.filename.startswith(_IGNORED_PREFIXES)]
 
 
+def _has_participants(target: Path) -> bool:
+    """Does ``target`` hold at least one ``pXX/pXX.txt``?"""
+    return target.is_dir() and any(
+        re.fullmatch(r"p\d\d", p.name) and (p / f"{p.name}.txt").is_file() for p in target.iterdir()
+    )
+
+
 def extract(zip_path: Path, dest: Path) -> Path:
     """Extract to ``dest/MPIIFaceGaze``, whether or not the zip has that top-level folder.
 
-    Every member is checked before anything is written: one whose path would land
-    outside the target (an absolute path or ``..``) aborts the whole extraction.
+    A zip with an ``MPIIFaceGaze/`` folder is extracted into ``dest`` (anything else at
+    its top level lands next to the folder); one without it is extracted into
+    ``dest/MPIIFaceGaze``. Every member is checked before anything is written: one whose
+    path would land outside the target (an absolute path or ``..``) aborts the whole
+    extraction. The extraction is marked done only if a ``pXX/pXX.txt`` came out.
     """
     target = dest / DATASET_DIR
     with zipfile.ZipFile(zip_path) as zf:
         members = _members(zf)
-        nested = all(i.filename.startswith(DATASET_DIR + "/") for i in members)
+        nested = any(i.filename.startswith(DATASET_DIR + "/") for i in members)
         base = dest if nested else target
         base_resolved = base.resolve()
         for info in members:
@@ -170,8 +181,13 @@ def extract(zip_path: Path, dest: Path) -> Path:
         print(f"Extracting {len(members):,} files to {target} ...")
         for info in members:
             zf.extract(info, base)
-    if not target.is_dir():
-        raise DownloadError(f"{zip_path} did not produce {target}")
+        top_level = sorted({i.filename.split("/", 1)[0] for i in members})
+    if not _has_participants(target):
+        raise DownloadError(
+            f"{zip_path} did not produce any pXX/pXX.txt under {target} (the zip's top-level "
+            f"entries are {', '.join(repr(n) for n in top_level) or 'none'}). Move the "
+            f"participant folders p00 ... p14 into {target} by hand."
+        )
     (target / DONE_MARKER).write_text(f"extracted from {zip_path.name}\n")
     return target
 
