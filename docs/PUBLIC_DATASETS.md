@@ -416,9 +416,13 @@ averages 319 px; Gate 2 needs < 60 px.
   offsets, which are in eye half-widths and spread little across the screen, and never
   to the intercept (`eyeos/calibration.py`, `_ridge_fit`). A large lambda therefore
   shrinks the slopes toward zero and the prediction toward a constant near the mean
-  calibration target, which is about the middle of the screen. This is reasoning from
-  the code and the numbers above, not a measurement: a constant-prediction baseline
-  variant is being added to the harness and has not run on the real data yet.
+  calibration target, which is about the middle of the screen. Against `ridge-10`
+  itself, the shipping model's mean error is 40 % lower (258 against 429 px) and lower
+  for all 15 people, but for p13 only 13 % lower (348 against 402 px), computed from
+  the JSON's per-person mean pixel errors. That `ridge-10` stands in for a constant is
+  reasoning from the code and the numbers above, not a measurement: a
+  constant-prediction baseline variant is being added to the harness and has not run
+  on the real data yet.
 - **Nothing was tuned on this data.** Every variant, threshold and the ridge strengths
   were fixed before this run; this is a single evaluation, not a model selection.
   Changing EyeOS's shipping model based on it (for example adding head pose) would be a
