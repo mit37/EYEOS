@@ -571,6 +571,106 @@ def test_the_aggregate_pools_the_head_pose_bins_over_persons():
 
 
 # ---------------------------------------------------------------------------
+# f. EyeOS's head pose against the dataset's
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    "angles",
+    [(0, 0, 0), (20, 0, 0), (0, -15, 0), (0, 0, 10), (30, -20, 15), (-45, 25, -35), (5, 60, 0)],
+)
+def test_dataset_head_angles_follow_the_documented_convention(angles):
+    rotations = np.array([_rotation(*angles)])
+
+    got = diagnostics.dataset_head_angles_deg(rotations)
+
+    assert got.shape == (1, 3)
+    assert got[0] == pytest.approx(np.array(angles, dtype=float), abs=1e-9)
+
+
+@pytest.mark.parametrize("axis, column", [(1, 0), (0, 1), (2, 2)])
+def test_a_rodrigues_vector_about_one_camera_axis_is_that_one_angle(axis, column):
+    from eval.public import mpiifacegaze as mpii
+
+    for theta_deg in (-25.0, 10.0, 40.0):
+        rvec = np.zeros(3)
+        rvec[axis] = math.radians(theta_deg)
+
+        got = diagnostics.dataset_head_angles_deg(np.array([mpii.rodrigues(rvec)]))[0]
+
+        expected = np.zeros(3)
+        expected[column] = theta_deg  # y -> yaw, x -> pitch, z -> roll
+        assert got == pytest.approx(expected, abs=1e-9)
+
+
+@pytest.mark.parametrize("name", ["none", "x180", "y180", "z180"])
+def test_a_head_frame_labelled_the_other_way_round_is_recognised_and_undone(name):
+    rng = random.Random(4)
+    true = np.array(
+        [
+            _rotation(rng.uniform(-30, 30), rng.uniform(-20, 20), rng.uniform(-10, 10))
+            for _ in range(50)
+        ]
+    )
+
+    found, relabelled = diagnostics.relabel_head_axes(true @ _AXES[name])
+
+    assert found == name
+    assert relabelled == pytest.approx(true, abs=1e-12)
+
+
+def test_head_pose_agreement_measures_the_scale_of_eyeos_degrees():
+    agreement = _one(Spec(yaw_range_deg=15.0, pitch_range_deg=10.0, eyeos_scale=(1.5, 0.4)))[
+        "head_pose_agreement"
+    ]
+
+    assert agreement["dataset_axes_relabelled"] == "none"
+    assert agreement["yaw"]["slope"] == pytest.approx(1.5, abs=1e-9)
+    assert agreement["yaw"]["intercept"] == pytest.approx(0.0, abs=1e-9)
+    assert agreement["yaw"]["r"] == pytest.approx(1.0, abs=1e-9)
+    assert agreement["pitch"]["slope"] == pytest.approx(0.4, abs=1e-9)
+    assert agreement["pitch"]["r"] == pytest.approx(1.0, abs=1e-9)
+    # Nobody rolled: no slope can be fitted.
+    assert agreement["roll"] == {"slope": None, "intercept": None, "r": None}
+    assert abs(agreement["dataset_pose_median_deg"]["yaw"]) < 3.0
+    matrix = agreement["correlation_matrix"]
+    assert matrix["eyeos_yaw"]["dataset_yaw"] == pytest.approx(1.0)
+    assert abs(matrix["eyeos_yaw"]["dataset_pitch"]) < 0.2
+    assert abs(matrix["eyeos_pitch"]["dataset_yaw"]) < 0.2
+    assert matrix["eyeos_yaw"]["dataset_roll"] is None
+
+
+def test_head_pose_agreement_survives_a_relabelled_head_frame_and_reads_roll():
+    plain = _one(Spec(yaw_range_deg=15.0, pitch_range_deg=10.0, eyeos_scale=(1.5, 0.4)))
+    flipped = _one(
+        Spec(yaw_range_deg=15.0, pitch_range_deg=10.0, eyeos_scale=(1.5, 0.4), axes="y180")
+    )
+
+    assert flipped["head_pose_agreement"]["dataset_axes_relabelled"] == "y180"
+    assert flipped["head_pose_agreement"]["yaw"] == pytest.approx(
+        plain["head_pose_agreement"]["yaw"]
+    )
+
+    rolled = _one(Spec(roll_range_deg=10.0, roll_landmarks=True))["head_pose_agreement"]
+    assert abs(rolled["roll"]["slope"]) == pytest.approx(1.0, abs=1e-6)
+    assert abs(rolled["roll"]["r"]) == pytest.approx(1.0, abs=1e-6)
+
+
+def test_the_json_states_the_head_pose_convention_and_that_it_is_unchecked():
+    notes = _diagnose(Spec())["notes"]
+
+    assert "atan2(R[0,2], R[2,2])" in notes["dataset_head_pose"]
+    assert "not been checked against the real files" in notes["dataset_head_pose"]
+    assert "not a result" in notes["in_sample"]
+
+
+def test_without_the_datasets_head_pose_f_says_so():
+    person = diagnostics.diagnose([_person(Spec(noise=0.05), with_head=False)])["persons"]["p00"]
+
+    assert "head pose" in person["head_pose_agreement"]["skipped"]
+
+
+# ---------------------------------------------------------------------------
 # the JSON: names, descriptions, aggregates, determinism
 # ---------------------------------------------------------------------------
 
@@ -692,8 +792,11 @@ def test_a_person_without_any_face_is_reported_not_crashed():
     assert "skipped" in person["feature_sanity"]
 
 
-def test_the_summary_names_every_person():
-    result = _diagnose(Spec(noise=0.05), Spec("p01", seed=1))
+def test_the_summary_has_a_line_per_person_and_a_mean_line():
+    result = _diagnose(Spec(noise=0.05), Spec("p01", seed=1), Spec("p02", days=(3,)))
 
-    text = diagnostics.summary_table(result)
-    assert "p00" in text and "p01" in text and "all" in text
+    lines = diagnostics.summary_table(result).splitlines()
+    assert [line.split()[0] for line in lines] == ["person", "p00", "p01", "p02", "mean"]
+    cross = result["aggregate"]["cross_day"]["mean_px"]["mean"]
+    assert f"{cross:.1f}" in lines[-1]
+    assert lines[3].split()[1:3] == ["3", "-"]  # a skipped person shows dashes

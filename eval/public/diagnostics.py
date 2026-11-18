@@ -85,6 +85,52 @@ SECTIONS: dict[str, str] = {
         "difference of EyeOS's yaw, pitch and roll from the calibration frames' mean, in "
         "EyeOS's degrees, whose scale head_pose_agreement checks."
     ),
+    "head_pose_agreement": (
+        "f. Does EyeOS's simplified head pose track the dataset's own? EyeOS yaw, pitch and "
+        "roll are regressed on the dataset's (convention in notes.dataset_head_pose): |slope| "
+        "is the scale of EyeOS's degrees (1 = real degrees), r how well it follows. The sign "
+        "of a slope depends on how the dataset labels its head axes and is not interpreted; "
+        "the correlation matrix (all 9 pairs) shows any axis mix-up."
+    ),
+}
+
+# The dataset's head rotation R maps head coordinates to camera coordinates (OpenCV
+# axes: x right, y down, z away from the camera). Angles are read as R = Ry(yaw) @
+# Rx(pitch) @ Rz(roll), so a rotation about one camera axis reads as that one angle.
+HEAD_POSE_CONVENTION = (
+    "R = Rodrigues(head_rvec) maps the dataset's head frame to camera coordinates (x right, "
+    "y down, z away from the camera). yaw = atan2(R[0,2], R[2,2]), pitch = asin(-R[1,2]), "
+    "roll = atan2(R[1,0], R[1,1]) in degrees, i.e. R = Ry(yaw) Rx(pitch) Rz(roll), so a "
+    "rotation about the camera's y, x or z axis reads as yaw, pitch or roll alone. If the "
+    "person's mean R is closer to a half turn about one head axis than to the identity "
+    "(the head frame's axes are labelled the other way round), that half turn is undone "
+    "first and named in dataset_axes_relabelled. This reading has not been checked against "
+    "the real files: dataset_pose_median_deg near 0 for someone facing the camera supports "
+    "it, and correlation_matrix shows a mix-up."
+)
+NOTES: dict[str, str] = {
+    "in_sample": (
+        "in_sample_ceiling fits on every valid frame and scores on the same frames: it "
+        "bounds what a calibration of these features could reach. It is not a result and "
+        "uses the test frames."
+    ),
+    "protocol": (
+        "cross_day, within_day and error_by_head_pose run protocol.evaluate_person with the "
+        "shipping `eyeos` variant and the run's K, so cross_day reproduces evaluate's eyeos "
+        "numbers for the same cache and K (to the 10 significant digits kept here)."
+    ),
+    "dataset_head_pose": HEAD_POSE_CONVENTION,
+    "eyeos_head_pose": (
+        "EyeOS's head pose is its own simplified estimate (eyeos.features: landmark ratios "
+        "scaled to 'degrees'), the one Gate 2 uses; head_pose_agreement measures its scale."
+    ),
+}
+# Half turns about one head axis: a head frame whose axes are labelled the other way round.
+HEAD_AXES_RELABELLINGS: dict[str, np.ndarray] = {
+    "none": np.eye(3),
+    "x180": np.diag([1.0, -1.0, -1.0]),
+    "y180": np.diag([-1.0, 1.0, -1.0]),
+    "z180": np.diag([-1.0, -1.0, 1.0]),
 }
 
 METRICS: dict[str, str] = {
@@ -205,6 +251,21 @@ METRICS: dict[str, str] = {
     ),
     "error_by_head_pose.beyond_limit_mean_px": (
         "mean px error over the test frames beyond the limit (null if there are none)"
+    ),
+    "head_pose_agreement.dataset_axes_relabelled": (
+        "which half turn of the dataset's head frame was undone first ('none' = used as stored)"
+    ),
+    "head_pose_agreement.dataset_pose_median_deg": (
+        "median dataset yaw, pitch and roll over the valid frames, in degrees"
+    ),
+    "head_pose_agreement.yaw": (
+        "EyeOS yaw regressed on the dataset's yaw: slope (EyeOS degrees per real degree), "
+        "intercept (degrees) and Pearson r; null when either does not vary"
+    ),
+    "head_pose_agreement.pitch": "as yaw, for pitch",
+    "head_pose_agreement.roll": "as yaw, for roll",
+    "head_pose_agreement.correlation_matrix": (
+        "Pearson r of each EyeOS angle (eyeos_*) with each dataset angle (dataset_*)"
     ),
     "aggregate.error_by_head_pose.bins": (
         "the bins over all persons: n (frames), pooled_mean_px (over those frames), "
@@ -343,6 +404,11 @@ class _Frames:
     targets: np.ndarray  # (n_valid, 2)
     features: np.ndarray  # (n_valid, 7): 4 iris offsets, then EyeOS yaw, pitch, roll
     days: list[str | None] | None  # per valid frame; None when no image has a day
+    # The dataset's head pose per valid frame (None without it): yaw, pitch, roll in
+    # degrees after any relabelling (HEAD_POSE_CONVENTION), and the translation in mm.
+    dataset_angles: np.ndarray | None = None
+    dataset_axes: str | None = None
+    dataset_translation: np.ndarray | None = None
 
     @property
     def screen(self) -> tuple[float, float]:
@@ -595,6 +661,65 @@ def _error_by_head_pose(
     }
 
 
+def dataset_head_angles_deg(rotations: np.ndarray) -> np.ndarray:
+    """(n, 3, 3) rotations -> (n, 3) yaw, pitch, roll in degrees, reading each as
+    R = Ry(yaw) @ Rx(pitch) @ Rz(roll) (see HEAD_POSE_CONVENTION)."""
+    r = np.asarray(rotations, dtype=float).reshape(-1, 3, 3)
+    yaw = np.arctan2(r[:, 0, 2], r[:, 2, 2])
+    pitch = np.arcsin(np.clip(-r[:, 1, 2], -1.0, 1.0))
+    roll = np.arctan2(r[:, 1, 0], r[:, 1, 1])
+    angles: np.ndarray = np.degrees(np.column_stack([yaw, pitch, roll]))
+    return angles
+
+
+def relabel_head_axes(rotations: np.ndarray) -> tuple[str, np.ndarray]:
+    """Undo a half turn of the head frame, if one brings the mean rotation closer to the
+    identity (a frontal head) than leaving it as stored. Returns the relabelling's name
+    (HEAD_AXES_RELABELLINGS) and the rotations with it applied (R @ C). Without this, a
+    head frame whose z axis points out of the face would read as a yaw near 180 degrees
+    that wraps from +180 to -180."""
+    r = np.asarray(rotations, dtype=float).reshape(-1, 3, 3)
+    mean = r.mean(axis=0)
+    name = max(
+        HEAD_AXES_RELABELLINGS, key=lambda n: float(np.trace(mean @ HEAD_AXES_RELABELLINGS[n]))
+    )
+    relabelled: np.ndarray = r @ HEAD_AXES_RELABELLINGS[name]
+    return name, relabelled
+
+
+def _line_fit(x: np.ndarray, y: np.ndarray) -> dict[str, float | None]:
+    """y = slope * x + intercept by least squares, and Pearson r."""
+    x, y = np.asarray(x, dtype=float), np.asarray(y, dtype=float)
+    if len(x) < 2 or np.std(x) <= 1e-12:
+        return {"slope": None, "intercept": None, "r": None}
+    slope = float(np.mean((x - x.mean()) * (y - y.mean())) / np.var(x))
+    return {"slope": slope, "intercept": float(y.mean() - slope * x.mean()), "r": _corr(x, y)}
+
+
+_AXES = ("yaw", "pitch", "roll")
+
+
+def _head_pose_agreement(frames: _Frames) -> dict[str, Any]:
+    if frames.dataset_angles is None:
+        return _skipped("the dataset's head pose is not available for this person")
+    dataset, eyeos = frames.dataset_angles, frames.features[:, 4:7]
+    result: dict[str, Any] = {
+        "dataset_axes_relabelled": frames.dataset_axes,
+        "dataset_pose_median_deg": {
+            axis: float(np.median(dataset[:, i])) for i, axis in enumerate(_AXES)
+        },
+    }
+    for i, axis in enumerate(_AXES):
+        result[axis] = _line_fit(dataset[:, i], eyeos[:, i])
+    result["correlation_matrix"] = {
+        f"eyeos_{a}": {
+            f"dataset_{b}": _corr(eyeos[:, i], dataset[:, j]) for j, b in enumerate(_AXES)
+        }
+        for i, a in enumerate(_AXES)
+    }
+    return result
+
+
 def _valid_days(person: DiagnosticPerson, valid_rows: np.ndarray) -> list[str | None] | None:
     if person.days is None:
         return None
@@ -624,19 +749,28 @@ def diagnose_person(person: DiagnosticPerson, settings: _Settings) -> dict[str, 
         for section in SECTIONS:
             result[section] = _skipped(reason)
         return result
+    valid = prepared.valid_rows
     frames = _Frames(
         person=person,
         prepared=prepared,
-        targets=np.asarray(person.data.targets_px, dtype=float)[prepared.valid_rows],
+        targets=np.asarray(person.data.targets_px, dtype=float)[valid],
         features=feature_matrix(prepared.features),
-        days=_valid_days(person, prepared.valid_rows),
+        days=_valid_days(person, valid),
     )
+    if person.head_rotation is not None:
+        frames.dataset_axes, relabelled = relabel_head_axes(
+            np.asarray(person.head_rotation, dtype=float)[valid]
+        )
+        frames.dataset_angles = dataset_head_angles_deg(relabelled)
+    if person.head_translation_mm is not None:
+        frames.dataset_translation = np.asarray(person.head_translation_mm, dtype=float)[valid]
     result["feature_sanity"] = _feature_sanity(frames)
     result["in_sample_ceiling"] = _in_sample_ceiling(frames)
     result["constant_baselines"] = _constant_baselines(frames)
     result["cross_day"], cross = _cross_day(frames, settings)
     result["within_day"] = _within_day(frames, cross, settings)
     result["error_by_head_pose"] = _error_by_head_pose(frames, cross, settings)
+    result["head_pose_agreement"] = _head_pose_agreement(frames)
     return result
 
 
@@ -767,6 +901,7 @@ def diagnose(
             "sections": SECTIONS,
             "metrics": METRICS,
             "aggregate_note": AGGREGATE_NOTE,
+            "notes": NOTES,
             "persons": per_person,
             "aggregate": aggregate(per_person),
         }
@@ -800,24 +935,23 @@ _COLUMNS: tuple[tuple[str, tuple[str, ...], str], ...] = (
     ("within px", ("within_day", "mean_px"), ".1f"),
     ("days", ("within_day", "days_used"), "d"),
     ("ceiling px", ("in_sample_ceiling", "both_eyes", "mean_px"), ".1f"),
-    ("+pose px", ("in_sample_ceiling", "with_head_pose", "mean_px"), ".1f"),
     ("centre px", ("constant_baselines", "screen_centre_mean_px"), ".1f"),
-    ("corr L/R x", ("feature_sanity", "corr_left_right_x"), ".2f"),
+    ("L/R corr", ("feature_sanity", "corr_left_right_x"), ".2f"),
+    ("yaw slope", ("head_pose_agreement", "yaw", "slope"), ".2f"),
 )
 
 
 def summary_table(result: dict[str, Any]) -> str:
     """A short text table for the terminal: one line per person and one across persons
-    (the mean of the per-person values)."""
-    lines = [f"{'person':<8}" + "".join(f"{title:>11}" for title, _, _ in _COLUMNS)]
+    (the mean of the per-person values). The JSON has every metric."""
+    width = 11
+    lines = [f"{'person':<7}" + "".join(f"{title:>{width}}" for title, _, _ in _COLUMNS)]
     for name, person in result["persons"].items():
-        lines.append(
-            f"{name:<8}"
-            + "".join(f"{_cell(_get(person, *path), spec):>11}" for _, path, spec in _COLUMNS)
-        )
+        cells = [_cell(_get(person, *path), spec) for _, path, spec in _COLUMNS]
+        lines.append(f"{name:<7}" + "".join(f"{cell:>{width}}" for cell in cells))
     means = [
         _cell(_get(result["aggregate"], *path, "mean"), ".1f" if spec == "d" else spec)
         for _, path, spec in _COLUMNS
     ]
-    lines.append(f"{'all':<8}" + "".join(f"{cell:>11}" for cell in means))
+    lines.append(f"{'mean':<7}" + "".join(f"{cell:>{width}}" for cell in means))
     return "\n".join(lines)
