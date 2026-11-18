@@ -429,6 +429,7 @@ def test_every_resource_is_closed_even_if_one_close_raises(tmp_path, monkeypatch
     monkeypatch.setitem(sys.modules, "tkinter", make_fake_tk())
     install_fakes(monkeypatch, cv2=FakeCv2())
     monkeypatch.setenv("DISPLAY", ":99")
+    monkeypatch.delenv("QT_QPA_PLATFORM", raising=False)  # the view may set it
     closed = []
 
     def recording(name, resource):

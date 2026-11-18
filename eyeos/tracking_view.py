@@ -304,17 +304,39 @@ def _import_cv2(who: str) -> Any:
 
 
 def _display_problem(platform: str, environ: Mapping[str, str]) -> str | None:
-    """Why no window can open here, or None. Off Windows and macOS, OpenCV's window
-    (Qt or GTK) needs an X or Wayland display, and without one Qt aborts the whole
-    process instead of raising, so this has to be checked before the first imshow()."""
+    """Why no window can open here, or None.
+
+    Off Windows and macOS, the opencv-python wheels draw their window with Qt, and the
+    only Qt platform plugin they bundle is xcb (X11). Without an X display Qt aborts
+    the whole process instead of raising, so this has to be checked before the first
+    window opens. A Wayland desktop offers an X display through XWayland ($DISPLAY);
+    $WAYLAND_DISPLAY alone is not enough. (A GTK build of OpenCV could draw on Wayland
+    directly, but this check doesn't tell the builds apart.)"""
     if platform in ("win32", "darwin"):
         return None
-    if environ.get("DISPLAY") or environ.get("WAYLAND_DISPLAY"):
+    if environ.get("DISPLAY"):
         return None
     return (
-        "The tracking view needs a display (neither $DISPLAY nor $WAYLAND_DISPLAY is "
-        "set). Run it in a desktop session, or drop --view."
+        "The tracking view needs an X display ($DISPLAY is not set; on a Wayland desktop "
+        "XWayland provides one). Run it in a desktop session, or drop --view."
     )
+
+
+def _qt_platform_override(platform: str, environ: Mapping[str, str]) -> str | None:
+    """The QT_QPA_PLATFORM to set before the first window opens, or None to leave it.
+
+    A QT_QPA_PLATFORM that names only plugins the opencv wheels don't ship (wayland,
+    offscreen, ...) makes Qt abort the process even with $DISPLAY set, so it is pointed
+    at xcb. A list that includes xcb ("wayland;xcb") is left alone: Qt falls back to
+    xcb by itself. Only Qt reads the variable, so a GTK build is unaffected."""
+    if platform in ("win32", "darwin"):
+        return None
+    value = environ.get("QT_QPA_PLATFORM", "").strip()
+    if not value:
+        return None
+    # "name[:option,...]", several separated by ";" (tried in order).
+    plugins = {entry.split(":", 1)[0].strip() for entry in value.split(";")}
+    return None if "xcb" in plugins else "xcb"
 
 
 def _ascii(text: str) -> str:
@@ -478,6 +500,10 @@ class TrackingView:
         problem = _display_problem(sys.platform, os.environ)
         if problem is not None:
             raise RuntimeError(problem)
+        qt_platform = _qt_platform_override(sys.platform, os.environ)
+        if qt_platform is not None:
+            # Read by Qt when OpenCV creates its first window, which hasn't happened yet.
+            os.environ["QT_QPA_PLATFORM"] = qt_platform
         self.screen = screen
         self.gain = gain
         self.window_name = window_name

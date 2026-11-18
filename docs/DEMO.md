@@ -89,6 +89,13 @@ cursor goes left. A synthetic input has no camera image, so the view draws on a 
 640x480 canvas. The view has run only on a virtual display (Xvfb), never on a
 real desktop or with a webcam: on Windows it is untested.
 
+On Linux the view needs an X display. The `opencv-contrib-python` wheel draws its
+window with Qt and ships only Qt's X11 (xcb) plugin, so on a Wayland desktop it runs
+through XWayland: `--view` refuses to start if `$DISPLAY` isn't set, and if
+`QT_QPA_PLATFORM` names another plugin (such as `wayland`), it sets it to `xcb` for
+its own process. On Xvfb, `QT_QPA_PLATFORM=wayland` and `offscreen` both ran this way;
+a real Wayland desktop is untested.
+
 ## 2. Narrate while recording (about 2 minutes)
 
 1. Look around the screen. The cursor follows your gaze, and Gates 1, 2 and 4 are green.

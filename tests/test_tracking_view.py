@@ -390,34 +390,90 @@ def test_the_view_needs_opencv(monkeypatch):
         annotate(FakeImage("bgr", 0, (480, 640, 3)), make_landmarks())
 
 
+@pytest.fixture(autouse=True)
+def _no_qt_platform_override(monkeypatch):
+    # TrackingView may set QT_QPA_PLATFORM; this makes monkeypatch restore the caller's.
+    monkeypatch.delenv("QT_QPA_PLATFORM", raising=False)
+
+
 @pytest.mark.parametrize(
     "platform, environ, refused",
     [
         ("linux", {}, True),
         ("linux", {"DISPLAY": ""}, True),
         ("linux", {"DISPLAY": ":0"}, False),
-        ("linux", {"WAYLAND_DISPLAY": "wayland-0"}, False),
+        # The opencv wheels' Qt has only its xcb (X11) plugin: Wayland alone, with no
+        # XWayland, makes it abort the process at the first window.
+        ("linux", {"WAYLAND_DISPLAY": "wayland-0"}, True),
+        ("linux", {"DISPLAY": ":0", "WAYLAND_DISPLAY": "wayland-0"}, False),
         ("win32", {}, False),
         ("darwin", {}, False),
     ],
 )
-def test_a_linux_session_without_a_display_is_refused_up_front(platform, environ, refused):
-    # OpenCV's Qt window aborts the whole process (no exception to catch) when there is
-    # no X or Wayland display, so the view must refuse before its first imshow().
+def test_a_linux_session_without_an_x_display_is_refused_up_front(platform, environ, refused):
+    # OpenCV's Qt window aborts the whole process (no exception to catch) when it can't
+    # reach an X display, so the view must refuse before its first window opens.
     from eyeos.tracking_view import _display_problem
 
     assert (_display_problem(platform, environ) is not None) is refused
 
 
-def test_the_view_refuses_to_start_without_a_display(monkeypatch):
+@pytest.mark.parametrize(
+    "platform, qt_platform, override",
+    [
+        ("linux", None, None),
+        ("linux", "", None),
+        ("linux", "xcb", None),
+        ("linux", "wayland", "xcb"),  # common on Sway, Hyprland and KDE
+        ("linux", "wayland-egl", "xcb"),
+        ("linux", "offscreen", "xcb"),
+        ("linux", "wayland;xcb", None),  # Qt falls back to xcb by itself
+        ("linux", "xcb:nomitshm", None),  # xcb with a plugin option
+        ("win32", "wayland", None),
+        ("darwin", "wayland", None),
+    ],
+)
+def test_qt_is_pointed_at_the_only_platform_plugin_opencv_ships(platform, qt_platform, override):
+    # With QT_QPA_PLATFORM naming a plugin the wheel doesn't have, Qt aborts the process
+    # even though $DISPLAY is set.
+    from eyeos.tracking_view import _qt_platform_override
+
+    environ = {"DISPLAY": ":0"}
+    if qt_platform is not None:
+        environ["QT_QPA_PLATFORM"] = qt_platform
+
+    assert _qt_platform_override(platform, environ) == override
+
+
+def test_the_view_sets_qt_to_xcb_before_any_window_opens(monkeypatch):
+    import os
+
+    from eyeos.tracking_view import TrackingView
+
+    cv2 = _install_cv2(monkeypatch)
+    monkeypatch.setattr("sys.platform", "linux")
+    monkeypatch.setenv("QT_QPA_PLATFORM", "wayland")
+
+    TrackingView(SCREEN)
+
+    assert os.environ["QT_QPA_PLATFORM"] == "xcb"
+    assert cv2.shown == []
+
+
+@pytest.mark.parametrize(
+    "environ", [{}, {"WAYLAND_DISPLAY": "wayland-0"}], ids=["no-display", "wayland-only"]
+)
+def test_the_view_refuses_to_start_without_an_x_display(monkeypatch, environ):
     from eyeos.tracking_view import TrackingView
 
     install_fakes(monkeypatch, cv2=FakeCv2())
     monkeypatch.setattr("sys.platform", "linux")
     monkeypatch.delenv("DISPLAY", raising=False)
     monkeypatch.delenv("WAYLAND_DISPLAY", raising=False)
+    for name, value in environ.items():
+        monkeypatch.setenv(name, value)
 
-    with pytest.raises(RuntimeError, match="needs a display"):
+    with pytest.raises(RuntimeError, match=r"needs an X display \(\$DISPLAY is not set"):
         TrackingView(SCREEN)
 
 
@@ -966,7 +1022,7 @@ def test_closing_the_view_mid_run_keeps_the_session_running(tmp_path, monkeypatc
     assert not keyboard.running
 
 
-@pytest.mark.parametrize("problem", ["no-opencv", "no-display"])
+@pytest.mark.parametrize("problem", ["no-opencv", "no-display", "wayland-only"])
 def test_run_view_reports_a_missing_opencv_or_display_as_one_line(
     tmp_path, monkeypatch, capsys, problem
 ):
@@ -983,7 +1039,9 @@ def test_run_view_reports_a_missing_opencv_or_display_as_one_line(
         monkeypatch.setattr("sys.platform", "linux")
         monkeypatch.delenv("DISPLAY", raising=False)
         monkeypatch.delenv("WAYLAND_DISPLAY", raising=False)
-        expected = "eyeos: error: The tracking view needs a display"
+        if problem == "wayland-only":
+            monkeypatch.setenv("WAYLAND_DISPLAY", "wayland-0")
+        expected = "eyeos: error: The tracking view needs an X display"
 
     exit_code = console_main(["run", "--config", str(_synthetic_config(tmp_path)), "--view"])
 
