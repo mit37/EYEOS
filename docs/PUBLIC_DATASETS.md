@@ -197,8 +197,15 @@ reported per participant.
 - **One calibration across many sittings.** The images come from many days (`dayNN`
   folders), so a calibration fitted on some of them is tested on photos from other
   sittings, lighting and postures. A live calibration is used in the same sitting.
-- **EyeOS's head pose is a simplified estimate** (`eyeos.features`), not the dataset's
-  head pose, so the head-pose share measures what Gate 2 would see, not true pose.
+- **EyeOS's head pose is a simplified, uncalibrated estimate** (`eyeos.features`), not
+  the dataset's head pose. Yaw and pitch are nose-offset ratios multiplied by fixed,
+  hand-picked constants (`_YAW_SCALE_DEG`, `_PITCH_SCALE_DEG`), so their "degrees" are
+  EyeOS's own measure. An audit's check outside this repo, which rotated one real
+  MediaPipe face mesh by known angles, suggests yaw reads about 1.5 times and pitch
+  about 0.4 times the true angle. That is speculation until EyeOS's estimate is
+  compared with MPIIFaceGaze's own head pose, a diagnostic that is being added. So the
+  15° limit, and every head-pose share here, is what Gate 2 would see live, in EyeOS's
+  measure, not 15 true degrees.
 - **Variants have slightly different test sets.** A variant with more images per dot
   holds more images out for calibration.
 - **Nothing here changes EyeOS.** The variants are experiments for comparison. Changing
