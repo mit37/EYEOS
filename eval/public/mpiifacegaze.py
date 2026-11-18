@@ -31,13 +31,15 @@ from __future__ import annotations
 
 import argparse
 import csv
+import importlib.metadata
 import json
 import math
+import platform
 import re
 import subprocess
 import sys
 from collections.abc import Callable, Sequence
-from concurrent.futures import ProcessPoolExecutor
+from concurrent.futures import ProcessPoolExecutor, as_completed
 from dataclasses import asdict, dataclass
 from datetime import datetime, timezone
 from pathlib import Path, PurePosixPath
@@ -418,6 +420,20 @@ _MISSING_DEPS = (
 )
 
 
+def face_mesh_settings(
+    min_detection_confidence: float = Config().gates.presence_confidence_threshold,
+    max_num_faces: int = 2,
+) -> dict[str, Any]:
+    """The FaceMesh arguments MediaPipeImageDetector runs with; the cache manifest
+    records them."""
+    return {
+        "static_image_mode": True,  # every photo is detected from scratch, no tracking
+        "max_num_faces": max_num_faces,
+        "refine_landmarks": True,  # required for the iris landmarks
+        "min_detection_confidence": min_detection_confidence,
+    }
+
+
 class MediaPipeImageDetector:
     """One still image -> FaceLandmarks, the way the live webcam source does it.
 
@@ -446,10 +462,7 @@ class MediaPipeImageDetector:
         self._cv2: Any = cv2
         self.min_detection_confidence = min_detection_confidence
         self._mesh: Any = mp.solutions.face_mesh.FaceMesh(
-            static_image_mode=True,
-            max_num_faces=max_num_faces,
-            refine_landmarks=True,  # required for the iris landmarks
-            min_detection_confidence=min_detection_confidence,
+            **face_mesh_settings(min_detection_confidence, max_num_faces)
         )
 
     def __call__(self, image_path: Path) -> FaceLandmarks | None:
@@ -576,6 +589,101 @@ def _extract_person_job(args: tuple[Any, ...]) -> ExtractSummary:
     return extract_person(*args)
 
 
+# ---------------------------------------------------------------------------
+# library versions and the cache manifest
+# ---------------------------------------------------------------------------
+
+OPENCV_DISTRIBUTIONS = (
+    "opencv-contrib-python",
+    "opencv-python",
+    "opencv-contrib-python-headless",
+    "opencv-python-headless",
+)
+MANIFEST_NAME = "manifest.json"
+MANIFEST_NOTE = (
+    "What each person's landmark cache was extracted with, written by "
+    "`python -m eval.public.mpiifacegaze extract` when it (re)extracts that person; "
+    "`evaluate` copies the evaluated persons' entries into its results."
+)
+
+
+def package_version(distribution: str) -> str | None:
+    """The installed version of a distribution (importlib.metadata); None if absent."""
+    try:
+        return importlib.metadata.version(distribution)
+    except importlib.metadata.PackageNotFoundError:
+        return None
+
+
+def opencv_version() -> tuple[str | None, str | None]:
+    """(distribution, version) of the first installed OpenCV wheel; (None, None) if none."""
+    for distribution in OPENCV_DISTRIBUTIONS:
+        version = package_version(distribution)
+        if version is not None:
+            return distribution, version
+    return None, None
+
+
+def _qualified_name(factory: object) -> str:
+    module = getattr(factory, "__module__", None) or type(factory).__module__
+    if module == "__main__":  # python -m eval.public.mpiifacegaze
+        spec = getattr(sys.modules.get("__main__"), "__spec__", None)
+        module = spec.name if spec is not None else module
+    name = getattr(factory, "__qualname__", None) or type(factory).__qualname__
+    return f"{module}.{name}"
+
+
+def manifest_entry(detector_factory: DetectorFactory, summary: ExtractSummary) -> dict[str, Any]:
+    """What one person's cache was just extracted with. No paths: evaluate copies it into
+    a results file that may be committed."""
+    distribution, opencv = opencv_version()
+    return {
+        "extracted": datetime.now(timezone.utc).isoformat(timespec="seconds"),
+        "images": summary.images,
+        "with_face": summary.with_face,
+        "detector": _qualified_name(detector_factory),
+        "face_mesh": face_mesh_settings() if detector_factory is MediaPipeImageDetector else None,
+        "python": platform.python_version(),
+        "platform": platform.platform(),
+        "packages": {"mediapipe": package_version("mediapipe"), "opencv": opencv},
+        "opencv_distribution": distribution,
+    }
+
+
+def manifest_path(cache_dir: Path) -> Path:
+    return Path(cache_dir) / MANIFEST_NAME
+
+
+def read_manifest(cache_dir: Path) -> dict[str, Any] | None:
+    """``<cache>/manifest.json``, or None for a cache without one (extracted before
+    extract wrote manifests)."""
+    path = manifest_path(cache_dir)
+    if not path.is_file():
+        return None
+    try:
+        manifest = json.loads(path.read_text())
+    except json.JSONDecodeError as e:
+        raise DatasetFormatError(
+            f"{path} is not valid JSON ({e}); delete it, or rerun `extract --force`"
+        ) from e
+    if not isinstance(manifest, dict) or not isinstance(manifest.get("persons"), dict):
+        raise DatasetFormatError(
+            f"{path} has no 'persons' mapping; delete it, or rerun `extract --force`"
+        )
+    return manifest
+
+
+def _record_in_manifest(cache_dir: Path, person: str, entry: dict[str, Any]) -> None:
+    manifest = read_manifest(cache_dir) or {"note": MANIFEST_NOTE, "persons": {}}
+    manifest["persons"][person] = entry
+    manifest["persons"] = dict(sorted(manifest["persons"].items()))
+    path = manifest_path(cache_dir)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    partial = path.with_name(path.name + ".partial")
+    partial.write_text(json.dumps(manifest, indent=2) + "\n")
+    partial.replace(path)
+
+
 def extract(
     root: Path,
     cache_dir: Path,
@@ -587,13 +695,29 @@ def extract(
 ) -> list[ExtractSummary]:
     """Extract every person (default: all pXX under ``root``), in parallel across persons
     when ``workers > 1``. Each worker builds its own detector from ``detector_factory``,
-    which must therefore be picklable (a module-level class or function)."""
+    which must therefore be picklable (a module-level class or function).
+
+    As each person's cache is written, ``<cache>/manifest.json`` records what it was
+    extracted with (manifest_entry); persons kept from an earlier run keep their entry.
+    """
     names = list(persons) if persons is not None else find_persons(root)
     jobs = [(Path(root), p, Path(cache_dir), detector_factory, limit, force) for p in names]
+
+    def record(summary: ExtractSummary) -> ExtractSummary:
+        if not summary.skipped:
+            _record_in_manifest(
+                cache_dir, summary.person, manifest_entry(detector_factory, summary)
+            )
+        return summary
+
     if workers <= 1 or len(jobs) <= 1:
-        return [_extract_person_job(job) for job in jobs]
+        return [record(_extract_person_job(job)) for job in jobs]
     with ProcessPoolExecutor(max_workers=min(workers, len(jobs))) as pool:
-        return list(pool.map(_extract_person_job, jobs))
+        futures = [pool.submit(_extract_person_job, job) for job in jobs]
+        for future in as_completed(futures):
+            if future.exception() is None:
+                record(future.result())
+        return [future.result() for future in futures]  # raises the first failure
 
 
 # ---------------------------------------------------------------------------

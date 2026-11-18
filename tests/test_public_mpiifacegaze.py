@@ -18,6 +18,7 @@ import io
 import json
 import math
 import os
+import platform
 import random
 import re
 import shlex
@@ -880,6 +881,131 @@ def test_extract_in_parallel_matches_a_sequential_run(tmp_path):
         ).read_text()
 
 
+_FAKE_VERSIONS = {
+    "mediapipe": "0.10.21",
+    "opencv-contrib-python": "4.11.0.86",
+    "numpy": "1.26.4",
+    "scipy": "1.17.1",
+}
+
+
+def _fake_versions(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(mpii, "package_version", _FAKE_VERSIONS.get)
+
+
+def _manifest(cache: Path) -> dict[str, Any]:
+    manifest: dict[str, Any] = json.loads((cache / "manifest.json").read_text())
+    return manifest
+
+
+def test_extract_writes_a_manifest_of_the_detector_and_library_versions(tmp_path, monkeypatch):
+    _fake_versions(monkeypatch)
+    root, cache = tmp_path / "MPIIFaceGaze", tmp_path / "cache"
+    for name in ("p00", "p01"):
+        write_person(root, FakePerson(name, n_images=5, faces={0: 0}, write_mat=False))
+
+    mpii.extract(root, cache, workers=2, detector_factory=fake_detector_factory)
+
+    persons = _manifest(cache)["persons"]
+    assert sorted(persons) == ["p00", "p01"]
+    entry = persons["p00"]
+    assert entry["images"] == 5 and entry["with_face"] == 4
+    assert entry["detector"] == "tests.fake_mpiifacegaze.fake_detector_factory"
+    assert entry["face_mesh"] is None  # not MediaPipe, so no FaceMesh settings
+    assert entry["python"] == platform.python_version()
+    assert entry["packages"] == {"mediapipe": "0.10.21", "opencv": "4.11.0.86"}
+    assert entry["opencv_distribution"] == "opencv-contrib-python"
+    assert entry["extracted"].endswith("+00:00")
+    # Nothing that would identify the machine's files: no paths at all.
+    assert str(tmp_path) not in (cache / "manifest.json").read_text()
+
+
+def test_the_manifest_records_mediapipes_face_mesh_settings():
+    summary = mpii.ExtractSummary("p00", 3, 2, False, Path("p00.csv"))
+
+    entry = mpii.manifest_entry(mpii.MediaPipeImageDetector, summary)
+
+    assert entry["detector"] == "eval.public.mpiifacegaze.MediaPipeImageDetector"
+    assert entry["face_mesh"] == {
+        "static_image_mode": True,
+        "max_num_faces": 2,
+        "refine_landmarks": True,
+        "min_detection_confidence": Config().gates.presence_confidence_threshold,
+    }
+    assert entry["face_mesh"] == mpii.face_mesh_settings()
+
+
+def test_the_manifest_names_no_opencv_or_mediapipe_when_neither_is_installed(monkeypatch):
+    monkeypatch.setattr(mpii, "package_version", lambda name: None)
+    summary = mpii.ExtractSummary("p00", 3, 2, False, Path("p00.csv"))
+
+    entry = mpii.manifest_entry(fake_detector_factory, summary)
+
+    assert entry["packages"] == {"mediapipe": None, "opencv": None}
+    assert entry["opencv_distribution"] is None
+
+
+def test_the_manifest_keeps_the_entries_of_persons_a_later_run_skipped(tmp_path, monkeypatch):
+    root, cache = tmp_path / "MPIIFaceGaze", tmp_path / "cache"
+    for name in ("p00", "p01"):
+        write_person(root, FakePerson(name, n_images=4, write_mat=False))
+    monkeypatch.setattr(mpii, "package_version", {"mediapipe": "0.10.14"}.get)
+    mpii.extract(root, cache, persons=["p00"], detector_factory=fake_detector_factory)
+    first = _manifest(cache)["persons"]["p00"]
+
+    monkeypatch.setattr(mpii, "package_version", {"mediapipe": "0.10.21"}.get)
+    summaries = mpii.extract(root, cache, detector_factory=fake_detector_factory)
+
+    assert [s.skipped for s in summaries] == [True, False]
+    persons = _manifest(cache)["persons"]
+    assert persons["p00"] == first  # p00's cache is still the old run's
+    assert persons["p00"]["packages"]["mediapipe"] == "0.10.14"
+    assert persons["p01"]["packages"]["mediapipe"] == "0.10.21"
+
+
+def test_an_interrupted_extract_keeps_the_manifest_entries_of_persons_it_finished(tmp_path):
+    root, cache = tmp_path / "MPIIFaceGaze", tmp_path / "cache"
+    write_person(root, FakePerson("p00", n_images=3, write_mat=False))
+    write_person(root, FakePerson("p01", n_images=3, write_mat=False))
+
+    made: list[FakeDetector] = []
+
+    def failing_on_p01() -> FakeDetector:
+        # p00's detector works; p01's fails on its first image.
+        made.append(_FailingDetector(fail_on_call=1) if made else FakeDetector())
+        return made[-1]
+
+    with pytest.raises(RuntimeError, match="interrupted"):
+        mpii.extract(root, cache, detector_factory=failing_on_p01)
+
+    assert (cache / "p00.csv").exists() and not (cache / "p01.csv").exists()
+    assert list(_manifest(cache)["persons"]) == ["p00"]
+
+
+class _P01FailingDetector(FakeDetector):
+    def __call__(self, image_path: Path) -> FaceLandmarks | None:
+        if Path(image_path).parent.parent.name == "p01":
+            raise RuntimeError("interrupted")
+        return super().__call__(image_path)
+
+
+def _p01_failing_factory() -> FakeDetector:
+    """Module-level, so worker processes can unpickle it."""
+    return _P01FailingDetector()
+
+
+def test_a_parallel_extract_records_every_person_that_finished_before_raising(tmp_path):
+    root, cache = tmp_path / "MPIIFaceGaze", tmp_path / "cache"
+    for name in ("p00", "p01", "p02"):
+        write_person(root, FakePerson(name, n_images=3, write_mat=False))
+
+    with pytest.raises(RuntimeError, match="interrupted"):
+        mpii.extract(root, cache, workers=3, detector_factory=_p01_failing_factory)
+
+    assert sorted(p.name for p in cache.glob("*.csv")) == ["p00.csv", "p02.csv"]
+    assert list(_manifest(cache)["persons"]) == ["p00", "p02"]
+
+
 def test_extract_cli_parses_persons_limit_and_workers(tmp_path, capsys):
     root, cache = tmp_path / "MPIIFaceGaze", tmp_path / "cache"
     for name in ("p00", "p01", "p02"):
@@ -892,7 +1018,7 @@ def test_extract_cli_parses_persons_limit_and_workers(tmp_path, capsys):
     )
 
     assert code == 0
-    assert sorted(p.name for p in cache.iterdir()) == ["p00.csv", "p02.csv"]
+    assert sorted(p.name for p in cache.iterdir()) == ["manifest.json", "p00.csv", "p02.csv"]
     assert len(_read_cache(cache / "p02.csv")) == 2
     assert "p02" in capsys.readouterr().out
 
@@ -972,6 +1098,7 @@ def test_mediapipe_image_detector_runs_static_face_mesh_and_rescales_x(monkeypat
     assert mesh.kwargs["max_num_faces"] == 2
     assert mesh.kwargs["refine_landmarks"] is True
     assert mesh.kwargs["min_detection_confidence"] == 0.5
+    assert mesh.kwargs == mpii.face_mesh_settings()  # what the cache manifest records
     assert [image.color for image in mesh.processed] == ["rgb", "rgb", "rgb"]
     assert none is None
     assert one is not None and one.face_count == 1
