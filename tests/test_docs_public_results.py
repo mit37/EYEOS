@@ -135,6 +135,27 @@ def test_the_docs_do_not_call_work_added_after_the_real_run_unfinished(doc, in_p
     assert in_progress not in prose
 
 
+def _live_comparison_items() -> dict[str, str]:
+    """The labelled sub-bullets of "How these numbers compare with live use", flattened."""
+    text = PUBLIC_DOC.read_text(encoding="utf-8")
+    start = text.index("**How these numbers compare with live use")
+    block = text[start : text.index("\n- **", start)]
+    items = {}
+    for item in re.split(r"\n  - ", block)[1:]:
+        label, _, body = item.partition(":")
+        items[label.strip()] = " ".join(body.split())
+    return items
+
+
+def test_the_live_comparison_lists_static_image_detection_with_no_direction():
+    # The doc's own Limits say only that tracking mode "can behave differently".
+    items = _live_comparison_items()
+
+    assert "static-image mode" in items["Not known either way"]
+    assert "static" not in items["Harder here"]
+    assert "from scratch" not in items["Harder here"]
+
+
 def _table_headers(text: str) -> list[str]:
     """Every header cell of every Markdown table in ``text``."""
     lines = text.splitlines()

@@ -379,11 +379,9 @@ averages 319 px; Gate 2 needs < 60 px.
   This setup differs from a live session in ways that push both ways.
   - Harder here: each calibration is chosen from all of a person's photos, taken over
     many days and postures, and tested on all the others, while a live session
-    calibrates and runs in one sitting;
-    MediaPipe detects each still photo from scratch instead of tracking; nothing is
-    smoothed; and photos whose head pose live Gate 2 would freeze are still scored (on
-    average 90 % of test photos are within the head-pose limit, 65 % for p13: the
-    JSON's `head_pose_within_limit_share`).
+    calibrates and runs in one sitting; nothing is smoothed; and photos whose head pose
+    live Gate 2 would freeze are still scored (on average 90 % of test photos are within
+    the head-pose limit, 65 % for p13: the JSON's `head_pose_within_limit_share`).
   - Easier here: the calibration has 45 photos, while a live one has 9 samples, each an
     average of up to 10 frames from one moment (with 9 single photos, `per-dot-1`, the
     mean error here is 16 % higher); and every photo is 1280x720, while the live webcam
@@ -391,7 +389,9 @@ averages 319 px; Gate 2 needs < 60 px.
     lower.
   - Not known either way: each calibration photo is labelled with the target shown when
     it was taken, a live sample with the dot shown. Both carry the person's fixation
-    error, and nothing here compares the two.
+    error, and nothing here compares the two. And MediaPipe runs on each photo in
+    static-image mode, but live in tracking mode; how that changes per-frame accuracy
+    is not measured.
   - The cross-sitting part can be measured without new data: the landmark cache keeps
     each image's `dayNN` folder, so a calibration tested within one day can be compared
     with the cross-day numbers here (a day can hold more than one sitting).
