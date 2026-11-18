@@ -294,8 +294,10 @@ landmarks, so a result is only reproducible with them known. `extract` now write
 the detector and its FaceMesh settings, Python, the platform, and the mediapipe and
 OpenCV versions. A person kept from an earlier run keeps its entry. `evaluate` writes
 an `environment` block into the results: its own Python, platform and numpy, scipy,
-OpenCV and mediapipe versions (null when not installed), and under `extract` the
-manifest entries of the evaluated persons. `extract` is null for a cache made before
+OpenCV and mediapipe versions, and under `extract` the manifest entries of the
+evaluated persons. Each version comes from the library's pip distribution, or, for one
+installed without pip metadata (conda, a system package), from the module's
+`__version__`; it is null when neither is found. `extract` is null for a cache made before
 manifests existed, such as the 2026-11-18 run's, and a person the manifest does not
 list is null. Neither file holds paths.
 

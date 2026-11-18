@@ -615,13 +615,30 @@ def package_version(distribution: str) -> str | None:
         return None
 
 
+def module_version(module: str) -> str | None:
+    """``module.__version__``, for a library installed without pip metadata (a conda or
+    system package); None if the module does not import or has no version."""
+    try:
+        imported = importlib.import_module(module)
+    except Exception:  # absent or broken: either way, no version to record
+        return None
+    version = getattr(imported, "__version__", None)
+    return None if version is None else str(version)
+
+
+def installed_version(distribution: str, module: str) -> str | None:
+    """The pip distribution's version, else the importable module's; None if neither."""
+    return package_version(distribution) or module_version(module)
+
+
 def opencv_version() -> tuple[str | None, str | None]:
-    """(distribution, version) of the first installed OpenCV wheel; (None, None) if none."""
+    """(distribution, version) of the first installed OpenCV wheel; else (None, the
+    version of an importable cv2 without pip metadata); (None, None) if neither."""
     for distribution in OPENCV_DISTRIBUTIONS:
         version = package_version(distribution)
         if version is not None:
             return distribution, version
-    return None, None
+    return None, module_version("cv2")
 
 
 def _qualified_name(factory: object) -> str:
@@ -645,7 +662,7 @@ def manifest_entry(detector_factory: DetectorFactory, summary: ExtractSummary) -
         "face_mesh": face_mesh_settings() if detector_factory is MediaPipeImageDetector else None,
         "python": platform.python_version(),
         "platform": platform.platform(),
-        "packages": {"mediapipe": package_version("mediapipe"), "opencv": opencv},
+        "packages": {"mediapipe": installed_version("mediapipe", "mediapipe"), "opencv": opencv},
         "opencv_distribution": distribution,
     }
 
@@ -795,7 +812,9 @@ NOTES = {
         "moments, often from different days, not consecutive frames of one."
     ),
     "environment": (
-        "where evaluate ran: Python, platform and library versions (null = not installed). "
+        "where evaluate ran: Python, platform and library versions, each from its pip "
+        "distribution or else the importable module's __version__ (null = neither found; "
+        "opencv_distribution is null for an OpenCV without pip metadata, e.g. conda's). "
         "environment.extract copies, per evaluated person, the cache's manifest.json entry "
         "written by extract (detector, FaceMesh settings, mediapipe and OpenCV versions); "
         "null when the cache has no manifest, or for a person it does not list."
@@ -876,7 +895,7 @@ def _git(*args: str) -> str | None:
 
 
 def environment(cache_dir: Path, persons: Sequence[str]) -> dict[str, Any]:
-    """Where evaluate runs (Python, platform, library versions; None = not installed),
+    """Where evaluate runs (Python, platform, library versions; None = not found),
     and under ``extract`` what each evaluated person's cache was extracted with, from
     ``<cache>/manifest.json``: None for a cache without a manifest, and None for a person
     the manifest does not list."""
@@ -886,10 +905,10 @@ def environment(cache_dir: Path, persons: Sequence[str]) -> dict[str, Any]:
         "python": platform.python_version(),
         "platform": platform.platform(),
         "packages": {
-            "numpy": package_version("numpy"),
-            "scipy": package_version("scipy"),
+            "numpy": installed_version("numpy", "numpy"),
+            "scipy": installed_version("scipy", "scipy"),
             "opencv": opencv,
-            "mediapipe": package_version("mediapipe"),
+            "mediapipe": installed_version("mediapipe", "mediapipe"),
         },
         "opencv_distribution": distribution,
         "extract": (None if manifest is None else {p: manifest["persons"].get(p) for p in persons}),

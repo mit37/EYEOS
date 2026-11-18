@@ -935,14 +935,56 @@ def test_the_manifest_records_mediapipes_face_mesh_settings():
     assert entry["face_mesh"] == mpii.face_mesh_settings()
 
 
+def _not_importable(monkeypatch: pytest.MonkeyPatch, *modules: str) -> None:
+    for module in modules:
+        monkeypatch.setitem(sys.modules, module, None)  # `import module` now fails
+
+
 def test_the_manifest_names_no_opencv_or_mediapipe_when_neither_is_installed(monkeypatch):
     monkeypatch.setattr(mpii, "package_version", lambda name: None)
+    _not_importable(monkeypatch, "cv2", "mediapipe")
     summary = mpii.ExtractSummary("p00", 3, 2, False, Path("p00.csv"))
 
     entry = mpii.manifest_entry(fake_detector_factory, summary)
 
     assert entry["packages"] == {"mediapipe": None, "opencv": None}
     assert entry["opencv_distribution"] is None
+
+
+def test_versions_come_from_the_module_when_no_pip_distribution_names_it(tmp_path, monkeypatch):
+    # e.g. conda's py-opencv or a distro's python3-opencv: cv2 imports, no pip metadata.
+    monkeypatch.setattr(mpii, "package_version", lambda name: None)
+    monkeypatch.setitem(sys.modules, "cv2", types.SimpleNamespace(__version__="4.6.0"))
+    monkeypatch.setitem(sys.modules, "mediapipe", types.SimpleNamespace(__version__="0.10.9"))
+    monkeypatch.setitem(sys.modules, "scipy", types.SimpleNamespace(__version__="1.11.4"))
+    summary = mpii.ExtractSummary("p00", 3, 2, False, Path("p00.csv"))
+
+    entry = mpii.manifest_entry(fake_detector_factory, summary)
+    environment = mpii.environment(tmp_path, ["p00"])
+
+    assert mpii.opencv_version() == (None, "4.6.0")
+    assert entry["packages"] == {"mediapipe": "0.10.9", "opencv": "4.6.0"}
+    assert entry["opencv_distribution"] is None  # no pip distribution to name
+    assert environment["packages"] == {
+        "numpy": np.__version__,
+        "scipy": "1.11.4",
+        "opencv": "4.6.0",
+        "mediapipe": "0.10.9",
+    }
+    # A module without a version, or one that fails to import, records none.
+    monkeypatch.setitem(sys.modules, "cv2", types.SimpleNamespace())
+    _not_importable(monkeypatch, "mediapipe")
+    assert mpii.manifest_entry(fake_detector_factory, summary)["packages"] == {
+        "mediapipe": None,
+        "opencv": None,
+    }
+
+
+def test_a_pip_distribution_wins_over_importing_the_module(monkeypatch):
+    _fake_versions(monkeypatch)
+    monkeypatch.setitem(sys.modules, "cv2", types.SimpleNamespace(__version__="0.0.1"))
+
+    assert mpii.opencv_version() == ("opencv-contrib-python", "4.11.0.86")
 
 
 def test_the_manifest_keeps_the_entries_of_persons_a_later_run_skipped(tmp_path, monkeypatch):
@@ -1567,6 +1609,8 @@ def test_the_results_notes_say_what_the_file_holds_and_which_statistic_is_which(
     assert "centre" in notes["baselines"] and "calibration-mean" in notes["baselines"]
     assert "collect_dot_features" in notes["eyeos_live9"]
     assert "manifest.json" in notes["environment"]
+    assert "not installed" not in notes["environment"]  # null: not found either way
+    assert "pip distribution or else the importable module" in notes["environment"]
     assert "eyeos-live9" in notes["calibration_set"]
     # Every variant a note names exists.
     named = set(
