@@ -303,6 +303,15 @@ def test_feature_sanity_flags_irises_paired_with_the_wrong_eyes():
     assert sanity["left_iris_x"]["median"] > 3 and sanity["right_iris_x"]["median"] < -3
     assert sanity["x_medians_within_eye"] is False
 
+    # One eye is enough: both irises taken from the left eye.
+    one = _person(Spec(noise=0.02))
+    one.data.landmarks = [
+        dataclasses.replace(lm, right_iris_center=lm.left_iris_center) for lm in one.data.landmarks
+    ]
+    sanity = diagnostics.diagnose([one])["persons"]["p00"]["feature_sanity"]
+    assert abs(sanity["left_iris_x"]["median"]) < 0.5
+    assert sanity["x_medians_within_eye"] is False
+
 
 def test_feature_sanity_reads_the_eyeos_roll_spread():
     sanity = _one(Spec(roll_range_deg=10.0, roll_landmarks=True))["feature_sanity"]
@@ -959,6 +968,18 @@ def test_a_head_that_turns_toward_the_target_is_not_read_as_head_motion():
     assert split["r2_head_pose"] > 0.1
     # ... but beyond the target, the head pose explains nothing.
     assert split["r2_head_pose_beyond_target"] < 0.02
+    assert split["r2_day_beyond_target"] < 0.02
+
+
+def test_days_that_differ_only_in_where_the_targets_were_are_not_read_as_drift():
+    # Pure landmark noise, no per-day offset; but one day's targets were all on the
+    # screen's left half and the other's on its right, so the day stands in for the target.
+    person = _person(Spec(days=(300, 300), noise=0.6))
+    person.days = ["day01" if x < W / 2 else "day02" for x, _ in person.data.targets_px]
+
+    split = diagnostics.diagnose([person])["persons"]["p00"]["variance_split"]
+
+    assert split["r2_day"] > 0.1
     assert split["r2_day_beyond_target"] < 0.02
 
 
