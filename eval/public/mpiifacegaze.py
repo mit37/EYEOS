@@ -14,8 +14,9 @@ The protocol itself (eval/public/protocol.py) and the models it compares
 (eval/public/models.py) know nothing about MPIIFaceGaze; this module only reads the
 dataset, checks its screen model and caches the landmarks.
 
-Expected layout (our best knowledge of the format; every reader here fails loudly, naming
-the file and showing the offending line or keys, when the data does not fit it):
+Expected layout (checked against the real files on 2026-11-18; every reader here fails
+loudly, naming the file and showing the offending line or keys, when the data does not
+fit it):
 
     MPIIFaceGaze/pXX/pXX.txt                    one line per image, 28 fields
     MPIIFaceGaze/pXX/Calibration/screenSize.mat width_pixel, height_pixel, width_mm, height_mm

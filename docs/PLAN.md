@@ -131,16 +131,21 @@ Restated from `PRD.md` §8, per `STANDARDS.md` §6 step 1.
   - `eyeos record`, a labelled session recorder for `eval/run_eval.py`, which now
     takes the recording's `--config`.
   - `eval/public/`, an MPIIFaceGaze harness: license-gated download, a landmark
-    cache, the shipping calibration and 11 variants. It has not run on the real
-    dataset (see the constraints below).
+    cache, the shipping calibration and 11 variants. It first ran on the real
+    dataset on 2026-11-18 (see the constraints below).
   - `docs/LOCAL_SETUP.md` and the setup scripts for Windows and Linux/macOS.
   - The reviews found 20 issues (1 high, 8 medium, 11 low). All were fixed;
     what is still untested is listed below. One more fix came out of it: a config
     that repeats a key (a second pasted `gates:` section, which plain YAML would let
     silently drop the first one's no-click zones) is now refused.
 - Still open: the owner-only items (tag, repo description and topics, branch
-  protection), hardware verification, a real recorded session, and the real
-  MPIIFaceGaze run.
+  protection), hardware verification and a real recorded session.
+- The real MPIIFaceGaze run (2026-11-18): download, landmark extraction for all 15
+  participants and evaluation of every variant, results in
+  `eval/results/mpiifacegaze.json` and `docs/PUBLIC_DATASETS.md` ("Real run"). The real
+  files matched the format the parsers expected, so no code changed. The shipping
+  calibration's mean error is 258 px (6.25°), and it fails Gate 2 for all 15
+  participants.
 
 ## Cloud-instance constraints (PRD §7, STANDARDS §6.4)
 
@@ -215,10 +220,12 @@ is therefore behind an interface and tested only against a fake:
   (`docs/RECORDING.md`), but none has been recorded yet.
 - **Public dataset (MPIIFaceGaze).** `eval/public/` runs the landmark pipeline and
   calibration on MPIIFaceGaze (`docs/PUBLIC_DATASETS.md`). The dataset's host was not
-  reachable from this container, so it is tested only on a fake dataset with a fake
-  detector, and smoke-tested with the real OpenCV and MediaPipe on blank images. The
-  real download, extraction and evaluation are pending, and no MPIIFaceGaze numbers
-  exist yet.
+  reachable from the container it was built in, so it was built against a fake dataset
+  with a fake detector. A later cloud session (2026-11-18) could reach the host and ran
+  the real download, extraction and evaluation; the numbers are in
+  `eval/results/mpiifacegaze.json` and `docs/PUBLIC_DATASETS.md` ("Real run"). The
+  automated tests still use only the fake dataset: the real one is non-commercial and
+  never committed, so CI cannot run it.
 
 Everything else runs and is tested in this container with no external hardware:
 features, calibration, filter, gates, hotkey latch logic, the dry-run pipeline and the

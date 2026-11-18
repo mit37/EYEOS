@@ -18,12 +18,17 @@ models can be refitted and compared on the same data with one command each.
 - **Smoke-tested with the real libraries** (OpenCV 4.11, MediaPipe 0.10.21, Python 3.11,
   Linux): `extract` and `evaluate` ran end to end on four blank generated JPEGs. MediaPipe
   found no face in them, as expected, and `evaluate` reported every person as skipped.
-- **Not run yet:** the real download, extraction and evaluation of MPIIFaceGaze. The
-  dataset's host was not reachable from the machine this was built on. **There are no
-  MPIIFaceGaze numbers yet, and none are quoted anywhere in this repo.**
-- **The expected file format is our best knowledge, not checked against the real
-  files** (see "Expected format" below). Every reader fails loudly, naming the file and
-  showing the offending line or keys, if the real data differs.
+- **Run on the real dataset (2026-11-18):** the real download, landmark extraction
+  for all 15 participants and evaluation of every variant, in a cloud container. The
+  harness was built where the dataset's host was unreachable; a later session could
+  reach it. Results are in `eval/results/mpiifacegaze.json`, and the run, with an
+  honest reading of the numbers, is described in "Real run" below.
+- **The expected file format was checked against the real files** on that run, and
+  matched (see "Expected format" and "Real run"). No parser changed. The readers still
+  fail loudly, naming the file and showing the offending line or keys, if a copy of the
+  data differs.
+- **The automated tests still use only the fake dataset.** The real data is
+  non-commercial and never committed, so CI cannot run it.
 - **Windows:** the downloader uses only the Python standard library so that it can run
   on Windows. That is untested: it has only run on Linux, against the fake server.
 
@@ -84,7 +89,8 @@ Useful options:
 
 ### Expected format
 
-Our best knowledge of the layout; nothing here has been checked against the real files.
+The layout, from the dataset's `readme.txt`, checked against the real files on
+2026-11-18 (all 37,667 lines have 28 fields; see "Real run" for details).
 
 | File | Content |
 |---|---|
@@ -221,6 +227,131 @@ thresholds, the screen-model tolerance), `screen_model` (per person), `detection
 person and in aggregate), `variants` (for each: description, K, `aggregate`, and
 `persons` with every per-person metric, or `skipped` with the reason), and `notes` that
 restate the protocol's limits next to the numbers.
+
+## Real run (2026-11-18)
+
+The first run on the real MPIIFaceGaze. Every number here is in
+`eval/results/mpiifacegaze.json`, which the commands below regenerate.
+
+### Setup
+
+- **Date:** 2026-11-18. **Code:** commit `d3661ee` (the JSON's `git_commit`;
+  `git_dirty` false). No code changed during the run.
+- **Machine:** cloud container, 4 CPUs (Intel Xeon @ 2.10 GHz), no GPU, Linux.
+- **Libraries:** Python 3.12.3, mediapipe 0.10.21, opencv-contrib-python 4.11.0.86,
+  numpy 1.26.4, scipy 1.17.1. pip resolved these by itself from
+  `pip install -e ".[dev,public-eval]"`; no pins were needed.
+- **Data:** `MPIIFaceGaze.zip`, 942.3 MB, 38,278 files; 15 participants, 37,667
+  annotated images (1,498 to 2,929 each, not "about 3000" each).
+
+### Commands and wall times
+
+```bash
+python3.12 -m venv venv && . venv/bin/activate
+pip install -e ".[dev,public-eval]"
+python scripts/download_mpiifacegaze.py --accept-license --dest datasets
+# trial: p00, first 200 images
+python -m eval.public.mpiifacegaze extract --root datasets/MPIIFaceGaze \
+    --cache datasets/cache/mpiifacegaze --persons p00 --limit 200
+python -m eval.public.mpiifacegaze evaluate --root datasets/MPIIFaceGaze \
+    --cache datasets/cache/mpiifacegaze --persons p00 --out /tmp/trial.json
+# full run
+python -m eval.public.mpiifacegaze extract --root datasets/MPIIFaceGaze \
+    --cache datasets/cache/mpiifacegaze --workers 4
+python -m eval.public.mpiifacegaze evaluate --root datasets/MPIIFaceGaze \
+    --cache datasets/cache/mpiifacegaze --out eval/results/mpiifacegaze.json
+```
+
+The download took 4 min 22 s. The 200-image trial extraction took 2.4 s. The full
+extraction took 1 min 40 s wall time (5 min 13 s CPU) for 37,667 images with 4
+workers, about 375 images a second in all. `evaluate` (all 12 variants) took 6.5 s, and a
+second run gave a JSON identical to the first apart from `generated`.
+
+### Format: what the real files hold
+
+Nothing broke a parser. What we saw, for the next person:
+
+- `pXX/pXX.txt`: every one of the 37,667 lines has exactly 28 whitespace-separated
+  fields, `\n` line endings, `left`/`right` in the last field. The on-screen target and
+  the six 2D landmarks are whole numbers; the 3D values have six decimals.
+- `monitorPose.mat` holds `rvects` and `tvecs`, each (3, 1) float64. The dataset's own
+  `readme.txt` calls the first one `rvecs`; the files say `rvects`, the name the parser
+  tries first (it accepts both).
+- `screenSize.mat`: `width_pixel` and `height_pixel` are stored as uint16 (1, 1),
+  `width_mm` and `height_mm` as float64 (1, 1). The parser reads both as floats.
+- `Camera.mat` also holds `retval` and 100 `rvecs`/`tvecs` (the camera calibration's own
+  views), besides `cameraMatrix` and `distCoeffs`. Unused.
+- The dataset root also holds a `readme.txt` (ignored: only `pXX` folders are read).
+- Every image is 1280x720. The screens are 1280x800 (6 people), 1440x900 (8 people),
+  both 286.5 x 179.0 mm, and 1680x1050 at 331.7 x 207.3 mm (p06).
+
+### Detection and the screen model
+
+- **Detection rate:** 37,575 of 37,667 images usable (exactly one face, both irises
+  visible): 99.68 % on average per person. 67 images had no face (58 of them p12's,
+  9 p07's) and 25 had a face but irises not visible. No image had more than one face.
+  p12 is lowest at 96.4 %; 8 participants are at 100 %.
+- **Screen model:** the documented model (`default`: `R(rvects) @ [x_mm, y_mm, 0] +
+  tvecs`) reproduces the annotated 3D gaze target for all 15 participants, with a
+  median residual of at most 5e-7 mm (rounding of the file's six decimals). No
+  alternative candidate was needed, and every participant has an angular error.
+
+### Results (all 15 participants scored for every variant)
+
+"Mean", "median" and "p90" are over the 15 per-person means (each person weighs the
+same). Pooled values are over all test frames.
+
+| Variant | mean px | median px | p90 px | mean ° | median ° | p90 ° | pooled median px | % diag | Gate 2 |
+|---|---|---|---|---|---|---|---|---|---|
+| eyeos (shipping) | 258.4 | 257.7 | 324.0 | 6.25 | 6.00 | 7.61 | 230.5 | 15.8 | 0/15 |
+| eyeos-poly2 | 259.2 | 256.6 | 324.6 | 6.26 | 5.99 | 7.59 | 230.7 | 15.8 | 0/15 |
+| ridge-0.001 | 258.4 | 257.7 | 324.0 | 6.25 | 6.00 | 7.61 | 230.5 | 15.8 | 0/15 |
+| ridge-0.1 | 277.7 | 269.4 | 336.0 | 6.73 | 6.46 | 8.17 | 265.2 | 17.0 | 0/15 |
+| ridge-1 | 363.7 | 366.0 | 419.0 | 8.88 | 8.63 | 10.24 | 366.0 | 22.2 | 0/15 |
+| ridge-10 | 428.8 | 433.0 | 469.7 | 10.56 | 10.24 | 11.83 | 429.4 | 26.1 | 0/15 |
+| per-dot-1 | 299.6 | 297.5 | 350.5 | 7.28 | 6.88 | 9.83 | 267.0 | 18.3 | 0/15 |
+| per-dot-5 | 258.4 | 257.7 | 324.0 | 6.25 | 6.00 | 7.61 | 230.5 | 15.8 | 0/15 |
+| per-dot-10 | 253.6 | 249.0 | 319.9 | 6.13 | 5.85 | 7.48 | 227.5 | 15.5 | 0/15 |
+| per-dot-20 | 250.6 | 247.8 | 316.8 | 6.07 | 5.75 | 7.40 | 224.7 | 15.3 | 0/15 |
+| with-head-pose | 223.7 | 232.1 | 270.4 | 5.37 | 5.32 | 6.26 | 197.7 | 13.6 | 0/15 |
+| global-lopo | 219.9 | 220.1 | 268.6 | 5.28 | 5.04 | 6.32 | 196.6 | 13.4 | 0/15 |
+
+For the shipping `eyeos` model, the per-person mean ranges from 182 px (p02, 4.50°)
+to 348 px (p13, 9.20°). The outliers are p13 (348 px, 9.20°, and only 65 % of its test
+frames within Gate 2's head-pose limit of the calibration pose, the lowest of anyone),
+p07 (330 px, 6.43°) and p08 (315 px, 7.68°, 75 % within the head-pose limit). p13 is also
+where the head-pose variants help most: `with-head-pose` 218 px and `global-lopo` 219 px.
+The calibration's leave-one-out validation error averages 319 px; Gate 2 needs < 60 px.
+
+### Reading the results honestly
+
+- **The shipping calibration would not pass Gate 2 for any participant.** Its
+  validation error is 224 to 422 px (3.7 to 7 times the 60 px limit). A live EyeOS session
+  on these photos would refuse to start control, which is the gate doing its job, not
+  a pass.
+- **About 6° (258 px, 16 % of the screen diagonal) is too coarse for clicking.** On a
+  1440x900 laptop screen that is a radius of roughly a fifth of the screen width: enough
+  to tell which region of the screen someone looks at, not to hit a button.
+- **This setup is harder than a live session, so these numbers are pessimistic for
+  live use, by an amount this run cannot measure.** One calibration is fitted on images
+  from many days and postures and tested on all the others; MediaPipe runs from scratch
+  on each still photo; there is no smoothing. A live session calibrates and runs in one
+  sitting. Only a recorded live session (`eyeos record`) can say how much better it is.
+- **Head pose matters.** Adding EyeOS's own yaw, pitch and roll (`with-head-pose`)
+  cuts the mean error by 13 % (258 to 224 px), and learning from the other 14 people
+  first (`global-lopo`) by 15 % (to 220 px). The gain is biggest for the people whose
+  head moved most (p13, p04, p08). Neither variant brings anyone under Gate 2.
+- **More calibration images help a little; more model capacity and more
+  regularisation do not.** 20 images per dot instead of 5 gains 3 % (251 px), 1 image
+  per dot loses 16 % (300 px). The quadratic model is no better than the affine one.
+  Stronger ridge makes things steadily worse (ridge 10: 429 px).
+- **Nothing was tuned on this data.** Every variant, threshold and the ridge strengths
+  were fixed before this run; this is a single evaluation, not a model selection.
+  Changing EyeOS's shipping model based on it (for example adding head pose) would be a
+  separate decision, made in `eyeos/` with its own tests.
+- **Not measured here:** how the error compares with published appearance-based
+  methods on this dataset (their protocols differ, and no such number is produced by
+  this repo), and any constant-prediction baseline (no such variant exists yet).
 
 ## Adding another dataset
 
