@@ -10,8 +10,10 @@ Like protocol.py, nothing here knows a dataset: a loader hands over one
 ``eval.public.mpiifacegaze.load_diagnostic_person``). Everything is deterministic:
 closed-form least squares, no randomness.
 
-The in-sample sections fit on every valid frame and score on those same frames. They
-bound what a calibration of these features could reach; they are not results.
+The in-sample sections fit on every valid frame and score on those same frames. The
+all-days ceiling bounds one calibration of these features used across all of a person's
+days (the cross-day setting), not a calibration made within one sitting; its per_day
+part bounds that. They are bounds, not results.
 """
 
 from __future__ import annotations
@@ -55,10 +57,16 @@ SECTIONS: dict[str, str] = {
         "EyeOS roll spread. A broken or swapped eye shows here."
     ),
     "in_sample_ceiling": (
-        "b. How well could ANY calibration of these features do? Each model is fitted on "
-        "all of a person's valid frames and scored on the same frames, so it is an "
-        "optimistic bound, not a result. Far above Gate 2's limit means the features, not "
-        "the calibration set, are the limit."
+        "b. How well could one calibration of these features do across all of a person's "
+        "days? Each model is fitted on all of a person's valid frames, from every day, and "
+        "scored on the same frames: about the lowest error a single affine map reaches in "
+        "the cross_day setting, an optimistic bound, not a result. It does not bound a "
+        "calibration made within one sitting: a per-day offset (sitting, lighting, a per-day "
+        "landmark bias) raises it, yet a per-day calibration absorbs it. per_day fits each "
+        "day within_day uses on that day's own frames: the bound for a per-sitting "
+        "calibration. Gate 2 judges another number, the leave-one-out RMS over the "
+        "calibration images (cross_day.validation_error_px, "
+        "within_day.validation_error_px_mean)."
     ),
     "constant_baselines": (
         "c. What does a model that ignores the eyes score? A yardstick for every other "
@@ -120,8 +128,11 @@ HEAD_POSE_CONVENTION = (
 NOTES: dict[str, str] = {
     "in_sample": (
         "in_sample_ceiling and variance_split fit on every valid frame and score on the same "
-        "frames: they bound what a calibration of these features could reach and say where "
-        "the leftover comes from. They are not a result and use the test frames."
+        "frames. in_sample_ceiling bounds one affine calibration of these features used "
+        "across all of a person's days (the cross_day setting); in_sample_ceiling.per_day "
+        "bounds one calibration per day folder (the within_day setting); variance_split "
+        "says where the all-days leftover comes from. They are not a result and use the "
+        "test frames."
     ),
     "protocol": (
         "cross_day, within_day and error_by_head_pose run protocol.evaluate_person with the "
@@ -187,14 +198,19 @@ METRICS: dict[str, str] = {
     ),
     "in_sample_ceiling.both_eyes": (
         "the shipping calibration's model (affine in the 4 iris offsets, its ridge strength) "
-        "fitted on all valid frames: mean_px and rms_px of the rounded, clamped prediction's "
-        "error, and r2_x, r2_y of the raw fit per screen axis"
+        "fitted on all valid frames from every day: mean_px and rms_px of the rounded, "
+        "clamped prediction's error, and r2_x, r2_y of the raw fit per screen axis"
     ),
     "in_sample_ceiling.left_eye_only": "as both_eyes, on the left eye's 2 offsets alone",
     "in_sample_ceiling.right_eye_only": "as both_eyes, on the right eye's 2 offsets alone",
     "in_sample_ceiling.with_head_pose": (
         "as both_eyes, with EyeOS's yaw, pitch and roll added, fitted like the with-head-pose "
         "variant (standardised ridge)"
+    ),
+    "in_sample_ceiling.per_day": (
+        "the both_eyes model fitted separately on each day within_day uses, on that day's "
+        "valid frames, and scored on them: days (how many), mean_px and rms_px (each the "
+        "mean over those days of that day's value); null without such a day"
     ),
     "constant_baselines.screen_centre_mean_px": (
         "mean px error of always predicting the screen centre, over all valid frames"
@@ -450,6 +466,22 @@ class _Settings:
     limits: protocol.Limits
 
 
+def _days_with_enough_images(
+    frames: _Frames, settings: _Settings
+) -> tuple[dict[str, list[int]], dict[str, list[int]]]:
+    """The valid frames of each day folder (indices into the valid frames), split into the
+    days within_day uses and the days with too few valid images; both sorted by day."""
+    grid_size = len(target_points(*frames.screen))
+    needed = max(settings.min_day_images, settings.k_per_dot * grid_size + 1)
+    by_day: dict[str, list[int]] = {}
+    for index, day in enumerate(frames.days or []):
+        if day is not None:
+            by_day.setdefault(day, []).append(index)
+    used = {day: by_day[day] for day in sorted(by_day) if len(by_day[day]) >= needed}
+    short = {day: by_day[day] for day in sorted(by_day) if len(by_day[day]) < needed}
+    return used, short
+
+
 def _feature_sanity(frames: _Frames) -> dict[str, Any]:
     iris, targets = frames.iris, frames.targets
     left_x, right_x = (_corr(iris[:, i], targets[:, 0]) for i in (0, 2))
@@ -477,7 +509,23 @@ def _shipping_in_sample(frames: _Frames) -> np.ndarray:
     return affine_predict(shipping_affine_fit(frames.iris, frames.targets), frames.iris)
 
 
-def _in_sample_ceiling(frames: _Frames) -> dict[str, Any]:
+def _per_day_ceiling(frames: _Frames, settings: _Settings) -> dict[str, Any] | None:
+    """The shipping model fitted and scored on each usable day's own frames, averaged."""
+    used, _ = _days_with_enough_images(frames, settings)
+    if not used:
+        return None
+    means, rms = [], []
+    for indices in used.values():
+        iris, targets = frames.iris[indices], frames.targets[indices]
+        errors = _errors_px(
+            affine_predict(shipping_affine_fit(iris, targets), iris), targets, frames.screen
+        )
+        means.append(float(np.mean(errors)))
+        rms.append(float(np.sqrt(np.mean(errors**2))))
+    return {"days": len(used), "mean_px": float(np.mean(means)), "rms_px": float(np.mean(rms))}
+
+
+def _in_sample_ceiling(frames: _Frames, settings: _Settings) -> dict[str, Any]:
     iris, targets, screen = frames.iris, frames.targets, frames.screen
     with_pose = StandardizedRidge.fit(frames.features, targets, EXPERIMENT_RIDGE_LAMBDA)
     return {
@@ -493,6 +541,7 @@ def _in_sample_ceiling(frames: _Frames) -> dict[str, Any]:
             screen,
         ),
         "with_head_pose": _fit_quality(with_pose.predict(frames.features), targets, screen),
+        "per_day": _per_day_ceiling(frames, settings),
     }
 
 
@@ -591,19 +640,10 @@ def _within_day(frames: _Frames, cross: _CrossDay | None, settings: _Settings) -
     if frames.days is None:
         return _skipped("no image is in a day folder, so there is no day to calibrate within")
     variant = build_variants()[PROTOCOL_VARIANT]
-    grid_size = len(target_points(*frames.screen))
-    needed = max(settings.min_day_images, settings.k_per_dot * grid_size + 1)
-    by_day: dict[str, list[int]] = {}
-    for index, day in enumerate(frames.days):
-        if day is not None:
-            by_day.setdefault(day, []).append(index)
+    used_days, short_days = _days_with_enough_images(frames, settings)
     per_day: list[dict[str, Any]] = []
-    skipped_days: list[dict[str, Any]] = []
-    for day in sorted(by_day):
-        indices = by_day[day]
-        if len(indices) < needed:
-            skipped_days.append({"day": day, "n_valid": len(indices)})
-            continue
+    skipped_days = [{"day": day, "n_valid": len(indices)} for day, indices in short_days.items()]
+    for day, indices in used_days.items():
         rows = frames.prepared.valid_rows[indices]
         subset = _subset(frames.person.data, rows, f"{frames.person.name} {day}")
         result = protocol.evaluate_person(
@@ -615,7 +655,7 @@ def _within_day(frames: _Frames, cross: _CrossDay | None, settings: _Settings) -
     cross_px = cross.metrics["mean_px"] if (cross and used) else None
     mean_px = _mean_or_none([d["mean_px"] for d in per_day]) if used else None
     return {
-        "days_total": len(by_day),
+        "days_total": len(used_days) + len(short_days),
         "days_used": len(per_day),
         "days_skipped": len(skipped_days),
         "mean_px": mean_px,
@@ -832,7 +872,7 @@ def diagnose_person(person: DiagnosticPerson, settings: _Settings) -> dict[str, 
     if person.head_translation_mm is not None:
         frames.dataset_translation = np.asarray(person.head_translation_mm, dtype=float)[valid]
     result["feature_sanity"] = _feature_sanity(frames)
-    result["in_sample_ceiling"] = _in_sample_ceiling(frames)
+    result["in_sample_ceiling"] = _in_sample_ceiling(frames, settings)
     result["constant_baselines"] = _constant_baselines(frames)
     result["cross_day"], cross = _cross_day(frames, settings)
     result["within_day"] = _within_day(frames, cross, settings)

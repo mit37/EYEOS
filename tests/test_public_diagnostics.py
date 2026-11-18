@@ -337,6 +337,53 @@ def test_the_ceiling_of_a_noisy_person_is_proportionate_and_shows_a_dead_eye():
     assert ceiling["right_eye_only"]["mean_px"] > 200
 
 
+def test_a_per_day_bias_inflates_the_all_days_ceiling_but_not_a_calibration_per_day():
+    # The all-days ceiling bounds ONE calibration used across every day. A different iris
+    # offset on each day defeats that, yet a calibration made within each day absorbs it.
+    person = _one(Spec(noise=0.005, day_bias=(0.3, -0.3, 0.0)))
+
+    ceiling, within = person["in_sample_ceiling"], person["within_day"]
+    assert ceiling["both_eyes"]["rms_px"] > 60
+    assert ceiling["per_day"]["days"] == 3
+    assert ceiling["per_day"]["mean_px"] < 10
+    assert ceiling["per_day"]["rms_px"] < 10
+    # Gate 2 judges the calibration set's leave-one-out RMS, and it passes on every day.
+    assert within["validation_error_px_mean"] < 60
+    assert within["gate2_passed_days"] == within["days_used"] == 3
+
+
+def test_the_per_day_ceiling_fits_each_day_within_day_uses_on_its_own():
+    spec = Spec(days=(150, 30, 70), noise=0.05, day_bias=(0.1, -0.1, 0.05))
+    person = _person(spec)
+
+    ceiling = diagnostics.diagnose([person])["persons"]["p00"]["in_sample_ceiling"]["per_day"]
+
+    # day02 has 30 images, below the within-day minimum of 60: it is left out here too.
+    means, rms = [], []
+    for day in ("day01", "day03"):
+        rows = [i for i, d in enumerate(person.days) if d == day]
+        features = [extract_features(person.data.landmarks[i]) for i in rows]
+        iris = np.array([f.iris_vector() for f in features])
+        targets = np.asarray(person.data.targets_px)[rows]
+        weights = diagnostics.shipping_affine_fit(iris, targets)
+        clamped = protocol.clamp_to_screen(diagnostics.affine_predict(weights, iris), W, H)
+        errors = np.hypot(*(clamped - targets).T)
+        means.append(float(np.mean(errors)))
+        rms.append(float(np.sqrt(np.mean(errors**2))))
+    assert ceiling["days"] == 2
+    assert ceiling["mean_px"] == pytest.approx(np.mean(means), rel=1e-9)
+    assert ceiling["rms_px"] == pytest.approx(np.mean(rms), rel=1e-9)
+    assert _one(spec, min_day_images=100)["in_sample_ceiling"]["per_day"]["days"] == 1
+
+
+def test_the_per_day_ceiling_is_null_without_a_usable_day():
+    without = diagnostics.diagnose([_person(Spec(noise=0.05), with_days=False)])
+    assert without["persons"]["p00"]["in_sample_ceiling"]["per_day"] is None
+    short = _one(Spec(days=(40, 40), noise=0.05))
+    assert short["in_sample_ceiling"]["per_day"] is None
+    assert short["in_sample_ceiling"]["both_eyes"]["mean_px"] > 0
+
+
 def test_constant_baselines_predict_the_centre_and_the_persons_own_mean_target():
     spec = Spec(days=(100,), no_face=frozenset({3, 4}))
     person = _one(spec)
@@ -663,6 +710,16 @@ def test_the_json_states_the_head_pose_convention_and_that_it_is_unchecked():
     assert "atan2(R[0,2], R[2,2])" in notes["dataset_head_pose"]
     assert "not been checked against the real files" in notes["dataset_head_pose"]
     assert "not a result" in notes["in_sample"]
+
+
+def test_the_json_says_the_all_days_ceiling_does_not_bound_a_per_sitting_calibration():
+    result = _diagnose(Spec())
+
+    for text in (result["sections"]["in_sample_ceiling"], result["notes"]["in_sample"]):
+        assert "across all of a person's days" in text
+        assert "per_day" in text
+    assert "does not bound" in result["sections"]["in_sample_ceiling"]
+    assert "validation_error_px" in result["sections"]["in_sample_ceiling"]
 
 
 def test_without_the_datasets_head_pose_f_and_g_say_so():

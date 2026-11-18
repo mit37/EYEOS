@@ -535,9 +535,8 @@ has a one-line description (`metrics`). `aggregate` gives the mean, median, min 
 of each per-person metric. The JSON has no timestamp and rounds every number to 10
 significant digits, so the same cache and code give the same file.
 
-Two sections fit on all of a person's frames and score on those same frames (b and g).
-They are bounds and explanations, not results. Only d and e follow the evaluation
-protocol.
+Two sections fit on a person's frames and score on those same frames (b and g). They
+are bounds and explanations, not results. Only d and e follow the evaluation protocol.
 
 - **a. `feature_sanity`: are the iris offsets sane?** Per eye, the median, p5 and p95
   of the x and y offsets; the correlation of the two eyes' x offsets (and y); the
@@ -545,12 +544,23 @@ protocol.
   together, so their correlation should be near +1. Landmark noise pulls it toward 0.
   An eye whose x correlates with the target's x with the opposite sign
   (`target_x_signs_match` false) is broken or swapped.
-- **b. `in_sample_ceiling`: how well could any calibration of these features do?** The
+- **b. `in_sample_ceiling`: how well could one calibration do across all days?** The
   shipping model (affine in the 4 iris offsets, same ridge strength) is fitted on all of
-  a person's valid frames and scored on the same frames. The same is done for each eye
-  alone and with EyeOS's head pose added. If this optimistic bound is still far above
-  Gate 2's 60 px, no choice of calibration images can pass Gate 2: the features are the
-  limit. One eye far worse than the other points to that eye.
+  a person's valid frames, from every day, and scored on the same frames. The same is
+  done for each eye alone and with EyeOS's head pose added. This is about the lowest
+  error a single affine map of these features reaches when one calibration has to serve
+  every day, which is the `cross_day` setting. It is an optimistic bound for that
+  setting only. It does not bound a calibration made within one sitting: a per-day
+  offset (sitting, lighting, a per-day landmark bias) raises it, yet a per-day
+  calibration absorbs it. `per_day` fits the same model on each day that `within_day`
+  uses, on that day's own frames, and averages over those days; that is the bound for
+  a per-sitting calibration. All-days ceiling high but `per_day` low means one
+  calibration cannot serve every day, though a calibration per sitting might (check
+  `within_day`). `per_day` high as well means the features limit an affine calibration
+  even within a day (a day folder can still hold several sittings). Neither is Gate 2's
+  number: Gate 2 judges the leave-one-out RMS over the 45 calibration images, which
+  `cross_day.validation_error_px` and `within_day.validation_error_px_mean` report. One
+  eye far worse than the other points to that eye.
 - **c. `constant_baselines`: the yardstick.** The error of always predicting the
   screen centre, and of always predicting the person's own mean target. A model close
   to these has learned little from the eyes.
