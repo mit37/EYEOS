@@ -79,7 +79,7 @@ eyeos run --config config.yaml --calibrate --overlay --view
 | Cyan arrow | The iris's shift from the corner midpoint, stretched 4x so that a few pixels show. This shift is what moves the cursor. |
 | Numbers at the bottom left | The same shift for each eye (L, R) as the calibration gets it: along the corner line, then across it, in eye half-widths. |
 | Rectangle at the top right | The screen, scaled down. A green dot is where the cursor was sent this frame. A red ring and "blocked" is where the gaze is while the gates hold the cursor still. No dot means no gaze: no calibration, no face, or eyes closed past the blink-hold window. |
-| Lights at the top left | The four gates, green or red, each with its reason. |
+| Lights at the top left | The four gates, green or red, each with its reason. A reason too long to fit before the screen map is cut short with "..."; the session log has it in full. |
 | "no face" | MediaPipe found no face in this frame. |
 
 Press **q** in the window, or close it, to hide the view. The session keeps running

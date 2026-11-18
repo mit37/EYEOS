@@ -289,6 +289,7 @@ GRAY = (150, 150, 150)
 BLACK = (0, 0, 0)
 
 _FONT_SCALE = 0.4
+_OUTLINE_THICKNESS = 3  # the dark outline under every text: its widest stroke
 _LINE_H = 18
 _LIGHT_X, _LIGHT_Y0, _LIGHT_STEP, _LIGHT_RADIUS = 14, 16, 20, 6
 _PUPIL_RING_RADIUS = 6
@@ -402,7 +403,7 @@ def _text(
 ) -> None:
     # A dark outline under the text keeps it readable over any camera image.
     text = _ascii(text)
-    for ink, thickness in ((BLACK, 3), (color, 1)):
+    for ink, thickness in ((BLACK, _OUTLINE_THICKNESS), (color, 1)):
         cv2.putText(
             image,
             text,
@@ -413,6 +414,29 @@ def _text(
             thickness=thickness,
             lineType=cv2.LINE_AA,
         )
+
+
+def _text_width(cv2: Any, text: str) -> int:
+    (width, _), _ = cv2.getTextSize(text, cv2.FONT_HERSHEY_SIMPLEX, _FONT_SCALE, _OUTLINE_THICKNESS)
+    return int(width)
+
+
+def _fit(cv2: Any, text: str, max_width: int) -> str:
+    """``text`` in ASCII, cut short with "..." if needed to be at most ``max_width``
+    pixels wide as drawn (empty if not even "..." fits)."""
+    text = _ascii(text)
+    if _text_width(cv2, text) <= max_width:
+        return text
+    # The longest prefix that still fits with "..." after it. Widths grow with the
+    # prefix, so a binary search finds it in a few getTextSize calls per frame.
+    lo, hi = -1, len(text) - 1
+    while lo < hi:
+        mid = (lo + hi + 1) // 2
+        if _text_width(cv2, text[:mid].rstrip() + "...") <= max_width:
+            lo = mid
+        else:
+            hi = mid - 1
+    return "" if lo < 0 else text[:lo].rstrip() + "..."
 
 
 def _dot(cv2: Any, image: Any, point: Pixel, radius: int, color: tuple[int, int, int]) -> None:
@@ -488,11 +512,17 @@ def _draw(cv2: Any, image: Any, view: ViewGeometry, gain: float) -> None:
             WHITE,
         )
     _text(cv2, image, f"arrow = pupil shift x{gain:g}", (8, height - 8), CYAN)
-    if view.minimap is not None:
-        _draw_minimap(cv2, image, view.minimap)
+    # The gate labels run along the same rows as the map: each one is cut short before
+    # it, and the map is drawn last, so nothing covers its cursor marker.
+    labels_end = (view.minimap.rect[0] if view.minimap is not None else width) - _MAP_MARGIN_PX
     for light, center in zip(view.gates, gate_light_centers(), strict=False):
         _dot(cv2, image, center, _LIGHT_RADIUS, GREEN if light.ok else RED)
-        _text(cv2, image, f"{light.label}: {light.reason}", (center[0] + 12, center[1] + 4), WHITE)
+        org = (center[0] + 12, center[1] + 4)
+        label = _fit(cv2, f"{light.label}: {light.reason}", labels_end - org[0])
+        if label:
+            _text(cv2, image, label, org, WHITE)
+    if view.minimap is not None:
+        _draw_minimap(cv2, image, view.minimap)
 
 
 def annotate(

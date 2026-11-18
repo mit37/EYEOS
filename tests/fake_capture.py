@@ -264,6 +264,16 @@ class FakeCv2(types.ModuleType):
         )
         return img
 
+    def getTextSize(self, text, fontFace, fontScale, thickness):
+        """``((width, height), baseline)`` from a fixed metric of 17 * fontScale px per
+        character (OpenCV 4.11's Hershey simplex averages about 6.5 px per character at
+        scale 0.4 and thickness 3; this gives 6.8), plus the thickness."""
+        if not isinstance(text, str):
+            raise FakeCv2Error(f"Can't parse 'text': {text!r}")
+        _check_int("thickness", thickness)
+        width = round(len(text) * 17 * fontScale) + thickness
+        return (width, round(25 * fontScale)), round(12 * fontScale)
+
     # -- HighGUI windows -----------------------------------------------------------------
     @property
     def shown(self) -> list[Any]:

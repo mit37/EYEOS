@@ -646,6 +646,92 @@ def test_an_allowed_cursor_is_green(fake_cv2):
     assert marker and all(c.params["color"] == GREEN for c in marker)
 
 
+# Gate 2's reason after a head turn, the usual reason the cursor is held (gates.py), and
+# Gate 3's while a dwell builds up.
+HEAD_POSE_REASON = "head pose drifted 12.3deg from calibration pose (limit 10.0deg) — recalibrate"
+DWELL_REASON = "dwell 0.20s < 0.80s"
+
+
+def test_gate_labels_end_before_the_mini_map_which_is_drawn_last(fake_cv2):
+    # On a 640x480 image (the canvas for synthetic input, and OpenCV's usual capture
+    # size) the map starts at x = 470, and the labels run along the same rows.
+    from eyeos.tracking_view import GATE_LABELS, TrackingView, compute_view
+
+    reasons = {"gate1": "ok", "gate2": HEAD_POSE_REASON, "gate3": DWELL_REASON, "gate4": "ok"}
+    status = _status(
+        move_allowed=False,
+        target=None,
+        smoothed=(1700.0, 60.0),
+        gates=(1, 0, 0, 1),
+        reasons=reasons,
+    )
+    view = TrackingView(SCREEN)
+
+    view.update(Frame(0.0, make_landmarks()), _frame_input(), status)
+
+    minimap = compute_view(make_landmarks(), (640, 480), status, SCREEN).minimap
+    labels = [
+        (i, call)
+        for i, call in enumerate(fake_cv2.drawn)
+        if call.name == "putText" and call.params["text"].startswith(GATE_LABELS)
+    ]
+    assert len(labels) == 4 * 2  # each text is drawn twice: the outline, then the ink
+    for _, call in labels:
+        (width, _), _ = fake_cv2.getTextSize(call.params["text"], 0, call.params["fontScale"], 3)
+        assert call.params["org"][0] + width <= minimap.rect[0] - 10, call.params["text"]
+    texts = {call.params["text"] for _, call in labels}
+    (calibration,) = [t for t in texts if t.startswith("2 Calibration")]
+    assert calibration.startswith("2 Calibration: head pose drifted")
+    assert calibration.endswith("...")
+    assert {"1 Presence: ok", f"3 Stability: {DWELL_REASON}"} <= texts  # short ones whole
+    # The map comes after the lights, so nothing is drawn over its marker.
+    marker = [
+        i
+        for i, call in enumerate(fake_cv2.drawn)
+        if call.params.get("center") == _round(minimap.cursor_px)
+    ]
+    assert marker and min(marker) > max(i for i, _ in labels)
+
+
+def test_fit_cuts_a_text_short_with_an_ellipsis_only_when_it_must():
+    from eyeos.tracking_view import _fit
+
+    cv2 = FakeCv2()  # 6.8 px per character at the view's scale, plus 3
+
+    def width(text):
+        return cv2.getTextSize(text, 0, 0.4, 3)[0][0]
+
+    assert _fit(cv2, "ok", 1000) == "ok"
+    assert _fit(cv2, "pose 9° — recalibrate", 1000) == "pose 9deg - recalibrate"
+    cut = _fit(cv2, "x" * 100, 100)
+    assert cut == "x" * 11 + "..."  # 14 characters: 98 px; 15 would be 105
+    assert width(cut) <= 100 < width("x" + cut)
+    assert _fit(cv2, "x" * 100, 22) == ""  # not even "..." (23 px) fits
+
+
+def test_with_real_opencv_no_gate_label_reaches_into_the_mini_map():
+    cv2 = pytest.importorskip("cv2")
+    import numpy as np
+
+    from eyeos.tracking_view import _draw, compute_view
+
+    assert not isinstance(cv2, FakeCv2)  # a real OpenCV
+    long_reason = HEAD_POSE_REASON + " " + HEAD_POSE_REASON
+    reasons = {f"gate{i}": long_reason for i in range(1, 5)}
+    # No gaze, so no cursor marker: inside its border, the map must stay empty.
+    status = _status(
+        move_allowed=False, target=None, smoothed=None, gates=(0, 0, 0, 0), reasons=reasons
+    )
+    view = compute_view(make_landmarks(), (640, 480), status, SCREEN)
+    image = np.zeros((480, 640, 3), dtype=np.uint8)
+
+    _draw(cv2, image, view, 4.0)
+
+    x0, y0, x1, y1 = view.minimap.rect
+    assert image[y0 + 2 : y1 - 1, x0 + 2 : x1 - 1].max() == 0
+    assert image[:100, :x0].any()  # the labels were drawn, left of the map
+
+
 def test_reasons_are_drawn_in_plain_ascii(fake_cv2):
     # OpenCV's Hershey fonts only have ASCII: an em dash would come out as "??".
     from eyeos.tracking_view import TrackingView
