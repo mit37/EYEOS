@@ -279,12 +279,14 @@ class ScreenModelVariant:
     """One reading of the screen -> camera transform. ``default`` is the documented one:
     R(rvects) @ [x_px * width_mm / width_pixel, y_px * height_mm / height_pixel, 0] + tvecs.
     The others flip an axis, transpose R or negate t, in case the files mean something
-    slightly different."""
+    slightly different, and ``inverse_pose`` reads the pose as camera -> screen, so a
+    screen point p is at R^T (p - t)."""
 
     mirror_x: bool = False
     mirror_y: bool = False
     transpose_r: bool = False
     negate_t: bool = False
+    inverse_pose: bool = False
 
     @property
     def name(self) -> str:
@@ -295,6 +297,7 @@ class ScreenModelVariant:
                 (self.mirror_y, "mirror-y"),
                 (self.transpose_r, "transpose-R"),
                 (self.negate_t, "negate-t"),
+                (self.inverse_pose, "inverse-pose"),
             )
             if flag
         ]
@@ -304,7 +307,8 @@ class ScreenModelVariant:
 SCREEN_MODELS: dict[str, ScreenModelVariant] = {
     v.name: v
     for v in (
-        ScreenModelVariant(mx, my, tr, nt)
+        ScreenModelVariant(mx, my, tr, nt, ip)
+        for ip in (False, True)
         for tr in (False, True)
         for nt in (False, True)
         for my in (False, True)
@@ -330,7 +334,10 @@ def screen_to_camera(
     if variant.transpose_r:
         rotation = rotation.T
     tvec = -pose.tvec if variant.negate_t else pose.tvec
-    result: np.ndarray = local @ rotation.T + tvec
+    if variant.inverse_pose:
+        inverse: np.ndarray = (local - tvec) @ rotation  # each row: R^T (p - t)
+        return inverse
+    result: np.ndarray = local @ rotation.T + tvec  # each row: R p + t
     return result
 
 

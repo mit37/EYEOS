@@ -153,9 +153,11 @@ participant, every annotated target is mapped with
 reported per participant.
 
 - Within 5 mm: that model is used.
-- Otherwise, mirrored x and/or y axes, a transposed R and a negated t are tried in every
-  combination, and the best one is used if it is within 5 mm. The JSON records which one
-  and every candidate's median error.
+- Otherwise, mirrored x and/or y axes, a transposed R, a negated t and the inverse pose
+  (`inverse-pose`: `gt' = R^T (p - t)`, in case `monitorPose.mat` holds camera to screen
+  rather than screen to camera) are tried in every combination (32 in all), and the best
+  one is used if it is within 5 mm. The JSON records which one and every candidate's
+  median error.
 - If none fits, that participant's angular error is `null`, with the reason.
 
 ### Limits of this protocol

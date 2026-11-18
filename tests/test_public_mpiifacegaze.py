@@ -609,7 +609,8 @@ def _gaze_targets_read_as(
             x_mm = w_mm - x_mm
         if model.mirror_y:
             y_mm = h_mm - y_mm
-        points.append(rotation @ np.array([x_mm, y_mm, 0.0]) + tvec)
+        p = np.array([x_mm, y_mm, 0.0])
+        points.append(rotation.T @ (p - tvec) if model.inverse_pose else rotation @ p + tvec)
     return np.array(points)
 
 
@@ -628,6 +629,27 @@ def test_screen_model_check_recognises_each_candidate_reading(name):
     # No other reading comes near, so the answer is not a tie broken by name.
     others = [error for other, error in check.candidates_median_mm.items() if other != name]
     assert all(error > 5.0 for error in others)
+
+
+def test_screen_model_check_recognises_a_pose_stored_the_other_way_round():
+    # If monitorPose.mat held camera -> screen, a screen point p is at R^T (p - t).
+    person = FakePerson("p00")
+    screen, pose = _screen_and_pose(person)
+    targets, _ = _targets_and_gts(person)
+    rotation = rotation_about_y(person.theta)
+    gts = np.array(
+        [
+            rotation.T
+            @ (np.array([x * 331.0 / 1280, y * 207.0 / 800, 0.0]) - np.array(person.tvec))
+            for x, y in targets
+        ]
+    )
+
+    check = mpii.check_screen_model(targets, gts, screen, pose)
+
+    assert check.model == "inverse-pose"
+    assert check.fits
+    assert check.median_error_mm < 1e-9
 
 
 def test_screen_model_reports_no_fit_with_a_reason_when_nothing_is_within_5_mm():
