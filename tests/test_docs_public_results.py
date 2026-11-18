@@ -23,6 +23,7 @@ RESULTS = ROOT / "eval" / "results" / "mpiifacegaze.json"
 README = ROOT / "README.md"
 PUBLIC_DOC = ROOT / "docs" / "PUBLIC_DATASETS.md"
 LOCAL_SETUP = ROOT / "docs" / "LOCAL_SETUP.md"
+PLAN = ROOT / "docs" / "PLAN.md"
 DOWNLOADER = ROOT / "scripts" / "download_mpiifacegaze.py"
 
 needs_results = pytest.mark.skipif(
@@ -113,6 +114,25 @@ def test_the_docs_make_no_claim_the_real_run_does_not_support(doc, unsupported):
     prose = " ".join(doc.read_text(encoding="utf-8").split())
 
     assert unsupported not in prose
+
+
+@pytest.mark.parametrize(
+    ("doc", "in_progress"),
+    [
+        # The baselines, eyeos-live9 and `diagnose` were written after the real run, on
+        # branches merged with these docs: they exist but have not run on the real data.
+        (PUBLIC_DOC, "being added"),
+        (PLAN, "being added"),
+        (PLAN, "separate branches"),
+        # The results file of the real run predates the `environment` block.
+        (PUBLIC_DOC, "and the JSON does not record library versions"),
+    ],
+    ids=lambda v: v.name if isinstance(v, Path) else v,
+)
+def test_the_docs_do_not_call_work_added_after_the_real_run_unfinished(doc, in_progress):
+    prose = " ".join(doc.read_text(encoding="utf-8").split())
+
+    assert in_progress not in prose
 
 
 def _table_headers(text: str) -> list[str]:

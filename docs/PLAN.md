@@ -158,8 +158,9 @@ Restated from `PRD.md` §8, per `STANDARDS.md` §6 step 1.
   were corrected, and the docs now also reason that `ridge-10` is close to a constant
   prediction and that EyeOS's head-pose "degrees" are uncalibrated. The audit also
   asked for a constant-prediction baseline, a live-style calibration variant and
-  diagnostics (a same-day split, the dataset's own head pose); these are built on
-  separate branches and have not run on the real data yet.
+  diagnostics (a same-day split, the dataset's own head pose). These were added after
+  the run (the `centre` and `calibration-mean` baselines, `eyeos-live9`, and the
+  `diagnose` command) and have not run on the real data yet.
 
 ## Cloud-instance constraints (PRD §7, STANDARDS §6.4)
 

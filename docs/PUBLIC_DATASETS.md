@@ -23,7 +23,7 @@ models can be refitted and compared on the same data with one command each.
   cloud container. The harness was built where the dataset's host was unreachable; a
   later session could reach it. Results are in `eval/results/mpiifacegaze.json`, and
   the run, with an honest reading of the numbers, is described in "Real run" below.
-  Variants added since have not run on the real data.
+  The variants and the `diagnose` command added since have not run on the real data.
 - **The expected file format was checked against the real files** on that run, and
   matched (see "Expected format" and "Real run"). No parser changed. The readers still
   fail loudly, naming the file and showing the offending line or keys, if a copy of the
@@ -195,8 +195,8 @@ reported per participant.
   average of up to 10 frames, added at the dot (`eyeos/calibration_session.py`). The two
   respond to noise differently and can disagree in either direction, so the "0/15"
   below is 0 of 15 under the 45-photo statistic, not a measured live refusal. A
-  live-style variant, `eyeos-live9`, is being added to the harness; it has not run on
-  the real data yet.
+  live-style variant, `eyeos-live9`, was added to the harness after this run (see
+  "Variants"); it has not run on the real data yet.
 - **One calibration across many sittings.** The images come from many days (`dayNN`
   folders), so a calibration fitted on some of them is tested on photos from other
   sittings, lighting and postures. A live calibration is used in the same sitting.
@@ -206,7 +206,8 @@ reported per participant.
   EyeOS's own measure. An audit's check outside this repo, which rotated one real
   MediaPipe face mesh by known angles, suggests yaw reads about 1.5 times and pitch
   about 0.4 times the true angle. That is speculation until EyeOS's estimate is
-  compared with MPIIFaceGaze's own head pose, a diagnostic that is being added. So the
+  compared with MPIIFaceGaze's own head pose, which `diagnose` (added after this run)
+  does in its `head_pose_agreement` section; it has not run on the real data yet. So the
   15° limit, and every head-pose share here, is what Gate 2 would see live, in EyeOS's
   measure, not 15 true degrees.
 - **Variants have slightly different test sets.** A variant with more images per dot
@@ -263,7 +264,8 @@ The first run on the real MPIIFaceGaze. The metrics in the tables, the detection
 and the screen-model residuals are in `eval/results/mpiifacegaze.json`, which the
 commands below regenerate; counts and percentages in the prose are computed from it.
 The setup and format observations and the wall times were recorded by hand during the
-run: no script produces them, and the JSON does not record library versions.
+run: no script produces them, and this run's JSON, made before `evaluate` recorded its
+environment, does not record library versions.
 
 ### Setup
 
@@ -392,8 +394,9 @@ averages 319 px; Gate 2 needs < 60 px.
     error, and nothing here compares the two.
   - The cross-sitting part can be measured without new data: the landmark cache keeps
     each image's `dayNN` folder, so a calibration tested within one day can be compared
-    with the cross-day numbers here (a day can hold more than one sitting). That
-    same-day split is being added as a diagnostic and has not run on the real data yet.
+    with the cross-day numbers here (a day can hold more than one sitting).
+    `diagnose`, added after this run, makes that same-day split (`within_day`); it has
+    not run on the real data yet.
     The rest needs a recorded live session (`eyeos record`).
 - **Head pose matters.** Adding EyeOS's own yaw, pitch and roll (`with-head-pose`)
   cuts the mean error by 13 % (258 to 224 px), and learning from the other 14 people
@@ -422,9 +425,9 @@ averages 319 px; Gate 2 needs < 60 px.
   itself, the shipping model's mean error is 40 % lower (258 against 429 px) and lower
   for all 15 people, but for p13 only 13 % lower (348 against 402 px), computed from
   the JSON's per-person mean pixel errors. That `ridge-10` stands in for a constant is
-  reasoning from the code and the numbers above, not a measurement: a
-  constant-prediction baseline variant is being added to the harness and has not run
-  on the real data yet.
+  reasoning from the code and the numbers above, not a measurement: the
+  constant-prediction baselines `centre` and `calibration-mean` were added to the
+  harness after this run and have not run on the real data yet.
 - **Nothing was tuned on this data.** Every variant, threshold and the ridge strengths
   were fixed before this run; this is a single evaluation, not a model selection.
   Changing EyeOS's shipping model based on it (for example adding head pose) would be a
@@ -432,7 +435,7 @@ averages 319 px; Gate 2 needs < 60 px.
 - **Not measured here:** how the error compares with published appearance-based
   methods on this dataset (their protocols differ, and no such number is produced by
   this repo), and a measured constant-prediction baseline (`ridge-10` approximates one,
-  as above; a baseline variant is being added).
+  as above; the baseline variants added since have not run on the real data).
 
 ## Adding another dataset
 
