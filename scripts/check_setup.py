@@ -77,25 +77,27 @@ def check_eyeos(repo_root: Path = REPO_ROOT) -> Result:
     return Result(name, "ok", f"from {location}")
 
 
-def _import_error(label: str, module: str, e: ImportError) -> Result:
+def _import_error(label: str, module: str, e: Exception) -> Result:
     if isinstance(e, ModuleNotFoundError) and e.name == module:
         return Result(label, "fail", f"not installed: {WEBCAM_INSTALL} (Python 3.10-3.12)")
-    # Installed, but it (or something it imports) failed to load.
-    return Result(label, "fail", f"installed but failed to import: {e}")
+    # Installed, but it (or something it imports) failed to load. A broken install often
+    # raises something other than ImportError here: protobuf's "Descriptors cannot be
+    # created directly" TypeError, an AttributeError from a NumPy ABI mismatch, OSError.
+    return Result(label, "fail", f"installed but failed to import: {type(e).__name__}: {e}")
 
 
 def check_webcam_stack() -> list[Result]:
     """OpenCV and MediaPipe, and one FaceMesh run with the settings EyeOS uses."""
     try:
         import cv2
-    except ImportError as e:
+    except Exception as e:  # see _import_error
         cv2_result = _import_error("OpenCV", "cv2", e)
     else:
         cv2_result = Result(f"OpenCV {getattr(cv2, '__version__', '?')}", "ok", "imports")
 
     try:
         import mediapipe as mp
-    except ImportError as e:
+    except Exception as e:  # see _import_error
         return [cv2_result, _import_error("MediaPipe", "mediapipe", e)]
     version = getattr(mp, "__version__", "?")
     name = f"MediaPipe {version}"

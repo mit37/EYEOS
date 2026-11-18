@@ -93,6 +93,32 @@ def test_missing_webcam_libraries_fail_with_the_install_command(
     assert 'pip install -e ".[webcam]"' in capsys.readouterr().out
 
 
+@pytest.mark.parametrize(("module", "label"), [("cv2", "OpenCV"), ("mediapipe", "MediaPipe")])
+def test_a_library_that_raises_on_import_fails_its_own_line(
+    all_installed, monkeypatch, capsys, tmp_path, module, label
+):
+    """A broken install often raises something other than ImportError on import (the
+    protobuf "Descriptors cannot be created directly" TypeError, a NumPy ABI
+    AttributeError): it must become a [FAIL] line, not a traceback with no lines."""
+    package = tmp_path / module
+    package.mkdir()
+    (package / "__init__.py").write_text(
+        'raise TypeError("Descriptors cannot be created directly.")\n'
+    )
+    monkeypatch.delitem(sys.modules, module)
+    monkeypatch.syspath_prepend(str(tmp_path))
+
+    assert check_setup.main([]) == 1
+
+    out = capsys.readouterr().out
+    assert (
+        f"[FAIL] {label}: installed but failed to import: "
+        "TypeError: Descriptors cannot be created directly." in out
+    )
+    assert "[ok]   pynput 1.8.2" in out  # the checks after it still ran
+    assert "[ok]   scipy 1.17.1" in out
+
+
 def test_a_face_mesh_that_cannot_start_fails_with_its_error(all_installed, monkeypatch, capsys):
     install_fakes(
         monkeypatch, mediapipe=FakeMediapipe(face_mesh_error=RuntimeError("model file missing"))
