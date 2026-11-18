@@ -92,6 +92,15 @@ SECTIONS: dict[str, str] = {
         "of a slope depends on how the dataset labels its head axes and is not interpreted; "
         "the correlation matrix (all 9 pairs) shows any axis mix-up."
     ),
+    "variance_split": (
+        "g. Of what the shipping model's in-sample fit (in_sample_ceiling.both_eyes) leaves "
+        "over, how much do the dataset's head pose and the day explain (linear least "
+        "squares, R^2 over both screen axes)? High r2_head_pose = head motion the iris "
+        "offsets do not account for; high r2_day = something constant within a day but "
+        "different between days (sitting, lighting, a per-day landmark bias); both low = "
+        "per-frame landmark noise, or effects not linear in these regressors. Plain R^2: "
+        "with k regressors and n frames, pure noise scores about k/n."
+    ),
 }
 
 # The dataset's head rotation R maps head coordinates to camera coordinates (OpenCV
@@ -110,9 +119,9 @@ HEAD_POSE_CONVENTION = (
 )
 NOTES: dict[str, str] = {
     "in_sample": (
-        "in_sample_ceiling fits on every valid frame and scores on the same frames: it "
-        "bounds what a calibration of these features could reach. It is not a result and "
-        "uses the test frames."
+        "in_sample_ceiling and variance_split fit on every valid frame and score on the same "
+        "frames: they bound what a calibration of these features could reach and say where "
+        "the leftover comes from. They are not a result and use the test frames."
     ),
     "protocol": (
         "cross_day, within_day and error_by_head_pose run protocol.evaluate_person with the "
@@ -132,6 +141,8 @@ HEAD_AXES_RELABELLINGS: dict[str, np.ndarray] = {
     "y180": np.diag([-1.0, 1.0, -1.0]),
     "z180": np.diag([-1.0, -1.0, 1.0]),
 }
+# Below this in-sample residual (RMS px) there is nothing left for variance_split to split.
+MIN_RESIDUAL_RMS_PX = 0.5
 
 METRICS: dict[str, str] = {
     "n_images": "images of this person in the dataset",
@@ -267,6 +278,19 @@ METRICS: dict[str, str] = {
     "head_pose_agreement.correlation_matrix": (
         "Pearson r of each EyeOS angle (eyeos_*) with each dataset angle (dataset_*)"
     ),
+    "variance_split.residual_rms_px": (
+        "RMS of the raw in-sample residual being split, in px (the shipping model on all frames)"
+    ),
+    "variance_split.r2_head_pose": (
+        "share of the residual's variance explained by the dataset's head yaw, pitch, roll "
+        "(degrees, as head_pose_agreement reads them) and translation (mm); null without "
+        "head pose or when the residual is below half a pixel RMS"
+    ),
+    "variance_split.r2_day": (
+        "share explained by the day folder alone (between-day variance over total); null "
+        "without days or when the residual is below half a pixel RMS"
+    ),
+    "variance_split.r2_head_pose_and_day": "share explained by head pose and day together",
     "aggregate.error_by_head_pose.bins": (
         "the bins over all persons: n (frames), pooled_mean_px (over those frames), "
         "mean_of_person_means_px and persons (with at least one frame in the bin)"
@@ -720,6 +744,49 @@ def _head_pose_agreement(frames: _Frames) -> dict[str, Any]:
     return result
 
 
+def _explained(residual: np.ndarray, regressors: np.ndarray) -> float | None:
+    """R^2 of a linear least-squares fit (with intercept) of ``residual`` (n, 2) on
+    ``regressors`` (n, k), over both columns together."""
+    design = np.column_stack([np.ones(len(residual)), regressors])
+    coefficients = np.linalg.lstsq(design, residual, rcond=None)[0]
+    return _r2(residual, design @ coefficients)
+
+
+def _day_dummies(days: list[str | None]) -> np.ndarray:
+    """One column per day label (frames without a day are one more group)."""
+    labels = sorted({"" if d is None else d for d in days})
+    column = {label: i for i, label in enumerate(labels)}
+    dummies = np.zeros((len(days), len(labels)))
+    for row, day in enumerate(days):
+        dummies[row, column["" if day is None else day]] = 1.0
+    return dummies
+
+
+def _variance_split(frames: _Frames) -> dict[str, Any]:
+    residual = frames.targets - _shipping_in_sample(frames)
+    rms = float(np.sqrt(np.mean(np.sum(residual**2, axis=1))))
+    result: dict[str, Any] = {
+        "residual_rms_px": rms,
+        "r2_head_pose": None,
+        "r2_day": None,
+        "r2_head_pose_and_day": None,
+    }
+    if rms < MIN_RESIDUAL_RMS_PX:
+        return result
+    head = None
+    if frames.dataset_angles is not None:
+        head = frames.dataset_angles
+        if frames.dataset_translation is not None:
+            head = np.column_stack([head, frames.dataset_translation])
+        result["r2_head_pose"] = _explained(residual, head)
+    if frames.days is not None:
+        days = _day_dummies(frames.days)
+        result["r2_day"] = _explained(residual, days)
+        if head is not None:
+            result["r2_head_pose_and_day"] = _explained(residual, np.column_stack([head, days]))
+    return result
+
+
 def _valid_days(person: DiagnosticPerson, valid_rows: np.ndarray) -> list[str | None] | None:
     if person.days is None:
         return None
@@ -771,6 +838,7 @@ def diagnose_person(person: DiagnosticPerson, settings: _Settings) -> dict[str, 
     result["within_day"] = _within_day(frames, cross, settings)
     result["error_by_head_pose"] = _error_by_head_pose(frames, cross, settings)
     result["head_pose_agreement"] = _head_pose_agreement(frames)
+    result["variance_split"] = _variance_split(frames)
     return result
 
 
@@ -938,6 +1006,8 @@ _COLUMNS: tuple[tuple[str, tuple[str, ...], str], ...] = (
     ("centre px", ("constant_baselines", "screen_centre_mean_px"), ".1f"),
     ("L/R corr", ("feature_sanity", "corr_left_right_x"), ".2f"),
     ("yaw slope", ("head_pose_agreement", "yaw", "slope"), ".2f"),
+    ("R2 pose", ("variance_split", "r2_head_pose"), ".2f"),
+    ("R2 day", ("variance_split", "r2_day"), ".2f"),
 )
 
 

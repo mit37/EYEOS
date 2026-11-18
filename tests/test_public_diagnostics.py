@@ -664,10 +664,66 @@ def test_the_json_states_the_head_pose_convention_and_that_it_is_unchecked():
     assert "not a result" in notes["in_sample"]
 
 
-def test_without_the_datasets_head_pose_f_says_so():
+def test_without_the_datasets_head_pose_f_and_g_say_so():
     person = diagnostics.diagnose([_person(Spec(noise=0.05), with_head=False)])["persons"]["p00"]
 
     assert "head pose" in person["head_pose_agreement"]["skipped"]
+    split = person["variance_split"]
+    assert split["r2_head_pose"] is None and split["r2_head_pose_and_day"] is None
+    assert split["r2_day"] is not None
+
+
+# ---------------------------------------------------------------------------
+# g. variance split: head motion, day, or landmark noise
+# ---------------------------------------------------------------------------
+
+
+def test_head_motion_the_iris_offsets_miss_shows_as_a_high_head_pose_share():
+    person = _one(Spec(yaw_range_deg=15.0, pitch_range_deg=10.0, shift_per_yaw_deg=0.02))
+
+    split = person["variance_split"]
+    assert split["residual_rms_px"] > 20
+    # The iris offsets shift up to 0.3 half-widths with yaw: about 0.92 of the leftover.
+    assert split["r2_head_pose"] > 0.8
+    assert split["r2_day"] < 0.05
+    # And EyeOS's own head pose would have absorbed it.
+    assert person["in_sample_ceiling"]["with_head_pose"]["mean_px"] < 0.75
+
+
+def test_pure_landmark_noise_shows_as_a_low_head_pose_and_day_share():
+    split = _one(Spec(days=(200, 200, 200), noise=0.05, yaw_range_deg=15.0, pitch_range_deg=10.0))[
+        "variance_split"
+    ]
+
+    assert split["residual_rms_px"] > 20
+    # 6 regressors (one of them constant) on 600 frames: about 0.01 from chance alone.
+    assert split["r2_head_pose"] < 0.05
+    assert split["r2_day"] < 0.05
+
+
+def test_a_per_day_bias_shows_as_a_high_day_share():
+    split = _one(Spec(noise=0.005, day_bias=(0.15, -0.15, 0.0), yaw_range_deg=10.0))[
+        "variance_split"
+    ]
+
+    assert split["r2_day"] > 0.8
+    assert split["r2_head_pose"] < 0.05
+    assert split["r2_head_pose_and_day"] >= split["r2_day"] - 1e-12
+
+
+def test_nothing_is_left_to_split_when_the_fit_is_exact():
+    split = _one(Spec(yaw_range_deg=10.0))["variance_split"]
+
+    assert split["residual_rms_px"] < 0.5
+    assert split["r2_head_pose"] is None and split["r2_day"] is None
+
+
+def test_without_days_the_day_share_is_null():
+    person = diagnostics.diagnose([_person(Spec(noise=0.05, yaw_range_deg=10.0), with_days=False)])
+    split = person["persons"]["p00"]["variance_split"]
+
+    assert split["r2_day"] is None and split["r2_head_pose_and_day"] is None
+    assert split["r2_head_pose"] is not None
 
 
 # ---------------------------------------------------------------------------
