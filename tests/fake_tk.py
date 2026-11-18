@@ -6,6 +6,12 @@ record what was drawn; ``Tk.fire(sequence)`` simulates a key binding firing, and
 ``Tk.on_mainloop`` and ``Tk.on_update`` script what the user does while Tk is
 processing events.
 
+``after()`` callbacks run inside ``mainloop()``, in order of when they are due on a
+virtual clock (no real time passes), until the window is destroyed or no callback is
+left (real Tk would then wait for input; a test has none to give). ``Tk.on_poll`` is
+called before each one, so a scripted user can press keys between callbacks, as Tk
+handles input between them. ``bell()`` only counts.
+
 Like real Tk, a destroyed window stays destroyed: a second ``destroy()``, and any call
 on one of its widgets or that creates one, raises TclError. ``update()`` and
 ``update_idletasks()`` are the exception: they are core Tcl commands, and real Tk lets
@@ -75,6 +81,11 @@ class Tk(_Widget):
         self.on_mainloop: Any = None
         self.on_update: Any = None  # called inside update(), as Tk handles events there
         self.callback_errors: list[BaseException] = []
+        self.on_poll: Any = None  # called before each after() callback in mainloop()
+        self.bells = 0
+        self.now_ms = 0  # the virtual clock after() callbacks are due on
+        self._after: dict[str, tuple[int, int, Any, tuple[Any, ...]]] = {}
+        self._after_seq = 0
 
     def winfo_screenwidth(self) -> int:
         self._check_alive("winfo")
@@ -139,10 +150,33 @@ class Tk(_Widget):
     def update_idletasks(self) -> None:
         return None
 
+    def after(self, ms: int, func: Any, *args: Any) -> str:
+        self._check_alive("after")
+        self._after_seq += 1
+        after_id = f"after#{self._after_seq}"
+        self._after[after_id] = (self.now_ms + max(int(ms), 0), self._after_seq, func, args)
+        return after_id
+
+    def after_cancel(self, after_id: str) -> None:
+        self._after.pop(after_id, None)
+
+    def bell(self) -> None:
+        self._check_alive("bell")
+        self.bells += 1
+
     def mainloop(self) -> None:
         self.mainloop_calls += 1
         if self.on_mainloop is not None:
             self.on_mainloop(self)
+        while not self.destroyed and self._after:
+            if self.on_poll is not None:
+                self.on_poll(self)
+            if self.destroyed or not self._after:
+                break
+            after_id = min(self._after, key=lambda k: self._after[k][:2])
+            due_ms, _seq, func, args = self._after.pop(after_id)
+            self.now_ms = max(self.now_ms, due_ms)
+            self._dispatch(func, *args)
 
     def destroy(self) -> None:
         self._check_alive("destroy")
