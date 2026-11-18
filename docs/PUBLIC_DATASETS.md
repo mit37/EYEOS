@@ -241,8 +241,11 @@ restate the protocol's limits next to the numbers.
 
 ## Real run (2026-11-18)
 
-The first run on the real MPIIFaceGaze. Every number here is in
-`eval/results/mpiifacegaze.json`, which the commands below regenerate.
+The first run on the real MPIIFaceGaze. The metrics in the tables, the detection counts
+and the screen-model residuals are in `eval/results/mpiifacegaze.json`, which the
+commands below regenerate; counts and percentages in the prose are computed from it.
+The setup and format observations and the wall times were recorded by hand during the
+run: no script produces them, and the JSON does not record library versions.
 
 ### Setup
 
@@ -311,7 +314,12 @@ Nothing broke a parser. What we saw, for the next person:
 ### Results (all 15 participants scored for every variant)
 
 "Mean", "median" and "p90" are over the 15 per-person means (each person weighs the
-same). Pooled values are over all test frames.
+same). With 15 values, the p90 is interpolated between the 3rd and the 2nd worst person,
+so one or two people move it. Pooled values are over all test frames.
+
+`ridge-0.001` and `per-dot-5` are the shipping configuration under other names (ridge
+1e-3, K = 5), so their rows repeat `eyeos` exactly; the JSON's per-person records for the
+three are identical. Read them as one result, not three.
 
 | Variant | mean px | median px | p90 px | mean ° | median ° | p90 ° | pooled median px | % diag | Gate 2 (harness LOO) |
 |---|---|---|---|---|---|---|---|---|---|
