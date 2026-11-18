@@ -115,6 +115,27 @@ def test_the_docs_make_no_claim_the_real_run_does_not_support(doc, unsupported):
     assert unsupported not in prose
 
 
+def _table_headers(text: str) -> list[str]:
+    """Every header cell of every Markdown table in ``text``."""
+    lines = text.splitlines()
+    cells: list[str] = []
+    for header, rule in zip(lines, lines[1:], strict=False):
+        if header.startswith("|") and re.match(r"\|\s*-{3,}", rule):
+            cells += [cell.strip() for cell in header.strip().strip("|").split("|")]
+    return cells
+
+
+def test_every_column_the_readme_prose_names_is_in_a_generated_table():
+    # The generator owns the tables and may rename a column; prose that names one by a
+    # name it no longer has points the reader at nothing.
+    text = README.read_text(encoding="utf-8")
+    prose = " ".join(_without_generated_regions(text).split())
+    headers = _table_headers(text)
+
+    for name in re.findall(r"\b[Tt]he ([^.;:,()]{1,60}?) column\b", prose):
+        assert any(name in header for header in headers), name
+
+
 @pytest.mark.parametrize(
     "phrase",
     [
