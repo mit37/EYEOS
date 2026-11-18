@@ -324,9 +324,10 @@ recording anything.
 **License.** It is licensed CC BY-NC-SA 4.0: non-commercial use only, credit the
 authors, share anything derived from it under the same license. The images show real
 people's faces, so they and the landmark caches made from them stay out of git
-(`datasets/` is gitignored). The one committed file computed from the data,
-`eval/results/mpiifacegaze.json`, holds only error metrics and is shared under the
-dataset's license (`docs/PUBLIC_DATASETS.md`, "The results JSON"). The downloader
+(`datasets/` is gitignored). Only error metrics computed from the data are committed,
+in `eval/results/mpiifacegaze.json` and quoted from it in the README and
+`docs/PUBLIC_DATASETS.md`; they are shared under the dataset's license
+(`docs/PUBLIC_DATASETS.md`, "The results JSON"). The downloader
 prints the license and citation and downloads nothing until you pass
 `--accept-license`.
 

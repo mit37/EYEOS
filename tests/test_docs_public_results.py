@@ -165,6 +165,17 @@ def test_the_live_comparison_lists_the_shared_calibration_pool_as_easier_here():
     assert "drift later in the sitting" in easier
 
 
+def test_the_license_precaution_covers_every_copy_of_the_mpiifacegaze_metrics():
+    # If the metrics might be adapted material, so are their copies in the README and the
+    # docs; marking only the JSON would leave the same numbers under MIT next to it.
+    text = " ".join(PUBLIC_DOC.read_text(encoding="utf-8").split())
+    start = text.index("**Its license.**")
+    note = text[start : text.index("## ", start)]
+
+    for place in ("eval/results/mpiifacegaze.json", "README.md", "this document"):
+        assert place in note, place
+
+
 def _table_headers(text: str) -> list[str]:
     """Every header cell of every Markdown table in ``text``."""
     lines = text.splitlines()

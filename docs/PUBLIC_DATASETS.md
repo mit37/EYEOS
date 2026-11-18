@@ -43,9 +43,10 @@ own laptop webcam, each labelled with the on-screen point the person was looking
 <https://creativecommons.org/licenses/by-nc-sa/4.0/>): non-commercial use only, credit the
 authors, and share anything derived from the data under the same license. The photos
 show real people's faces. They, and the landmark caches derived from them, live in
-`datasets/`, which is gitignored; never commit them. The one committed file computed
-from the data, `eval/results/mpiifacegaze.json`, holds only error metrics (see "The
-results JSON").
+`datasets/`, which is gitignored; never commit them. Only metrics computed from the
+data are committed: `eval/results/mpiifacegaze.json` and the numbers quoted from it in
+README.md and this document, all shared under the dataset's license (see "The results
+JSON").
 
 **Cite:**
 
@@ -251,12 +252,15 @@ person and in aggregate), `variants` (for each: description, K, `aggregate`, and
 restate the protocol's limits next to the numbers.
 
 **Its license.** The `license` field names the dataset's license, CC BY-NC-SA 4.0. The
-file holds only aggregate and per-person error metrics of EyeOS's own models: no images,
-landmarks or annotations. Whether such metrics count as material adapted from the
-dataset is not settled here. To be safe, the committed
-`eval/results/mpiifacegaze.json` is marked as derived from MPIIFaceGaze and shared under
-CC BY-NC-SA 4.0 (non-commercial, with the citation it carries), not under the MIT
-License that covers the rest of this repo.
+file holds only counts, error metrics of EyeOS's own models (per person and in
+aggregate) and run metadata: no images, landmarks or annotations. Whether such metrics
+count as material adapted from the dataset is not settled here. To be safe, they are
+marked as derived from MPIIFaceGaze and shared under CC BY-NC-SA 4.0 (non-commercial,
+with the dataset's citation) wherever they appear in this repo: in
+`eval/results/mpiifacegaze.json` (and any other results file computed from the data),
+in the MPIIFaceGaze section of README.md's Results, in the MPIIFaceGaze results
+quoted in this document, and in the few figures other docs and docstrings repeat from
+them. The rest of the repo is under the MIT License.
 
 ## Real run (2026-11-18)
 
