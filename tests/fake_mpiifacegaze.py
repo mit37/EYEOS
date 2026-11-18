@@ -49,6 +49,7 @@ class FakePerson:
     n_images: int = 240
     seed: int = 0
     noise: float = 0.0  # Gaussian sigma added to each iris offset
+    iris_bias: tuple[float, float] = (0.0, 0.0)  # added to every iris offset: a per-user quirk
     faces: dict[int, int] = field(default_factory=dict)  # image index -> face count
     closed: set[int] = field(default_factory=set)  # image indices with both eyes shut
     mirror_gt_x: bool = False  # write gt as if the screen's x axis were mirrored
@@ -92,6 +93,7 @@ def write_person(root: Path, person: FakePerson) -> FakePerson:
         person.targets.append((x, y))
         image = f"day01/{i:04d}.jpg"
         ox, oy = offsets_for_target(x, y, w, h)
+        ox, oy = ox + person.iris_bias[0], oy + person.iris_bias[1]
         if person.noise:
             ox += rng.gauss(0.0, person.noise)
             oy += rng.gauss(0.0, person.noise)

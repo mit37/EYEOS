@@ -17,6 +17,7 @@ import io
 import json
 import math
 import os
+import random
 import shutil
 import socket
 import subprocess
@@ -26,15 +27,16 @@ import urllib.error
 import urllib.request
 import zipfile
 from pathlib import Path
+from typing import Any
 
 import numpy as np
 import pytest
 from packaging.requirements import Requirement
 
 from eval.generate_synthetic import make_landmarks
+from eval.public import models, protocol
 from eval.public import mpiifacegaze as mpii
-from eval.public import protocol
-from eyeos.calibration import target_points
+from eyeos.calibration import Calibration, target_points
 from eyeos.config import Config, ScreenConfig
 from eyeos.input_sources.synthetic import SyntheticInputSource
 from eyeos.landmarks import FaceLandmarks, Point3D
@@ -47,6 +49,7 @@ from tests.fake_mpiifacegaze import (
     FakePerson,
     annotation_line,
     fake_detector_factory,
+    offsets_for_target,
     rotation_about_y,
     write_person,
 )
@@ -897,10 +900,8 @@ def _extracted(tmp_path: Path, persons: list[FakePerson]) -> tuple[Path, Path]:
     return root, cache
 
 
-def _second_screen(name: str, seed: int, **kwargs: object) -> FakePerson:
-    return FakePerson(
-        name, seed=seed, screen_px=(1440, 900), screen_mm=(300.0, 188.0), **kwargs  # type: ignore[arg-type]
-    )
+def _second_screen(name: str, seed: int, **kwargs: Any) -> FakePerson:
+    return FakePerson(name, seed=seed, screen_px=(1440, 900), screen_mm=(300.0, 188.0), **kwargs)
 
 
 def test_noise_free_evaluate_recovers_the_targets_to_about_0_px_and_0_deg(tmp_path, scipy_io):
@@ -1004,15 +1005,29 @@ def test_a_person_with_too_few_valid_frames_is_skipped_with_the_reason(tmp_path,
     assert eyeos["aggregate"]["persons_skipped"] == ["p00"]
 
 
-def test_evaluate_is_deterministic(tmp_path, scipy_io):
-    root, cache = _extracted(tmp_path, [FakePerson("p00", noise=0.05), FakePerson("p01")])
+def test_evaluate_runs_every_variant_by_default_and_is_deterministic(tmp_path, scipy_io):
+    root, cache = _extracted(
+        tmp_path,
+        [
+            FakePerson("p00", noise=0.05),
+            _second_screen("p01", seed=1, noise=0.05),
+            FakePerson("p02", seed=2, noise=0.05),
+        ],
+    )
 
-    first = mpii.evaluate_dataset(root, cache, variants=["eyeos"])
-    second = mpii.evaluate_dataset(root, cache, variants=["eyeos"])
+    first = mpii.evaluate_dataset(root, cache)
+    second = mpii.evaluate_dataset(root, cache)
 
+    assert list(first["variants"]) == list(models.VARIANT_NAMES)
+    assert first["config"]["variants"] == list(models.VARIANT_NAMES)
     for results in (first, second):
         results.pop("generated")
     assert json.dumps(first, sort_keys=True) == json.dumps(second, sort_keys=True)
+    for name, variant in first["variants"].items():
+        aggregate = variant["aggregate"]
+        assert aggregate["persons_evaluated"] == 3, name
+        assert math.isfinite(aggregate["pixel_error_px"]["mean_of_person_means"]), name
+        assert math.isfinite(aggregate["angular_error_deg"]["mean_of_person_means"]), name
 
 
 def test_evaluate_fails_loudly_on_a_cache_from_another_format(tmp_path, scipy_io):
@@ -1068,3 +1083,228 @@ def test_evaluate_cli_reports_an_empty_cache(tmp_path, capsys):
 
     assert code == 1
     assert "extract" in capsys.readouterr().err
+
+
+# ---------------------------------------------------------------------------
+# variants: refit and compare models on the same data (no scipy needed)
+# ---------------------------------------------------------------------------
+
+
+def _person_data(tmp_path: Path, person: FakePerson) -> protocol.PersonData:
+    """A fake person straight to PersonData through the fake detector: no .mat files."""
+    write_person(tmp_path, dataclasses.replace(person, write_mat=False))
+    annotations = mpii.load_annotations(tmp_path, person.name)
+    detector = FakeDetector()
+    return protocol.PersonData(
+        person=person.name,
+        screen_px=(float(person.screen_px[0]), float(person.screen_px[1])),
+        targets_px=np.array([a.target_px for a in annotations]),
+        landmarks=[detector(tmp_path / person.name / a.image) for a in annotations],
+    )
+
+
+def _three_screens(tmp_path: Path, **kwargs: Any) -> list[protocol.PersonData]:
+    return [
+        _person_data(tmp_path, FakePerson("p00", **kwargs)),
+        _person_data(tmp_path, _second_screen("p01", seed=1, **kwargs)),
+        _person_data(
+            tmp_path,
+            FakePerson("p02", seed=2, screen_px=(1920, 1080), screen_mm=(344.0, 194.0), **kwargs),
+        ),
+    ]
+
+
+def _mean_px(results: dict[str, Any], variant: str) -> float:
+    mean: float = results["variants"][variant]["aggregate"]["pixel_error_px"][
+        "mean_of_person_means"
+    ]
+    return mean
+
+
+def test_the_variant_list_is_the_documented_one():
+    assert models.VARIANT_NAMES == (
+        "eyeos",
+        "eyeos-poly2",
+        "ridge-0.001",
+        "ridge-0.1",
+        "ridge-1",
+        "ridge-10",
+        "per-dot-1",
+        "per-dot-5",
+        "per-dot-10",
+        "per-dot-20",
+        "with-head-pose",
+        "global-lopo",
+    )
+
+
+def test_every_variant_runs_and_the_noise_free_ones_recover_the_targets(tmp_path):
+    persons = _three_screens(tmp_path)
+
+    results = protocol.evaluate(persons, list(models.build_variants().values()))
+
+    assert list(results["variants"]) == list(models.VARIANT_NAMES)
+    for name, variant in results["variants"].items():
+        assert variant["aggregate"]["persons_evaluated"] == 3, name
+        for person in variant["persons"].values():
+            assert person["n_calibration"] == 9 * variant["k_per_dot"], name
+            assert person["validation_error_px"] is not None, name
+            assert person["angular_error_deg"] is None  # no 3D labels in this PersonData
+    for name in (
+        "eyeos",
+        "ridge-0.001",
+        "per-dot-1",
+        "per-dot-5",
+        "per-dot-10",
+        "per-dot-20",
+        "with-head-pose",
+        "global-lopo",
+    ):
+        assert _mean_px(results, name) < 0.75, name
+    assert [results["variants"][f"per-dot-{k}"]["k_per_dot"] for k in (1, 5, 10, 20)] == [
+        1,
+        5,
+        10,
+        20,
+    ]
+
+
+def test_variants_that_restate_the_shipping_calibration_reproduce_it_exactly(tmp_path):
+    persons = _three_screens(tmp_path, noise=0.05)
+    variants = models.build_variants()
+
+    results = protocol.evaluate(
+        persons, [variants[n] for n in ("eyeos", "ridge-0.001", "per-dot-5")]
+    )
+
+    eyeos = results["variants"]["eyeos"]["persons"]
+    assert results["variants"]["ridge-0.001"]["persons"] == eyeos
+    assert results["variants"]["per-dot-5"]["persons"] == eyeos
+
+
+def test_a_stronger_ridge_pulls_predictions_toward_the_middle(tmp_path):
+    persons = _three_screens(tmp_path)
+    variants = models.build_variants()
+
+    results = protocol.evaluate(
+        persons, [variants[f"ridge-{lam}"] for lam in ("0.001", "0.1", "1", "10")]
+    )
+
+    errors = [_mean_px(results, f"ridge-{lam}") for lam in ("0.001", "0.1", "1", "10")]
+    assert errors == sorted(errors)
+    assert errors[-1] > 10 * max(errors[0], 0.1)
+
+
+def _yaw_person(name: str = "p00", n: int = 240, seed: int = 0) -> protocol.PersonData:
+    """Iris offsets that depend on head yaw as well as the target: turning the head
+    toward a target leaves the eyes less to rotate."""
+    rng = random.Random(seed)
+    width, height = 1280.0, 800.0
+    targets, landmarks = [], []
+    for _ in range(n):
+        x, y = rng.uniform(0, width - 1), rng.uniform(0, height - 1)
+        nose_x = rng.uniform(0.45, 0.55)
+        yaw_deg = (nose_x - 0.5) / 0.2 * 60.0  # what eyeos.features reads back
+        ox, oy = offsets_for_target(x, y, width, height)
+        landmarks.append(make_landmarks(ox - 0.01 * yaw_deg, oy, nose_x=nose_x))
+        targets.append((x, y))
+    return protocol.PersonData(name, (width, height), np.array(targets), landmarks)
+
+
+def test_with_head_pose_learns_a_gaze_shift_that_follows_the_head(tmp_path):
+    variants = models.build_variants()
+
+    results = protocol.evaluate([_yaw_person()], [variants["eyeos"], variants["with-head-pose"]])
+
+    shipping = results["variants"]["eyeos"]["persons"]["p00"]
+    with_pose = results["variants"]["with-head-pose"]["persons"]["p00"]
+    assert shipping["pixel_error_px"]["mean"] > 20
+    assert shipping["validation_error_px"] > 20
+    assert with_pose["pixel_error_px"]["mean"] < 0.75
+    assert with_pose["validation_error_px"] < 0.5
+
+
+def test_the_generic_leave_one_out_matches_calibrations_own(tmp_path):
+    person = protocol.prepare(_person_data(tmp_path, FakePerson("p00", noise=0.05)))
+    features = person.features[:45]
+    targets = person.data.targets_px[person.valid_rows][:45]
+    calibration = Calibration(1280.0, 800.0)
+    for f, (x, y) in zip(features, targets, strict=True):
+        calibration.add_sample((x, y), f)
+    calibration.fit()
+
+    def fit_predict(train: np.ndarray, held_out: int) -> np.ndarray:
+        fold = Calibration(1280.0, 800.0)
+        for i in train:
+            fold.add_sample(tuple(targets[i]), features[i])
+        fold.fit()
+        return np.array(fold.predict(features[held_out]))
+
+    generic = models.leave_one_out_rms_px(targets, fit_predict)
+
+    assert generic == pytest.approx(calibration.validation_error_px, rel=1e-9)
+    assert models.leave_one_out_rms_px(targets[:5], fit_predict) == math.inf
+
+
+class _SpyVariant:
+    """Records which other persons the protocol lets it learn from, per fit."""
+
+    def __init__(self, needs_other_persons: bool) -> None:
+        self.name = "spy"
+        self.description = "records its fit contexts"
+        self.k_per_dot = None
+        self.needs_other_persons = needs_other_persons
+        self.seen: list[tuple[str, ...]] = []
+
+    def fit(self, features, targets_px, context):
+        self.seen.append(tuple(p.name for p in context.other_persons))
+        return models.build_variants()["eyeos"].fit(features, targets_px, context)
+
+
+def test_leave_one_person_out_never_trains_on_the_person_it_tests(tmp_path):
+    persons = _three_screens(tmp_path)
+    lopo, plain = _SpyVariant(needs_other_persons=True), _SpyVariant(needs_other_persons=False)
+
+    protocol.evaluate(persons, [lopo])
+    protocol.evaluate(persons, [plain])
+
+    assert lopo.seen == [("p01", "p02"), ("p00", "p02"), ("p00", "p01")]
+    assert plain.seen == [(), (), ()]
+
+
+def test_the_lopo_training_set_is_every_other_persons_valid_frames_in_screen_fractions(
+    tmp_path,
+):
+    p00 = protocol.prepare(_person_data(tmp_path, FakePerson("p00", faces={0: 0, 1: 2})))
+    p01 = protocol.prepare(_person_data(tmp_path, _second_screen("p01", seed=1)))
+
+    features, fractions = models.lopo_training_set([p00, p01])
+
+    assert features.shape == (238 + 240, 7)
+    assert fractions.shape == (238 + 240, 2)
+    assert fractions[238:] == pytest.approx(p01.data.targets_px / np.array([1440.0, 900.0]))
+    assert features[0] == pytest.approx(
+        [*p00.features[0].iris_vector(), *p00.features[0].head_pose()]
+    )
+
+
+def test_global_lopo_needs_another_person(tmp_path):
+    persons = [_person_data(tmp_path, FakePerson("p00"))]
+
+    results = protocol.evaluate(persons, [models.build_variants()["global-lopo"]])
+
+    person = results["variants"]["global-lopo"]["persons"]["p00"]
+    assert person == {"skipped": "needs at least 2 persons"}
+    assert results["variants"]["global-lopo"]["aggregate"]["pixel_error_px"] is None
+
+
+def test_global_lopo_per_user_correction_absorbs_a_quirk_the_others_do_not_share(tmp_path):
+    persons = _three_screens(tmp_path)[:2] + [
+        _person_data(tmp_path, FakePerson("p02", seed=2, iris_bias=(0.3, -0.2)))
+    ]
+
+    results = protocol.evaluate(persons, [models.build_variants()["global-lopo"]])
+
+    for person in results["variants"]["global-lopo"]["persons"].values():
+        assert person["pixel_error_px"]["mean"] < 0.75
+        assert person["validation_error_px"] < 0.5
