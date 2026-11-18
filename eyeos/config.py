@@ -111,6 +111,32 @@ def _dc(cls: type, data: dict[str, Any] | None, section: str) -> Any:
     return cls(**data)
 
 
+class _UniqueKeyLoader(yaml.SafeLoader):
+    """A SafeLoader that refuses a key repeated in one mapping. Plain YAML keeps only the
+    last copy, so a second pasted ``gates:`` section would silently drop the first one's
+    no-click zones."""
+
+    def construct_mapping(self, node: yaml.MappingNode, deep: bool = False) -> dict[Any, Any]:
+        seen: set[Any] = set()
+        for key_node, _ in node.value:
+            if key_node.tag == "tag:yaml.org,2002:merge":
+                continue  # a "<<" merge key; overriding what it merges in is legal
+            key = self.construct_object(key_node, deep=deep)
+            try:
+                duplicate = key in seen
+            except TypeError:
+                continue  # unhashable; the base class reports it
+            if duplicate:
+                raise yaml.constructor.ConstructorError(
+                    None,
+                    None,
+                    f"duplicate key {key!r} (YAML would keep only the last one)",
+                    key_node.start_mark,
+                )
+            seen.add(key)
+        return super().construct_mapping(node, deep=deep)
+
+
 def load_config(path: str | Path | None) -> Config:
     """Load a Config from a YAML file, falling back to defaults for missing keys.
 
@@ -120,7 +146,7 @@ def load_config(path: str | Path | None) -> Config:
     if path is not None:
         text = Path(path).read_text()
         try:
-            raw = yaml.safe_load(text) or {}
+            raw = yaml.load(text, Loader=_UniqueKeyLoader) or {}  # a SafeLoader subclass
         except yaml.YAMLError as e:
             raise ValueError(f"{path} is not valid YAML: {e}") from e
 

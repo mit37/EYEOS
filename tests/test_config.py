@@ -111,3 +111,37 @@ def test_a_section_that_is_not_a_mapping_is_reported(tmp_path, text, message):
     cfg.write_text(text)
     with pytest.raises(ValueError, match=message):
         load_config(cfg)
+
+
+@pytest.mark.parametrize(
+    "yaml_text, key, line",
+    [
+        # A pasted second section would silently replace the first, dropping its
+        # no-click zone; the loader refuses instead.
+        (
+            "gates:\n  no_click_zones:\n    - {x_min: 0, y_min: 0, x_max: 10, y_max: 10}\n"
+            "output:\n  backend: dry_run\n"
+            "gates:\n  dwell_time_s: 1.0\n",
+            "gates",
+            6,
+        ),
+        ("screen:\n  width_px: 1536\n  width_px: 1920\n", "width_px", 3),
+    ],
+)
+def test_a_duplicated_key_is_refused(tmp_path, yaml_text, key, line):
+    cfg = tmp_path / "c.yaml"
+    cfg.write_text(yaml_text)
+    with pytest.raises(ValueError, match=rf"(?s)duplicate key '{key}'.*line {line},"):
+        load_config(cfg)
+
+
+def test_a_yaml_merge_key_override_is_not_a_duplicate(tmp_path):
+    cfg = tmp_path / "c.yaml"
+    cfg.write_text(
+        "base: &base {width_px: 1536, height_px: 864}\n" "screen:\n  <<: *base\n  width_px: 1920\n"
+    )
+    # "base" is not a config section, so the unknown-key check rejects it, but not as a
+    # duplicate: the merge key and the override are legal YAML.
+    with pytest.raises(ValueError) as e:
+        load_config(cfg)
+    assert "duplicate" not in str(e.value)
