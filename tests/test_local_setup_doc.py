@@ -26,11 +26,6 @@ GUIDE = REPO_ROOT / "docs" / "LOCAL_SETUP.md"
 DEMO = REPO_ROOT / "docs" / "DEMO.md"
 INSTALL = 'pip install -e ".[dev,webcam,windows-fallback,public-eval]"'
 
-# Built on parallel branches (agents "view" and "public") and documented from their
-# shared interface. Once those branches are merged, nothing here is missing any more.
-PENDING_RUN_FLAGS = {"--view"}
-PENDING_EXTRAS = {"public-eval"}
-
 
 def _guide() -> str:
     return GUIDE.read_text(encoding="utf-8")
@@ -124,21 +119,28 @@ def test_installed_extras_exist_in_pyproject():
     with open(REPO_ROOT / "pyproject.toml", "rb") as f:
         defined = set(tomllib.load(f)["project"]["optional-dependencies"])
     wanted = set(INSTALL.split("[", 1)[1].split("]", 1)[0].split(","))
-    assert wanted - defined <= PENDING_EXTRAS
+    assert wanted <= defined, wanted - defined
 
 
-def test_every_eyeos_run_flag_in_the_guide_exists():
+@pytest.mark.parametrize(
+    "command, must_use",
+    [
+        ("run", {"--config", "--calibrate", "--overlay", "--view"}),
+        ("record", {"--config", "--out", "--dot-s", "--settle-s", "--reading-s"}),
+    ],
+)
+def test_every_eyeos_flag_in_the_guide_exists(command, must_use):
     subcommands = next(
         a for a in build_arg_parser()._actions if isinstance(a, argparse._SubParsersAction)
     )
-    known = set(subcommands.choices["run"]._option_string_actions)
+    known = set(subcommands.choices[command]._option_string_actions)
     used = set()
     for block in _code_blocks(_guide()):
         for line in block.splitlines():
-            if line.lstrip().startswith("eyeos run"):
+            if line.lstrip().startswith(f"eyeos {command}"):
                 used |= set(re.findall(r"(?<!\S)--[a-z][a-z-]*", line))
-    assert {"--config", "--calibrate", "--overlay"} <= used
-    assert used - known <= PENDING_RUN_FLAGS
+    assert must_use <= used
+    assert used <= known, used - known
 
 
 def test_the_guide_says_what_has_not_run():

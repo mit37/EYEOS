@@ -33,10 +33,11 @@ Be clear about this before trusting any "expected" result below.
   webcam, a real display or a real keyboard, so every "Expect" below comes from the
   code and its tests, not from a real session. If what you see differs, that is a real
   result: note it in `docs/PLAN.md`.
-- **Built in parallel with this guide.** `eyeos run --view`, `eyeos record` and the
-  MPIIFaceGaze commands were built on other branches at the same time and are
-  documented here from their agreed interface. They were not on this guide's branch,
-  so none of their commands was run for this guide. `--help` on each is the authority.
+- **Built alongside this guide.** `eyeos run --view`, `eyeos record` and the
+  MPIIFaceGaze commands were built at the same time on other branches, then merged.
+  The commands below match their `--help`, and a test checks that every `eyeos run`
+  flag used here exists. What each of them has and hasn't run is in its own doc:
+  `docs/DEMO.md` ("Tracking view"), `docs/RECORDING.md` and `docs/PUBLIC_DATASETS.md`.
 
 ## 1. Install Git and Python 3.12
 
@@ -163,9 +164,9 @@ notepad config.yaml
 
 Change these keys **in the sections the file already has**, and leave the rest. The
 snippets in this guide show only the keys to change. Don't paste one in as a second
-`screen:`, `gates:` or `output:` section: YAML silently keeps only the last copy of a
-section, so everything set in the first one (a no-click zone, say) would vanish
-without an error.
+`screen:`, `gates:` or `output:` section: plain YAML keeps only the last copy, which
+would drop everything set in the first (a no-click zone, say), so EyeOS refuses a
+config with a repeated key and names it, `duplicate key 'gates'`, with its line.
 
 ```yaml
 screen:
@@ -186,11 +187,24 @@ size it saw, either `config screen.width_px/height_px is ... but the screen repo
 WxH` (the calibration screen) or `config screen is ... but Windows reports WxH` (the
 SendInput backend). Copy those numbers into `config.yaml`.
 
-Then run, with the calibration dots, the gate lights and the tracking view:
+First look at the tracking view on its own. It draws a marker on each pupil and an
+arrow for its shift from the eye's centre, the shift that moves the cursor:
+
+```powershell
+eyeos run --config config.yaml --view
+```
+
+With no calibration there is no cursor yet: Gate 2 stays red and the small screen map
+stays empty. Press **q** in the window to hide it and Ctrl+C in the terminal to stop.
+Then run with the calibration dots, the gate lights and the tracking view together:
 
 ```powershell
 eyeos run --config config.yaml --calibrate --overlay --view
 ```
+
+That combination puts Tk's windows and OpenCV's window in one process and has never
+run anywhere (see `docs/DEMO.md`). If it hangs or crashes, drop `--view` and report
+what you saw.
 
 1. A fullscreen screen shows 9 dots, one at a time. Look at each one and press
    **space** when your gaze is steady. Esc cancels.
@@ -281,22 +295,23 @@ reads:
 ```powershell
 eyeos record --config config.yaml --out recordings/session1.csv
 eyeos record --config config.yaml --out recordings/session2.csv --dot-s 2.0 --settle-s 0.6 --reading-s 300
-python -m eval.run_eval --session recordings/session1.csv --out recordings/session1-results.json
+python -m eval.run_eval --session recordings/session1.csv --config config.yaml --out recordings/session1-results.json
 ```
 
 - `--dot-s` is how long each target stays up, `--settle-s` how much of its start is
   dropped while your eyes move there, `--reading-s` the length of the "just reading"
-  part (the PRD asks for 5 minutes, 300 s), and `--no-reading` skips it. Follow the
-  recorder's own on-screen instructions; this guide hasn't seen it run.
+  part (the PRD asks for 5 minutes, 300 s), and `--no-reading` skips it. The recorder
+  explains each stage on screen; `docs/RECORDING.md` has the details and what it has
+  and hasn't run on. When it finishes it prints the `run_eval` command to use.
 - Save recordings under `recordings/`, which is gitignored. PowerShell accepts both `/`
   and `\` in these paths.
 - `run_eval` prints the metrics and writes them to `--out`, with the same keys as the
   README's Results: `calibration_validation_error_px`, `mean_pixel_error_raw_px` and
   `mean_pixel_error_filtered_px`, `steady_state_jitter_raw_px` and
   `steady_state_jitter_filtered_px`, `on_target_dwell_satisfied_frames`,
-  `just_reading_false_click_count` and `click_false_trigger_rate`. At the time of
-  writing, `run_eval` took no `--config` and scored every session with the built-in
-  defaults (a 1920x1080 screen): check `python -m eval.run_eval --help`.
+  `just_reading_false_click_count` and `click_false_trigger_rate`. Pass the config
+  you recorded with (`--config`): without it, `run_eval` uses the built-in defaults,
+  a 1920x1080 screen, and the errors of any other screen size come out wrong.
 - Record a few sessions (different lighting, glasses on and off, sitting closer or
   further) and compare their result files. A bad number is a real result: report it.
 
@@ -330,17 +345,20 @@ python -m eval.public.mpiifacegaze evaluate --root datasets/MPIIFaceGaze --cache
 landmark features to the screen, such as EyeOS's own per-person calibration, not
 neural networks. So "training" means: change something, re-run `evaluate`, compare.
 `docs/PUBLIC_DATASETS.md` explains the protocol and each variant, and `evaluate
---help` lists their names. Each run with `--variants` scores only the variants you
+--help` lists their names (`eyeos` is the shipping calibration, `eyeos-poly2` a
+second-order version of it). Each run with `--variants` scores only the variants you
 name; give each run its own `--out` and compare the files:
 
 ```powershell
-python -m eval.public.mpiifacegaze evaluate --root datasets/MPIIFaceGaze --cache datasets/cache/mpiifacegaze --out eval/results/run-a.json --variants NAME1
-python -m eval.public.mpiifacegaze evaluate --root datasets/MPIIFaceGaze --cache datasets/cache/mpiifacegaze --out eval/results/run-b.json --variants NAME2
+python -m eval.public.mpiifacegaze evaluate --root datasets/MPIIFaceGaze --cache datasets/cache/mpiifacegaze --out eval/results/run-a.json --variants eyeos
+python -m eval.public.mpiifacegaze evaluate --root datasets/MPIIFaceGaze --cache datasets/cache/mpiifacegaze --out eval/results/run-b.json --variants eyeos-poly2
 git diff --no-index eval/results/run-a.json eval/results/run-b.json
 ```
 
-The cache holds MediaPipe's landmarks. If you change how EyeOS turns landmarks into
-features (`eyeos/features.py`), check `extract --help` for how to rebuild it.
+The cache holds MediaPipe's raw landmarks, and `evaluate` turns them into features
+each run, so a change to `eyeos/features.py`, the calibration or a variant
+(`eval/public/models.py`) needs only another `evaluate`. Only a change to the
+detector itself needs `extract --force`.
 
 ## 10. Keep working with Claude Code
 
@@ -404,8 +422,8 @@ would want a GPU to train. They are future work and not part of this repo.
 - **Your recordings never leave the machine.** `eyeos/` contains no networking code.
   Session logs (`logs/`) hold timestamps, gate decisions and their reasons, and cursor
   coordinates. `eyeos record` writes a CSV of landmark numbers (the format `run_eval`
-  reads), not camera images. `logs/`, `recordings/`, `datasets/` (once the
-  MPIIFaceGaze branch is merged), `config.yaml` and video files are gitignored.
+  reads), not camera images. `logs/`, `recordings/`, `datasets/`, `config.yaml` and
+  video files are gitignored.
   Nothing reaches GitHub unless you `git add` and `git push` it, so run `git status`
   before every commit.
 
