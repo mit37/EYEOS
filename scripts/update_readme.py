@@ -36,6 +36,7 @@ sys.path.insert(0, str(ROOT))
 from eval.generate_synthetic import NOISE_SIGMA  # noqa: E402
 from eval.public.protocol import DEFAULT_K_PER_DOT  # noqa: E402
 from eval.run_eval import compute_metrics, load_raw_rows  # noqa: E402
+from eyeos.calibration_session import SAMPLE_FRAMES  # noqa: E402
 from eyeos.cli import main as eyeos_main  # noqa: E402
 from eyeos.config import Config  # noqa: E402
 from eyeos.features import extract_features  # noqa: E402
@@ -324,11 +325,34 @@ def _validation_result(results: dict[str, Any]) -> str | None:
         phrase, passed, evaluated, unvalidated = _validation(live)
         text += (
             f" Fitted the way a live session fits it (`{LIVE_STYLE}`), its leave-one-out over "
-            f"{CALIBRATION_DOTS} samples, one per dot, is the statistic live Gate 2 judges: it "
+            f"{CALIBRATION_DOTS} samples, one per dot, is the same statistic as live Gate 2's, "
+            f"but not a live result: {_not_live(results, live)}. On these photos it "
             f"{phrase}, and {_pass_count(passed, evaluated, unvalidated)}."
         )
         negative = negative or passed < evaluated
     return ("**Negative result.** " if negative else "") + text
+
+
+def _not_live(results: dict[str, Any], live: dict[str, Any]) -> str:
+    """How eyeos-live9's samples differ from a live session's (eyeos.calibration_session):
+    a dot's photos come from separate moments, and their true targets are not the dot."""
+    k = results["config"].get("k_per_dot")
+    photos = f"a dot's {k} photos" if k is not None else "a dot's K photos"
+    text = (
+        f"each sample averages {photos}, taken at different moments (often on different "
+        f"days) rather than up to {SAMPLE_FRAMES} frames of one look, and is placed at the dot"
+    )
+    distances = [
+        r["calibration_mean_distance_px"]
+        for _, r in _evaluated(live)
+        if r.get("calibration_mean_distance_px") is not None
+    ]
+    if distances:
+        text += (
+            " although their true targets lie on average "
+            f"{statistics.fmean(distances):.1f} px from it"
+        )
+    return text
 
 
 def _centre_comparison(results: dict[str, Any]) -> str | None:
@@ -369,7 +393,11 @@ def _check_footnote(results: dict[str, Any]) -> str:
         f"{limit:g} px limit. {which} over {over}, each at its own true target: not the "
         f"statistic live Gate 2 judges, which is over {CALIBRATION_DOTS} samples, one per dot, "
         "each that dot's frames averaged and placed at the dot. "
-        + (f"`{LIVE_STYLE}` computes that one." if live else "This file does not report that one.")
+        + (
+            f"`{LIVE_STYLE}` computes that statistic on these photos (see above)."
+            if live
+            else "This file does not report that one."
+        )
     )
 
 

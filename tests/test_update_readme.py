@@ -276,12 +276,38 @@ def test_public_results_give_the_live_style_statistic_and_name_it_live_gate_2s()
 
     paragraph = _paragraph(text, "Negative result")
     assert "(`eyeos-live9`)" in paragraph
-    assert "the statistic live Gate 2 judges" in paragraph
+    assert "the same statistic as live Gate 2's" in paragraph
     assert f"{np.mean(live):.1f} px per person ({min(live):.1f} to {max(live):.1f} px)" in (
         paragraph
     )
     assert f"{passed} of 2 pass" in paragraph
     assert "does not report" not in paragraph
+
+
+@pytest.mark.parametrize("noise", [0.0, 0.3], ids=["passing", "failing"])
+def test_the_live_style_statistic_always_comes_with_why_it_is_not_a_live_result(noise):
+    from eyeos.calibration_session import SAMPLE_FRAMES
+
+    results = _public_results(("eyeos", "eyeos-live9"), noise=noise)
+    live = results["variants"]["eyeos-live9"]["persons"].values()
+    distance = np.mean([p["calibration_mean_distance_px"] for p in live])
+    k = results["config"]["k_per_dot"]
+
+    text = update_readme.public_results(results)
+
+    paragraph = _paragraph(text, "(`eyeos-live9`)")
+    # Its samples are a dot's photos from separate moments, placed at the dot although
+    # they were taken looking elsewhere: the live statistic, but not a live session.
+    assert f"each sample averages a dot's {k} photos" in paragraph
+    assert "taken at different moments (often on different days)" in paragraph
+    assert f"rather than up to {SAMPLE_FRAMES} frames of one look" in paragraph
+    assert f"true targets lie on average {distance:.1f} px from it" in paragraph
+    assert "but not a live result" in paragraph
+    assert "On these photos it averages" in paragraph
+    assert "is the statistic live Gate 2 judges" not in paragraph
+    footnote = _footnote(text)
+    assert "`eyeos-live9` computes that statistic on these photos" in footnote
+    assert "computes that one" not in footnote
 
 
 def test_a_failing_live_style_check_is_a_negative_result_even_when_the_photo_check_passes():
@@ -321,7 +347,7 @@ def test_public_results_name_the_calibration_check_for_what_it_is():
     footnote = _footnote(with_live)
     assert "For every variant except `eyeos-live9` it is" in footnote
     assert "45 calibration photos" in footnote
-    assert "`eyeos-live9` computes that one" in footnote
+    assert "`eyeos-live9` computes that statistic" in footnote
 
 
 def test_public_results_count_the_persons_each_variant_beats_eyeos_for():
