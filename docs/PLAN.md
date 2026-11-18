@@ -18,11 +18,15 @@ Restated from `PRD.md` §8, per `STANDARDS.md` §6 step 1.
         the container, and reported "no face" on every frame. That is a run outside CI,
         on a video with no face in it.
       - Pending: the same run on footage with a real face (see `docs/DEMO.md` §4).
-- [x] Eval numbers generated (synthetic in CI; real ones marked pending)
+- [x] Eval numbers generated (synthetic in CI; live-recording ones marked pending)
       - `eval/run_eval.py` produces them, and `scripts/update_readme.py` writes them into
         README.md (CI fails on drift).
       - Real-recording numbers, including PRD §5's 5-minute reading segment, are
         marked "not measured".
+      - README also holds an MPIIFaceGaze table (real webcam photos, not a live
+        session), which `scripts/update_readme.py` generates from the committed
+        `eval/results/mpiifacegaze.json`. CI checks the README against that file but
+        cannot rerun it: the dataset is never committed.
 - [x] README states "experiment, not an assistive-tech product"
 - [ ] CI green on the commit to be tagged
 - [ ] Tag v2.0.0. Pending: the owner tags `main` once the items above are met (this
@@ -141,11 +145,21 @@ Restated from `PRD.md` §8, per `STANDARDS.md` §6 step 1.
 - Still open: the owner-only items (tag, repo description and topics, branch
   protection), hardware verification and a real recorded session.
 - The real MPIIFaceGaze run (2026-11-18): download, landmark extraction for all 15
-  participants and evaluation of every variant, results in
+  participants and evaluation of the 12 variants that existed then, results in
   `eval/results/mpiifacegaze.json` and `docs/PUBLIC_DATASETS.md` ("Real run"). The real
   files matched the format the parsers expected, so no code changed. The shipping
-  calibration's mean error is 258 px (6.25°), and it fails Gate 2 for all 15
-  participants.
+  calibration's mean error is 258 px (6.25°), and it fails the harness's Gate 2 check
+  (a leave-one-out over 45 single photos, not the statistic live Gate 2 computes) for
+  all 15 participants.
+- Audit of that run (2026-11-18): an adversarial multi-agent audit found no geometry
+  or units bug. It found stale and overstated text: the README still said the harness
+  had never run on the real data, and the docs called the numbers "pessimistic for
+  live use" and treated the harness's validation error as live Gate 2. Those texts
+  were corrected, and the docs now also reason that `ridge-10` is close to a constant
+  prediction and that EyeOS's head-pose "degrees" are uncalibrated. The audit also
+  asked for a constant-prediction baseline, a live-style calibration variant and
+  diagnostics (a same-day split, the dataset's own head pose); these are built on
+  separate branches and have not run on the real data yet.
 
 ## Cloud-instance constraints (PRD §7, STANDARDS §6.4)
 
@@ -213,8 +227,10 @@ is therefore behind an interface and tested only against a fake:
   window manager `-fullscreen` did nothing and the window got no keyboard focus, so the recorder also sets its geometry and calls `focus_force()`,
   and refuses to record unless its canvas covers the screen. Never run with a real
   webcam, on Windows, or on a physical screen.
-- **Eval.** The README numbers come from a generated synthetic landmark sequence
-  (`eval/fixtures/`, made by `eval/generate_synthetic.py`). Real-session numbers are
+- **Eval.** The README's main Results table comes from a generated synthetic landmark
+  sequence (`eval/fixtures/`, made by `eval/generate_synthetic.py`). Its MPIIFaceGaze
+  table comes from the committed `eval/results/mpiifacegaze.json`: real webcam
+  photos, but not a live session (see the next point). Live-session numbers are
   marked "not measured", pending recordings, and so is the PRD's 5-minute reading
   false-click test. `eyeos record` now records a labelled session from a webcam
   (`docs/RECORDING.md`), but none has been recorded yet.
@@ -223,7 +239,8 @@ is therefore behind an interface and tested only against a fake:
   reachable from the container it was built in, so it was built against a fake dataset
   with a fake detector. A later cloud session (2026-11-18) could reach the host and ran
   the real download, extraction and evaluation; the numbers are in
-  `eval/results/mpiifacegaze.json` and `docs/PUBLIC_DATASETS.md` ("Real run"). The
+  `eval/results/mpiifacegaze.json` and `docs/PUBLIC_DATASETS.md` ("Real run"). That was
+  one run; anything added to the harness since has not run on the real data. The
   automated tests still use only the fake dataset: the real one is non-commercial and
   never committed, so CI cannot run it.
 
