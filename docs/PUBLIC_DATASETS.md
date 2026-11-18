@@ -138,8 +138,10 @@ session would treat a user, as far as still photos allow:
    - Pixel error: mean, median and p90 in pixels, and as a % of the screen diagonal.
    - Angular error in degrees: the angle between `(P_pred - fc)` and `(gt - fc)`, with
      `P_pred` mapped to camera coordinates by the screen model (next section).
-   - The calibration's validation error (Calibration's leave-one-out RMS) and whether it
-     passes Gate 2 (`< gates.calibration_max_error_px`, 60 px by default).
+   - The calibration's validation error (Calibration's leave-one-out RMS over the
+     single calibration photos) and whether it is under Gate 2's limit
+     (`< gates.calibration_max_error_px`, 60 px by default). Live Gate 2 applies that
+     limit to a different leave-one-out; see "Limits of this protocol".
    - The share of test frames whose head pose is within Gate 2's limit
      (`calibration_max_head_pose_delta_deg`, 15° by default) of the calibration pose.
 6. **Across participants.** For pixel and angular error: the mean of the per-person means
@@ -183,6 +185,15 @@ reported per participant.
   points near them (`calibration_mean_distance_px` says how near). Their true targets are
   used, so that offset does not bias the fit, but the spread of the calibration points
   differs from a real 9-dot session.
+- **The Gate 2 figure is not the statistic live Gate 2 computes.** Here the validation
+  error is Calibration's leave-one-out over the 45 single calibration photos (K = 5 per
+  dot), each added at its true target; when one photo is held out, the other 4 near its
+  dot stay in the fit. Live, Gate 2 judges the leave-one-out over 9 samples, each the
+  average of up to 10 frames, added at the dot (`eyeos/calibration_session.py`). The two
+  respond to noise differently and can disagree in either direction, so the "0/15"
+  below is 0 of 15 under the 45-photo statistic, not a measured live refusal. A
+  live-style variant, `eyeos-live9`, is being added to the harness; it has not run on
+  the real data yet.
 - **One calibration across many sittings.** The images come from many days (`dayNN`
   folders), so a calibration fitted on some of them is tested on photos from other
   sittings, lighting and postures. A live calibration is used in the same sitting.
@@ -302,7 +313,7 @@ Nothing broke a parser. What we saw, for the next person:
 "Mean", "median" and "p90" are over the 15 per-person means (each person weighs the
 same). Pooled values are over all test frames.
 
-| Variant | mean px | median px | p90 px | mean ° | median ° | p90 ° | pooled median px | % diag | Gate 2 |
+| Variant | mean px | median px | p90 px | mean ° | median ° | p90 ° | pooled median px | % diag | Gate 2 (harness LOO) |
 |---|---|---|---|---|---|---|---|---|---|
 | eyeos (shipping) | 258.4 | 257.7 | 324.0 | 6.25 | 6.00 | 7.61 | 230.5 | 15.8 | 0/15 |
 | eyeos-poly2 | 259.2 | 256.6 | 324.6 | 6.26 | 5.99 | 7.59 | 230.7 | 15.8 | 0/15 |
@@ -322,14 +333,17 @@ to 348 px (p13, 9.20°). The outliers are p13 (348 px, 9.20°, and only 65 % of 
 frames within Gate 2's head-pose limit of the calibration pose, the lowest of anyone),
 p07 (330 px, 6.43°) and p08 (315 px, 7.68°, 75 % within the head-pose limit). p13 is also
 where the head-pose variants help most: `with-head-pose` 218 px and `global-lopo` 219 px.
-The calibration's leave-one-out validation error averages 319 px; Gate 2 needs < 60 px.
+The calibration's leave-one-out validation error (the harness's 45-photo statistic)
+averages 319 px; Gate 2 needs < 60 px.
 
 ### Reading the results honestly
 
-- **The shipping calibration would not pass Gate 2 for any participant.** Its
-  validation error is 224 to 422 px (3.7 to 7 times the 60 px limit). A live EyeOS session
-  on these photos would refuse to start control, which is the gate doing its job, not
-  a pass.
+- **The shipping calibration fails the harness's Gate 2 check for every participant**
+  (0/15 under the 45-photo statistic). Its validation error is 224 to 422 px, 3.7 to 7
+  times the 60 px limit. Live Gate 2 computes a different statistic (see "Limits of
+  this protocol"), so this does not show that a live session would refuse these
+  people, though the margin is wide. Refusing to start control is the gate doing its
+  job, not a failure of it.
 - **About 6° (258 px, 16 % of the screen diagonal) is too coarse for clicking.** On a
   1440x900 laptop screen that is a radius of roughly a fifth of the screen width: enough
   to tell which region of the screen someone looks at, not to hit a button.
@@ -341,10 +355,11 @@ The calibration's leave-one-out validation error averages 319 px; Gate 2 needs <
     smoothed; and photos whose head pose live Gate 2 would freeze are still scored (on
     average 90 % of test photos are within the head-pose limit, 65 % for p13: the
     JSON's `head_pose_within_limit_share`).
-  - Easier here: the calibration has 45 photos, while a live one has 9 samples, each a
-    10-frame average of one moment (with 9 single photos, `per-dot-1`, the mean error
-    here is 16 % higher); and every photo is 1280x720, while the live webcam source
-    requests no resolution and gets the camera driver's default, which may be lower.
+  - Easier here: the calibration has 45 photos, while a live one has 9 samples, each an
+    average of up to 10 frames from one moment (with 9 single photos, `per-dot-1`, the
+    mean error here is 16 % higher); and every photo is 1280x720, while the live webcam
+    source requests no resolution and gets the camera driver's default, which may be
+    lower.
   - Not known either way: each calibration photo is labelled with the target shown when
     it was taken, a live sample with the dot shown. Both carry the person's fixation
     error, and nothing here compares the two.
