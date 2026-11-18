@@ -537,7 +537,8 @@ of each per-person metric. The JSON has no timestamp and rounds every number to 
 significant digits, so last-digit floating-point noise is very unlikely to change the
 file between runs on the same cache, code and libraries. Very unlikely is not
 impossible, and another numpy or BLAS build can move values further, so the JSON
-records the Python, numpy and scipy versions (`environment`).
+records the same `environment` block as `evaluate`'s: where it ran, and the MediaPipe and
+OpenCV versions `extract` wrote in the cache's manifest.
 
 Two sections fit on a person's frames and score on those same frames (b and g). They
 are bounds and explanations, not results. Only d and e follow the evaluation protocol.

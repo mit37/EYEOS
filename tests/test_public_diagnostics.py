@@ -1485,3 +1485,18 @@ def test_the_docs_diagnose_command_parses_with_the_real_command_line():
     assert args.root == Path("datasets/MPIIFaceGaze")
     assert args.cache == Path("datasets/cache/mpiifacegaze")
     assert args.out == Path("eval/results/mpiifacegaze-diagnostics.json")
+
+
+def test_diagnose_records_the_same_environment_as_evaluate_with_the_extract_versions(
+    tmp_path, scipy_io
+):
+    # The landmarks come from the extract cache, so the versions that matter for them are
+    # the ones extract recorded in the cache's manifest; diagnose reports them the way
+    # evaluate does.
+    root, cache = _on_disk(tmp_path, Spec(noise=0.05), Spec("p01", seed=1, noise=0.05))
+
+    result = mpii.diagnose_dataset(root, cache, persons=["p01"])
+
+    assert result["environment"] == mpii.environment(cache, ["p01"])
+    assert result["environment"]["extract"] == {"p01": mpii.read_manifest(cache)["persons"]["p01"]}
+    assert "manifest" in result["notes"]["environment"]

@@ -1069,6 +1069,14 @@ def load_diagnostic_person(
     )
 
 
+DIAGNOSE_ENVIRONMENT_NOTE = (
+    "where diagnose ran (Python, platform, numpy, scipy, OpenCV and MediaPipe versions; "
+    "null = not found), and under `extract` what each person's landmark cache was made "
+    "with, from the cache's manifest.json (null for a cache without a manifest). diagnose "
+    "does not run MediaPipe itself: the landmarks come from the extract cache."
+)
+
+
 def diagnose_dataset(
     root: Path,
     cache_dir: Path,
@@ -1095,13 +1103,21 @@ def diagnose_dataset(
         "git_commit": _git("rev-parse", "HEAD"),
         "git_dirty": None if dirty is None else bool(dirty),
         **result,
+        # The same record as evaluate's: the landmarks come from the cache, so the
+        # MediaPipe and OpenCV versions that matter are the ones extract wrote in its
+        # manifest.
+        "environment": environment(cache_dir, names),
         "config": {
             "root": str(root),
             "cache": str(cache_dir),
             "persons": names,
             **result["config"],
         },
-        "notes": {"loading": DIAGNOSE_LOADING_NOTE, **result["notes"]},
+        "notes": {
+            "loading": DIAGNOSE_LOADING_NOTE,
+            **result["notes"],
+            "environment": DIAGNOSE_ENVIRONMENT_NOTE,
+        },
     }
 
 
