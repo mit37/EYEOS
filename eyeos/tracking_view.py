@@ -117,7 +117,7 @@ def _eye_view(
     iris_px = _to_px(iris, height)
     mid_px = ((outer_px[0] + inner_px[0]) / 2.0, (outer_px[1] + inner_px[1]) / 2.0)
     shift_px = (iris_px[0] - mid_px[0], iris_px[1] - mid_px[1])
-    return EyeView(
+    eye = EyeView(
         outer_px=outer_px,
         inner_px=inner_px,
         top_px=_to_px(top, height),
@@ -128,6 +128,20 @@ def _eye_view(
         arrow_end_px=(mid_px[0] + shift_px[0] * gain, mid_px[1] + shift_px[1] * gain),
         offset=offset,
     )
+    # Finite landmarks can still overflow once scaled (to inf, or inf - inf = NaN).
+    pixels = (
+        eye.outer_px,
+        eye.inner_px,
+        eye.top_px,
+        eye.bottom_px,
+        eye.iris_px,
+        eye.mid_px,
+        eye.shift_px,
+        eye.arrow_end_px,
+    )
+    if not all(_finite(*pixel) for pixel in pixels):
+        return None
+    return eye
 
 
 def _minimap(
@@ -356,11 +370,16 @@ def _ascii(text: str) -> str:
     return text.encode("ascii", errors="replace").decode("ascii")
 
 
+def _coord(value: float) -> int:
+    # Clamped before rounding: round() raises on inf and NaN. compute_view never gives
+    # a NaN to draw, but if one came, it would land off the image too.
+    if math.isnan(value):
+        return -_MAX_COORD
+    return round(min(max(value, -_MAX_COORD), _MAX_COORD))
+
+
 def _pt(point: Pixel) -> tuple[int, int]:
-    return (
-        min(max(round(point[0]), -_MAX_COORD), _MAX_COORD),
-        min(max(round(point[1]), -_MAX_COORD), _MAX_COORD),
-    )
+    return _coord(point[0]), _coord(point[1])
 
 
 def _image_size(image: Any) -> tuple[int, int]:

@@ -224,6 +224,58 @@ def test_an_eye_with_non_finite_landmarks_is_not_drawn():
     assert view.iris_offsets is None
 
 
+HUGE_LEFT_EYES = {
+    # Finite landmarks (and finite offsets), but pixels past the float range.
+    "corner": ({"left_eye_outer": (1e306, 0.40)}, 4.0),  # 1e306 * 480 = inf
+    # Both corners are finite in pixels; only their sum, for the midpoint, overflows.
+    "midpoint": ({"left_eye_outer": (3.125e305, 0.40), "left_eye_inner": (3.0e305, 0.40)}, 4.0),
+    "arrow": ({"left_iris_center": (5e304, 0.40)}, 1e4),  # only shift * gain overflows
+}
+
+
+@pytest.mark.parametrize("points, gain", HUGE_LEFT_EYES.values(), ids=HUGE_LEFT_EYES.keys())
+def test_an_eye_whose_pixels_overflow_is_not_drawn(points, gain):
+    from eyeos.landmarks import Point3D
+    from eyeos.tracking_view import compute_view
+
+    landmarks = make_landmarks(**{name: Point3D(*xy) for name, xy in points.items()})
+    view = compute_view(landmarks, (640, 480), None, SCREEN, gain=gain)
+
+    assert view.left is None
+    assert view.right is not None
+
+
+@pytest.mark.parametrize("points, gain", HUGE_LEFT_EYES.values(), ids=HUGE_LEFT_EYES.keys())
+def test_the_view_survives_landmarks_whose_pixels_overflow(fake_cv2, points, gain):
+    # The pipeline processes such a frame without error, so the view must too: it only
+    # observes.
+    from eyeos.landmarks import Point3D
+    from eyeos.tracking_view import TrackingView
+
+    landmarks = make_landmarks(**{name: Point3D(*xy) for name, xy in points.items()})
+    view = TrackingView(SCREEN, gain=gain)
+
+    _update(view, 2, landmarks=landmarks)
+
+    assert len(fake_cv2.shown) == 2
+    assert len(_drawn(fake_cv2, "arrowedLine")) == 2  # the right eye's, once per frame
+
+
+@pytest.mark.parametrize(
+    "point, expected",
+    [
+        ((float("inf"), -float("inf")), (100_000, -100_000)),
+        ((1e300, -1e300), (100_000, -100_000)),
+        ((float("nan"), 5.4), (-100_000, 5)),
+    ],
+)
+def test_pixels_off_the_drawable_range_are_clamped_not_rounded_first(point, expected):
+    # round() raises on inf and NaN; anything this far off is outside the image anyway.
+    from eyeos.tracking_view import _pt
+
+    assert _pt(point) == expected
+
+
 @pytest.mark.parametrize(
     "image_size, screen",
     [((640, 480), (1920, 1080)), ((1280, 720), (1920, 1080)), ((640, 480), (1080, 1920))],
