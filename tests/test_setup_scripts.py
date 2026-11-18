@@ -1,13 +1,19 @@
-"""scripts/setup_unix.sh, driven in its dry-run mode against fake interpreters.
+"""The setup scripts.
 
-Each test copies the script into a throwaway "repo" and runs it with PATH holding only
-fake ``python3.x`` executables (tiny sh scripts that print a version), so it never
-touches a real Python, the network or this checkout's .venv. The real end-to-end run is
-recorded in docs/LOCAL_SETUP.md.
+scripts/setup_unix.sh is driven in its dry-run mode against fake interpreters: each
+test copies the script into a throwaway "repo" and runs it with PATH holding only fake
+``python3.x`` executables (tiny sh scripts that print a version), so it never touches a
+real Python, the network or this checkout's .venv. The real end-to-end run is recorded
+in docs/LOCAL_SETUP.md.
+
+scripts/setup_windows.ps1 has never run (no PowerShell or Windows where it was
+written), so it only gets static checks: that it stays plain ASCII and in step with
+setup_unix.sh.
 """
 
 from __future__ import annotations
 
+import re
 import shutil
 import subprocess
 import sys
@@ -17,6 +23,7 @@ import pytest
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 UNIX_SCRIPT = REPO_ROOT / "scripts" / "setup_unix.sh"
+WINDOWS_SCRIPT = REPO_ROOT / "scripts" / "setup_windows.ps1"
 EXTRAS = "dev,webcam,windows-fallback,public-eval"
 BASH = shutil.which("bash")
 
@@ -167,3 +174,61 @@ def test_refuses_to_run_outside_a_checkout(tmp_path):
     assert result.returncode != 0
     assert "pyproject.toml" in result.stderr
     assert _commands(result) == []
+
+
+# ---------------------------------------------------------------------------
+# setup_windows.ps1: static checks only (it has never run)
+# ---------------------------------------------------------------------------
+
+
+def test_windows_script_is_plain_ascii():
+    """Windows PowerShell 5.1 reads a script without a BOM in the ANSI code page, so a
+    non-ASCII character (an em dash, a degree sign) could break a string."""
+    WINDOWS_SCRIPT.read_bytes().decode("ascii")
+
+
+def test_windows_script_header_says_it_has_never_run():
+    header = WINDOWS_SCRIPT.read_text().split("#>", 1)[0]
+    assert "UNTESTED" in header
+    assert "setup_unix.sh" in header  # and points at the twin that has run
+
+
+def test_both_scripts_install_the_same_extras():
+    unix = re.search(r'^EXTRAS="([^"]+)"$', UNIX_SCRIPT.read_text(), re.MULTILINE)
+    windows = re.search(r'^\$Extras = "([^"]+)"$', WINDOWS_SCRIPT.read_text(), re.MULTILINE)
+    assert unix is not None and windows is not None
+    assert unix.group(1) == windows.group(1) == EXTRAS
+
+
+def test_windows_script_asks_the_py_launcher_for_3_12_then_3_11_then_3_10():
+    text = WINDOWS_SCRIPT.read_text()
+    candidates = re.search(r"^\$Candidates = @\(([^)]*)\)$", text, re.MULTILINE)
+    assert candidates is not None
+    assert re.findall(r'"([^"]+)"', candidates.group(1)) == ["3.12", "3.11", "3.10"]
+    assert '& py "-$v"' in text
+
+
+def test_windows_script_requires_a_64_bit_x86_python():
+    """mediapipe<0.10.30's Windows wheels are win_amd64 only."""
+    assert '-ne "win-amd64"' in WINDOWS_SCRIPT.read_text()
+
+
+def test_windows_script_runs_the_same_steps_in_the_same_order():
+    text = WINDOWS_SCRIPT.read_text()
+    steps = [
+        "-m venv .venv",
+        "-m pip install --upgrade pip",
+        '-m pip install -e ".[$Extras]"',
+        r"scripts\check_setup.py",
+        "-m pytest -q",
+    ]
+    # Each step is both shown ("+ ...") and run ("& ..."); take where it is run.
+    positions = []
+    for step in steps:
+        runs = [m.start() for m in re.finditer(re.escape(step), text)]
+        run_at = [p for p in runs if text.rfind("& ", 0, p) > text.rfind("\n", 0, p)]
+        assert run_at, f"setup_windows.ps1 never runs: {step}"
+        positions.append(run_at[0])
+    assert positions == sorted(positions)
+    # And every native step's exit code is checked.
+    assert text.count("if ($LASTEXITCODE -ne 0)") >= len(steps)
