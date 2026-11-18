@@ -954,21 +954,27 @@ def _fmt_or_dash(value: float | None, spec: str) -> str:
 
 
 def summary_table(results: dict[str, Any]) -> str:
-    """A short text table of the per-variant aggregates, for the terminal."""
+    """A short text table of the per-variant aggregates, for the terminal. "val px" is
+    the mean validation error and "val<N" the persons below Gate 2's limit N: for every
+    variant but eyeos-live9 that is the photo leave-one-out, not live Gate 2's statistic
+    (see the notes in the JSON)."""
+    check = f"val<{results['config']['gate2_max_validation_error_px']:g}"
     lines = [
-        f"{'variant':<16}{'persons':>8}{'mean px':>10}{'% diag':>8}{'mean deg':>10}{'gate2':>8}"
+        f"{'variant':<18}{'persons':>8}{'mean px':>10}{'% diag':>8}{'mean deg':>10}"
+        f"{'val px':>9}{check:>8}"
     ]
     for name, variant in results["variants"].items():
         agg = variant["aggregate"]
         px = agg["pixel_error_px"] or {}
         deg = agg["angular_error_deg"] or {}
-        gate2 = f"{agg['gate2_passed']}/{agg['persons_evaluated']}"
+        passed = f"{agg['gate2_passed']}/{agg['persons_evaluated']}"
         lines.append(
-            f"{name:<16}{agg['persons_evaluated']:>8}"
+            f"{name:<18}{agg['persons_evaluated']:>8}"
             f"{_fmt_or_dash(px.get('mean_of_person_means'), '.1f'):>10}"
             f"{_fmt_or_dash(agg['pixel_error_pct_diagonal_mean_of_person_means'], '.2f'):>8}"
             f"{_fmt_or_dash(deg.get('mean_of_person_means'), '.2f'):>10}"
-            f"{gate2:>8}"
+            f"{_fmt_or_dash(agg['validation_error_px_mean'], '.1f'):>9}"
+            f"{passed:>8}"
         )
     return "\n".join(lines)
 

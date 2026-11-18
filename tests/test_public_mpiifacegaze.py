@@ -1575,6 +1575,23 @@ def test_the_results_notes_say_what_the_file_holds_and_which_statistic_is_which(
     assert named <= set(models.VARIANT_NAMES)
 
 
+def test_the_terminal_summary_shows_the_validation_error_and_names_its_check_honestly(tmp_path):
+    persons = [_person_data(tmp_path, FakePerson("p00", noise=0.05))]
+    variants = models.build_variants()
+    results = protocol.evaluate(persons, [variants["calibration-mean"], variants["eyeos"]])
+    results["config"] = {"gate2_max_validation_error_px": 60.0}
+
+    header, *rows = mpii.summary_table(results).splitlines()
+
+    assert "gate2" not in header.lower()
+    assert "val px" in header and "val<60" in header
+    for row, name in zip(rows, ("calibration-mean", "eyeos"), strict=True):
+        aggregate = results["variants"][name]["aggregate"]
+        assert row.split()[0] == name
+        assert f"{aggregate['validation_error_px_mean']:.1f}" in row.split()
+        assert row.split()[-1] == f"{aggregate['gate2_passed']}/1"
+
+
 def test_package_versions_come_from_the_installed_distributions():
     assert mpii.package_version("numpy") == np.__version__
     assert mpii.package_version("no-such-distribution-eyeos") is None
