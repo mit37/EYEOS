@@ -39,8 +39,11 @@ eyeos record --config config.yaml --out recordings/session1.csv
 | `--no-reading` | off | Skip the reading stage. |
 
 `recordings/` is gitignored. `eyeos record` never replaces an existing file: pick a
-new `--out` for each session. When it finishes it prints where the file went and the
-command to evaluate it. Exit codes: 0 saved, 1 cancelled, 2 error.
+new `--out` for each session. It checks before the camera opens, and again when it
+saves: if a file appeared at `--out` while you were recording (say, from a second
+`eyeos record`), that file is left alone and this session is not saved. When it
+finishes it prints where the file went and the command to evaluate it. Exit codes:
+0 saved, 1 cancelled, 2 error.
 
 ## What each stage asks you to do
 
@@ -85,7 +88,10 @@ Each row is one camera frame:
 
 That is 52 columns in all. No camera image is kept, in memory or on disk. The rows
 are held in memory until the session ends, then written to a temporary file next to
-`--out` and renamed into place, so a failed write leaves no partial file.
+`--out`. That file gets the `--out` name through a hard link, which fails rather than
+replace a file, and the temporary name is removed. A failed write leaves no partial
+file. On a drive without hard links (FAT, exFAT) the temporary file is copied into a
+newly created `--out` file instead, which is deleted again if the copy fails.
 
 Landmarks still describe your face's geometry. Commit a session CSV only if you're
 comfortable with that (PRD §5); `recordings/` is gitignored by default.
@@ -149,6 +155,9 @@ ran next to the numbers.
 - **"input.source is 'synthetic', not 'webcam'"**: that warning means you're
   replaying a file, which can't follow the dots. Use it only to try the recorder out.
 - **"... already exists"**: pass a new `--out`.
+- **"... was created while this session was being recorded"**: something else
+  saved to your `--out` path during the session. That file is untouched; record
+  again with a new `--out`.
 
 ## Not tested
 
@@ -159,4 +168,6 @@ ran next to the numbers.
 - Focus: the window calls `focus_force()` so space and Esc reach it. Under Xvfb that
   was needed; whether Windows ever withholds focus from it is untested.
 - Whether the bell is audible.
+- Saving to a real FAT or exFAT drive, and the hard link on Windows. The no-hard-link
+  copy is tested only by making `os.link` fail on Linux.
 - How well the fixed 0.6 s settle window and 2 s lead-in match real reaction times.

@@ -50,6 +50,7 @@ from __future__ import annotations
 import csv
 import math
 import os
+import shutil
 from collections.abc import Iterator
 from dataclasses import dataclass
 from pathlib import Path
@@ -273,8 +274,13 @@ def face_status(landmarks: FaceLandmarks | None) -> str:
 
 
 def write_session_csv(path: Path, rows: list[dict[str, str]]) -> None:
-    """Write a session CSV with exactly SESSION_FIELDNAMES, atomically: if anything
-    fails, nothing is left at ``path`` or beside it."""
+    """Write a session CSV with exactly SESSION_FIELDNAMES.
+
+    It never replaces a file: if one is at ``path`` by now (say another recording
+    saved there meanwhile), this raises FileExistsError and leaves it as it was. The
+    rows go to a temporary file beside ``path``, which then gets the name ``path``
+    only if nothing has it. If anything fails, nothing is left at ``path`` or beside
+    it."""
     path.parent.mkdir(parents=True, exist_ok=True)
     partial = path.with_name(f".{path.name}.partial")
     try:
@@ -282,9 +288,33 @@ def write_session_csv(path: Path, rows: list[dict[str, str]]) -> None:
             writer = csv.DictWriter(f, fieldnames=SESSION_FIELDNAMES)
             writer.writeheader()
             writer.writerows(rows)
-        os.replace(partial, path)
-    except BaseException:
+        _publish(partial, path)
+    except FileExistsError:
+        raise FileExistsError(
+            f"{path} was created while this session was being recorded. eyeos record "
+            "never replaces a file, so that file was left as it was and this session "
+            "was not saved."
+        ) from None
+    finally:
         partial.unlink(missing_ok=True)
+
+
+def _publish(partial: Path, path: Path) -> None:
+    """Give the finished file the name ``path`` unless something already has it
+    (FileExistsError). os.replace would overwrite it; a hard link can't."""
+    try:
+        os.link(partial, path)
+        return
+    except FileExistsError:
+        raise
+    except OSError:
+        pass  # no hard links on this drive (FAT, exFAT, some network shares)
+    dst = path.open("xb")  # fails, rather than replacing a file that's there
+    try:
+        with dst, partial.open("rb") as src:
+            shutil.copyfileobj(src, dst)
+    except BaseException:
+        path.unlink(missing_ok=True)  # only this call can have created it
         raise
 
 

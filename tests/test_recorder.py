@@ -689,6 +689,76 @@ def test_an_out_directory_that_cannot_be_made_is_an_error(fake_tk, tmp_path):
     assert recorder.root.destroyed
 
 
+SESSION_ROWS = [
+    {"timestamp_s": "0.0", "face_count": "0", "segment": "settle"},
+    {"timestamp_s": "0.03125", "face_count": "0", "segment": "settle"},
+]
+
+
+def _without_hard_links(monkeypatch):
+    """Make os.link fail the way it does on a FAT or exFAT drive under Linux."""
+
+    def link(*_args, **_kwargs):
+        raise PermissionError(errno.EPERM, "Operation not permitted")
+
+    monkeypatch.setattr(os, "link", link)
+
+
+@pytest.mark.parametrize("hard_links", [True, False], ids=["hard-links", "no-hard-links"])
+def test_write_session_csv_writes_the_rows(tmp_path, monkeypatch, hard_links):
+    from eyeos.recorder import write_session_csv
+    from eyeos.synthetic_format import SESSION_FIELDNAMES
+
+    if not hard_links:
+        _without_hard_links(monkeypatch)
+    out = tmp_path / "session.csv"
+
+    write_session_csv(out, SESSION_ROWS)
+
+    with out.open(newline="") as f:
+        assert f.readline().rstrip("\r\n").split(",") == SESSION_FIELDNAMES
+    assert [{k: v for k, v in row.items() if v} for row in _rows(out)] == SESSION_ROWS
+    assert [p.name for p in tmp_path.iterdir()] == ["session.csv"]
+
+
+@pytest.mark.parametrize("hard_links", [True, False], ids=["hard-links", "no-hard-links"])
+def test_write_session_csv_never_replaces_a_file(tmp_path, monkeypatch, hard_links):
+    from eyeos.recorder import write_session_csv
+
+    if not hard_links:
+        _without_hard_links(monkeypatch)
+    out = tmp_path / "session.csv"
+    out.write_text("another session\n")
+
+    with pytest.raises(FileExistsError, match="not saved") as e:
+        write_session_csv(out, SESSION_ROWS)
+
+    assert str(out) in str(e.value)
+    assert out.read_text() == "another session\n"
+    assert [p.name for p in tmp_path.iterdir()] == ["session.csv"]
+
+
+def test_write_session_csv_without_hard_links_cleans_up_a_failed_copy(tmp_path, monkeypatch):
+    import eyeos.recorder as recorder_module
+    from eyeos.recorder import write_session_csv
+
+    _without_hard_links(monkeypatch)
+    copied_part = []
+
+    def disk_full(src, dst, *_args):
+        dst.write(src.read(10))
+        copied_part.extend(p.name for p in tmp_path.iterdir())
+        raise OSError(errno.ENOSPC, "No space left on device")
+
+    monkeypatch.setattr(recorder_module.shutil, "copyfileobj", disk_full)
+
+    with pytest.raises(OSError, match="No space left"):
+        write_session_csv(tmp_path / "session.csv", SESSION_ROWS)
+
+    assert "session.csv" in copied_part  # the copy had started at the final path
+    assert list(tmp_path.iterdir()) == []
+
+
 def test_the_recorder_listens_only_to_its_own_window_and_never_drives_the_cursor(fake_tk, tmp_path):
     import eyeos.recorder as recorder_module
 
@@ -873,6 +943,32 @@ def test_cli_record_never_overwrites_a_session(tmp_path, capsys, scripted_user):
     assert "already exists" in capsys.readouterr().err
     assert out.read_text() == "an earlier session\n"
     assert made == []  # refused before any window opened
+
+
+def test_cli_record_never_overwrites_a_session_saved_while_it_records(
+    tmp_path, capsys, scripted_user
+):
+    from eyeos.cli import console_main
+
+    config = _record_config(tmp_path)
+    out = tmp_path / "recordings" / "s1.csv"
+
+    def user(rec, root):
+        # Another eyeos record (or anything else) saves to the same path meanwhile.
+        if rec.frame_count == 100 and not out.exists():
+            out.parent.mkdir()
+            out.write_text("another session, finished meanwhile\n")
+        root.fire("<space>")
+
+    scripted_user(user)
+
+    code = console_main(["record", "--config", str(config), "--out", str(out), *FAST])
+
+    assert code == 2
+    err = capsys.readouterr().err
+    assert str(out) in err and "not saved" in err
+    assert out.read_text() == "another session, finished meanwhile\n"
+    assert [p.name for p in out.parent.iterdir()] == ["s1.csv"]  # no temp file left
 
 
 def test_cli_record_fails_before_the_screen_when_the_camera_cannot_open(
