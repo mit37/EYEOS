@@ -383,14 +383,24 @@ averages 319 px; Gate 2 needs < 60 px.
 - **More calibration images help a little; more model capacity and more
   regularisation do not.** 20 images per dot instead of 5 gains 3 % (251 px), 1 image
   per dot loses 16 % (300 px). The quadratic model is no better than the affine one.
-  Stronger ridge makes things steadily worse (ridge 10: 429 px).
+  Stronger ridge makes things steadily worse (ridge 0.1: 278 px, ridge 1: 364 px,
+  ridge 10: 429 px), but that is not a regularisation trade-off; see the next point.
+- **`ridge-10` is close to a "guess the screen centre" baseline, and that is the scale
+  to read the shipping 258 px against.** `Calibration` applies the ridge to the raw iris
+  offsets, which are in eye half-widths and spread little across the screen, and never
+  to the intercept (`eyeos/calibration.py`, `_ridge_fit`). A large lambda therefore
+  shrinks the slopes toward zero and the prediction toward a constant near the mean
+  calibration target, which is about the middle of the screen. This is reasoning from
+  the code and the numbers above, not a measurement: a constant-prediction baseline
+  variant is being added to the harness and has not run on the real data yet.
 - **Nothing was tuned on this data.** Every variant, threshold and the ridge strengths
   were fixed before this run; this is a single evaluation, not a model selection.
   Changing EyeOS's shipping model based on it (for example adding head pose) would be a
   separate decision, made in `eyeos/` with its own tests.
 - **Not measured here:** how the error compares with published appearance-based
   methods on this dataset (their protocols differ, and no such number is produced by
-  this repo), and any constant-prediction baseline (no such variant exists yet).
+  this repo), and a measured constant-prediction baseline (`ridge-10` approximates one,
+  as above; a baseline variant is being added).
 
 ## Adding another dataset
 
