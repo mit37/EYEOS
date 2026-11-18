@@ -508,7 +508,7 @@ def test_a_per_day_iris_bias_hurts_the_cross_day_protocol_but_not_the_within_day
     assert within["cross_day_mean_px"] == cross["mean_px"]
     assert within["cross_day_validation_error_px"] == cross["validation_error_px"]
     assert within["within_over_cross_mean_px"] == pytest.approx(
-        within["mean_px"] / cross["mean_px"]
+        within["mean_px"] / within["cross_day_mean_px_on_used_days"]
     )
     assert within["within_over_cross_mean_px"] < 0.25
 
@@ -551,6 +551,62 @@ def test_calibration_days_counts_only_the_days_of_the_calibration_images():
     assert result["cross_day"]["calibration_days"] == 1
 
 
+def test_within_over_cross_compares_the_cross_day_error_on_the_same_days():
+    # No drift between days. day03 is short, so within_day skips it, and noisy.
+    person = _person(Spec(days=(150, 150, 40), noise=0.01))
+    rng = np.random.default_rng(0)
+    assert person.days is not None
+    person.data.landmarks = [
+        (
+            dataclasses.replace(
+                lm,
+                left_iris_center=Point3D(
+                    lm.left_iris_center.x + rng.normal(0.0, 0.012), lm.left_iris_center.y
+                ),
+                right_iris_center=Point3D(
+                    lm.right_iris_center.x + rng.normal(0.0, 0.012), lm.right_iris_center.y
+                ),
+            )
+            if day == "day03"
+            else lm
+        )
+        for lm, day in zip(person.data.landmarks, person.days, strict=True)
+    ]
+
+    result = diagnostics.diagnose([person])["persons"]["p00"]
+
+    # The cross-day errors per day, worked out here from the protocol itself.
+    prepared = protocol.prepare(person.data)
+    run = protocol.evaluate_person(
+        models.build_variants()["eyeos"], prepared, [], 5, protocol.Limits()
+    )
+    assert run.pixel_errors is not None
+    targets = np.asarray(person.data.targets_px)[prepared.valid_rows]
+    selected, _ = protocol.select_calibration_set(targets, target_points(W, H), 5)
+    calibration = {i for per_dot in selected for i in per_dot}
+    test = [i for i in range(len(targets)) if i not in calibration]
+    days = [person.days[row] for row in prepared.valid_rows]
+    by_day = {
+        day: float(
+            np.mean([e for i, e in zip(test, run.pixel_errors, strict=True) if days[i] == day])
+        )
+        for day in ("day01", "day02", "day03")
+    }
+
+    within = result["within_day"]
+    assert [d["day"] for d in within["per_day"]] == ["day01", "day02"]
+    for entry in within["per_day"]:
+        assert entry["cross_day_mean_px"] == pytest.approx(by_day[entry["day"]], rel=1e-9)
+    on_used = (by_day["day01"] + by_day["day02"]) / 2
+    assert within["cross_day_mean_px_on_used_days"] == pytest.approx(on_used, rel=1e-9)
+    assert within["within_over_cross_mean_px"] == pytest.approx(
+        within["mean_px"] / on_used, rel=1e-9
+    )
+    # The all-frames figure stays, and here the skipped day's frames dominate it.
+    assert within["cross_day_mean_px"] == result["cross_day"]["mean_px"]
+    assert within["cross_day_mean_px"] > 2 * on_used
+
+
 def test_days_with_too_few_valid_images_are_skipped_and_listed():
     spec = Spec(days=(150, 30, 70), no_face=frozenset(range(150, 155)))
 
@@ -589,6 +645,8 @@ def test_a_person_too_small_for_the_protocol_keeps_the_in_sample_sections():
     assert person["within_day"]["days_used"] == 0
     assert person["within_day"]["mean_px"] is None
     assert person["within_day"]["cross_day_mean_px"] is None
+    assert person["within_day"]["cross_day_mean_px_on_used_days"] is None
+    assert person["within_day"]["within_over_cross_mean_px"] is None
     assert "skipped" not in person["in_sample_ceiling"]
 
 

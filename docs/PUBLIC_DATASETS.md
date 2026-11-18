@@ -570,7 +570,13 @@ are bounds and explanations, not results. Only d and e follow the evaluation pro
   true target, the shipping calibration) inside each day folder with enough valid images
   (60 by default), and tests on that day's other images. It reports the mean error over
   those days, the mean leave-one-out validation error (Gate 2's input), how many days
-  pass Gate 2, and how many days were used. Within-day far below cross-day means drift
+  pass Gate 2, and how many days were used. Days with too few images are left out, so
+  `within_over_cross_mean_px` divides by `cross_day_mean_px_on_used_days`: the
+  cross-day calibration's error on the test frames of the same days, averaged per day
+  as the within-day mean is. `cross_day_mean_px` (every test frame) is kept beside it;
+  a large gap between the two means the skipped days score differently. Within each
+  day the two protocols still test slightly different frames, because each leaves out
+  its own calibration images. Within-day far below cross-day means drift
   between sittings is a large share of the error; a live session calibrates in the same
   sitting. Both high means the features are the bottleneck. A day folder can hold
   several sittings, and a day has fewer images, so its calibration images lie further

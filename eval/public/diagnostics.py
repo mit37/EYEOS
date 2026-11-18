@@ -79,8 +79,10 @@ SECTIONS: dict[str, str] = {
     ),
     "within_day": (
         "d. The same protocol inside one day folder at a time: K images per dot chosen "
-        "only from that day, tested on that day's other images. Within-day far below "
-        "cross-day means drift between sittings is a large share of the error, which a "
+        "only from that day, tested on that day's other images. It is compared with "
+        "cross_day's error on the frames of the same days (cross_day_mean_px_on_used_days), "
+        "not on every frame: days with too few images are left out of both. Within-day far "
+        "below cross-day means drift between sittings is a large share of the error, which a "
         "live session (calibrated in the same sitting) would not have; both high means "
         "the features themselves are the bottleneck. A day can hold several sittings, "
         "and a day's calibration images lie further from the dots (see "
@@ -254,16 +256,23 @@ METRICS: dict[str, str] = {
         "mean over the days used of the calibration images' mean distance to their dots"
     ),
     "within_day.cross_day_mean_px": (
-        "cross_day.mean_px again, null when no day was used, so the aggregate compares the "
-        "two protocols on the same persons"
+        "cross_day.mean_px again (every test frame, skipped days included), null when no day "
+        "was used, so the aggregate compares the two protocols on the same persons"
+    ),
+    "within_day.cross_day_mean_px_on_used_days": (
+        "mean over the days used of cross_day's mean px on that day's test frames: the "
+        "standard protocol on the same days as within_day.mean_px"
     ),
     "within_day.cross_day_mean_deg": "cross_day.mean_deg, on the same terms",
     "within_day.cross_day_validation_error_px": "cross_day.validation_error_px, on the same terms",
     "within_day.within_over_cross_mean_px": (
-        "within_day.mean_px / cross_day.mean_px: well below 1 = drift between days matters"
+        "within_day.mean_px / cross_day_mean_px_on_used_days (both over the same days): well "
+        "below 1 = drift between days matters"
     ),
     "within_day.per_day": (
-        "one entry per day used: day, n_valid, and the cross_day metrics for that day alone"
+        "one entry per day used: day, n_valid, the cross_day metrics for that day's own "
+        "calibration, and cross_day_mean_px, the standard calibration's mean px on that "
+        "day's test frames"
     ),
     "within_day.skipped_days": "the days not used, with their number of valid images",
     "aggregate.within_day.days_used_total": "days used, summed over persons",
@@ -654,6 +663,14 @@ def _mean_or_none(values: Sequence[float | None]) -> float | None:
     return float(np.mean(present)) if present and len(present) == len(values) else None
 
 
+def _cross_day_mean_on(frames: _Frames, cross: _CrossDay | None, day: str) -> float | None:
+    """cross_day's mean pixel error over its test frames from one day (None without any)."""
+    if cross is None or frames.days is None:
+        return None
+    on_day = np.array([frames.days[i] == day for i in cross.test], dtype=bool)
+    return float(np.mean(cross.pixel_errors[on_day])) if on_day.any() else None
+
+
 def _within_day(frames: _Frames, cross: _CrossDay | None, settings: _Settings) -> dict[str, Any]:
     if frames.days is None:
         return _skipped("no image is in a day folder, so there is no day to calibrate within")
@@ -667,10 +684,20 @@ def _within_day(frames: _Frames, cross: _CrossDay | None, settings: _Settings) -
         result = protocol.evaluate_person(
             variant, protocol.prepare(subset), [], settings.k_per_dot, settings.limits
         )
-        per_day.append({"day": day, "n_valid": len(indices), **_protocol_metrics(result)})
+        per_day.append(
+            {
+                "day": day,
+                "n_valid": len(indices),
+                **_protocol_metrics(result),
+                "cross_day_mean_px": _cross_day_mean_on(frames, cross, day),
+            }
+        )
 
     used = bool(per_day)
     cross_px = cross.metrics["mean_px"] if (cross and used) else None
+    cross_on_used = (
+        _mean_or_none([d["cross_day_mean_px"] for d in per_day]) if (cross and used) else None
+    )
     mean_px = _mean_or_none([d["mean_px"] for d in per_day]) if used else None
     return {
         "days_total": len(used_days) + len(short_days),
@@ -686,12 +713,13 @@ def _within_day(frames: _Frames, cross: _CrossDay | None, settings: _Settings) -
             _mean_or_none([d["calibration_mean_distance_px"] for d in per_day]) if used else None
         ),
         "cross_day_mean_px": cross_px,
+        "cross_day_mean_px_on_used_days": cross_on_used,
         "cross_day_mean_deg": cross.metrics["mean_deg"] if (cross and used) else None,
         "cross_day_validation_error_px": (
             cross.metrics["validation_error_px"] if (cross and used) else None
         ),
         "within_over_cross_mean_px": (
-            mean_px / cross_px if (mean_px is not None and cross_px) else None
+            mean_px / cross_on_used if (mean_px is not None and cross_on_used) else None
         ),
         "per_day": per_day,
         "skipped_days": skipped_days,
