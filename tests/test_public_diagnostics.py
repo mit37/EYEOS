@@ -482,6 +482,94 @@ def test_the_aggregate_compares_within_and_cross_day_on_the_same_persons():
 
 
 # ---------------------------------------------------------------------------
+# e. error by head-pose distance from the calibration pose
+# ---------------------------------------------------------------------------
+
+
+def test_bins_are_closed_on_the_right_like_gate_2s_limit():
+    deltas = np.array([0.0, 5.0, 5.0001, 10.0, 15.0, 15.5, 20.0, 25.0])
+    errors = np.arange(8, dtype=float)
+
+    bins = diagnostics.bin_errors(deltas, errors)
+
+    assert [(b["lo_deg"], b["hi_deg"]) for b in bins] == [
+        (0.0, 5.0),
+        (5.0, 10.0),
+        (10.0, 15.0),
+        (15.0, 20.0),
+        (20.0, None),
+    ]
+    assert [b["n"] for b in bins] == [2, 2, 1, 2, 1]
+    assert [b["mean_px"] for b in bins] == [0.5, 2.5, 4.0, 5.5, 7.0]
+    assert diagnostics.bin_errors(np.array([1.0]), np.array([3.0]))[1]["mean_px"] is None
+
+
+def test_error_by_head_pose_splits_the_cross_day_test_frames_and_matches_evaluate():
+    # The iris offsets shift with the head's yaw, so frames far from the calibration
+    # pose are predicted worse.
+    spec = Spec(noise=0.02, yaw_range_deg=30.0, pitch_range_deg=4.0, shift_per_yaw_deg=0.01)
+    person = _person(spec)
+
+    result = diagnostics.diagnose([person])["persons"]["p00"]
+
+    by_pose, cross = result["error_by_head_pose"], result["cross_day"]
+    bins = by_pose["bins"]
+    assert sum(b["n"] for b in bins) == cross["n_test"]
+    assert all(b["n"] > 0 for b in bins)
+
+    def pooled(chosen: list[dict[str, Any]]) -> float:
+        return sum(b["n"] * b["mean_px"] for b in chosen) / sum(b["n"] for b in chosen)
+
+    assert pooled(bins) == pytest.approx(cross["mean_px"])
+    assert by_pose["within_limit_mean_px"] == pytest.approx(pooled(bins[:3]))
+    assert by_pose["beyond_limit_mean_px"] == pytest.approx(pooled(bins[3:]))
+    evaluated = protocol.evaluate([person.data], [models.build_variants()["eyeos"]])
+    expected = evaluated["variants"]["eyeos"]["persons"]["p00"]["head_pose_within_limit_share"]
+    assert by_pose["within_limit_share"] == pytest.approx(expected)
+    assert 0.3 < by_pose["within_limit_share"] < 0.9
+    assert bins[-1]["mean_px"] > 2 * bins[0]["mean_px"]
+
+
+def test_without_head_motion_every_frame_is_within_the_limit():
+    by_pose = _one(Spec(noise=0.02))["error_by_head_pose"]
+
+    assert by_pose["bins"][0]["n"] == 450 - 45
+    assert by_pose["within_limit_share"] == 1.0
+    assert by_pose["beyond_limit_mean_px"] is None
+
+
+def test_error_by_head_pose_needs_the_cross_day_protocol():
+    by_pose = _one(Spec(days=(30,)))["error_by_head_pose"]
+
+    assert "cross-day" in by_pose["skipped"]
+
+
+def test_the_aggregate_pools_the_head_pose_bins_over_persons():
+    result = _diagnose(
+        Spec(noise=0.02, yaw_range_deg=25.0, shift_per_yaw_deg=0.01),
+        Spec("p01", seed=1, noise=0.02, yaw_range_deg=8.0),
+    )
+
+    p00, p01 = (result["persons"][p]["error_by_head_pose"]["bins"] for p in ("p00", "p01"))
+    pooled = result["aggregate"]["error_by_head_pose"]["bins"]
+    for i, bin_ in enumerate(pooled):
+        parts = [b[i] for b in (p00, p01) if b[i]["n"] > 0]
+        assert bin_["n"] == p00[i]["n"] + p01[i]["n"]
+        assert bin_["persons"] == len(parts)
+        if parts:
+            assert bin_["pooled_mean_px"] == pytest.approx(
+                sum(b["n"] * b["mean_px"] for b in parts) / bin_["n"]
+            )
+            assert bin_["mean_of_person_means_px"] == pytest.approx(
+                sum(b["mean_px"] for b in parts) / len(parts)
+            )
+        else:
+            assert bin_["pooled_mean_px"] is None
+    # p01's yaw stays within +-8 deg of its calibration mean: nothing beyond 15.
+    assert pooled[-1]["persons"] == 1
+
+
+# ---------------------------------------------------------------------------
 # the JSON: names, descriptions, aggregates, determinism
 # ---------------------------------------------------------------------------
 

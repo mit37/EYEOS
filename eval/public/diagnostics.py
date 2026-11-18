@@ -32,6 +32,7 @@ from eval.public.models import (
     feature_matrix,
 )
 from eyeos.calibration import Calibration, target_points
+from eyeos.features import head_pose_delta_deg
 
 # The shipping calibration's ridge strength, read from it rather than restated.
 SHIPPING_RIDGE_LAMBDA: float = Calibration(1.0, 1.0).ridge_lambda
@@ -43,6 +44,9 @@ MIN_FRAMES = 6
 DEFAULT_MIN_DAY_IMAGES = 60
 # The protocol variant every protocol section runs: the shipping calibration.
 PROTOCOL_VARIANT = "eyeos"
+# Head-pose delta bins in degrees, closed on the right like Gate 2's "<= limit":
+# [0, 5], (5, 10], (10, 15], (15, 20], (20, inf).
+POSE_BIN_EDGES_DEG: tuple[float, ...] = (0.0, 5.0, 10.0, 15.0, 20.0)
 
 SECTIONS: dict[str, str] = {
     "feature_sanity": (
@@ -73,6 +77,13 @@ SECTIONS: dict[str, str] = {
         "the features themselves are the bottleneck. A day can hold several sittings, "
         "and a day's calibration images lie further from the dots (see "
         "calibration_mean_distance_px), so this is not a live session either."
+    ),
+    "error_by_head_pose": (
+        "e. Under the cross-day protocol, does the error grow as the head pose moves away "
+        "from the calibration pose, and what is it on the frames Gate 2 would let through "
+        "(within its head-pose limit)? The delta is Gate 2's own: the largest per-axis "
+        "difference of EyeOS's yaw, pitch and roll from the calibration frames' mean, in "
+        "EyeOS's degrees, whose scale head_pose_agreement checks."
     ),
 }
 
@@ -180,6 +191,24 @@ METRICS: dict[str, str] = {
     "aggregate.within_day.days_used_total": "days used, summed over persons",
     "aggregate.within_day.gate2_passed_days_total": (
         "days whose calibration passes Gate 2, summed over persons"
+    ),
+    "error_by_head_pose.bins": (
+        "per head-pose delta bin ([0, 5], (5, 10], (10, 15], (15, 20], (20, inf) degrees): "
+        "lo_deg, hi_deg (null = open), n test frames and their mean_px"
+    ),
+    "error_by_head_pose.within_limit_share": (
+        "share of test frames within Gate 2's head-pose limit (evaluate's "
+        "head_pose_within_limit_share)"
+    ),
+    "error_by_head_pose.within_limit_mean_px": (
+        "mean px error over the test frames within the limit only: what Gate 2 would act on"
+    ),
+    "error_by_head_pose.beyond_limit_mean_px": (
+        "mean px error over the test frames beyond the limit (null if there are none)"
+    ),
+    "aggregate.error_by_head_pose.bins": (
+        "the bins over all persons: n (frames), pooled_mean_px (over those frames), "
+        "mean_of_person_means_px and persons (with at least one frame in the bin)"
     ),
 }
 
@@ -510,6 +539,51 @@ def _within_day(frames: _Frames, cross: _CrossDay | None, settings: _Settings) -
     }
 
 
+def bin_errors(
+    deltas_deg: np.ndarray, errors_px: np.ndarray, edges: Sequence[float] = POSE_BIN_EDGES_DEG
+) -> list[dict[str, Any]]:
+    """Mean error per delta bin: [e0, e1], (e1, e2], ..., (e_last, inf)."""
+    deltas = np.asarray(deltas_deg, dtype=float)
+    errors = np.asarray(errors_px, dtype=float)
+    bounds = [*edges, math.inf]
+    bins = []
+    for i, (low, high) in enumerate(zip(bounds[:-1], bounds[1:], strict=True)):
+        chosen = (deltas <= high) & ((deltas >= low) if i == 0 else (deltas > low))
+        bins.append(
+            {
+                "lo_deg": float(low),
+                "hi_deg": None if math.isinf(high) else float(high),
+                "n": int(np.sum(chosen)),
+                "mean_px": float(np.mean(errors[chosen])) if chosen.any() else None,
+            }
+        )
+    return bins
+
+
+def _error_by_head_pose(
+    frames: _Frames, cross: _CrossDay | None, settings: _Settings
+) -> dict[str, Any]:
+    if cross is None:
+        return _skipped("the cross-day protocol did not run (see cross_day)")
+    poses = frames.features[:, 4:7]
+    mean = poses[cross.calibration].mean(axis=0)
+    calibration_pose = (float(mean[0]), float(mean[1]), float(mean[2]))
+    deltas = np.array(
+        [
+            head_pose_delta_deg((float(p[0]), float(p[1]), float(p[2])), calibration_pose)
+            for p in poses[cross.test]
+        ]
+    )
+    within = deltas <= settings.limits.max_head_pose_delta_deg
+    errors = cross.pixel_errors
+    return {
+        "bins": bin_errors(deltas, errors),
+        "within_limit_share": float(np.mean(within)),
+        "within_limit_mean_px": float(np.mean(errors[within])) if within.any() else None,
+        "beyond_limit_mean_px": float(np.mean(errors[~within])) if (~within).any() else None,
+    }
+
+
 def _valid_days(person: DiagnosticPerson, valid_rows: np.ndarray) -> list[str | None] | None:
     if person.days is None:
         return None
@@ -551,6 +625,7 @@ def diagnose_person(person: DiagnosticPerson, settings: _Settings) -> dict[str, 
     result["constant_baselines"] = _constant_baselines(frames)
     result["cross_day"], cross = _cross_day(frames, settings)
     result["within_day"] = _within_day(frames, cross, settings)
+    result["error_by_head_pose"] = _error_by_head_pose(frames, cross, settings)
     return result
 
 
@@ -600,7 +675,36 @@ def aggregate(persons: dict[str, dict[str, Any]]) -> dict[str, Any]:
     within = [p["within_day"] for p in persons.values() if "days_used" in p.get("within_day", {})]
     result["within_day"]["days_used_total"] = sum(w["days_used"] for w in within)
     result["within_day"]["gate2_passed_days_total"] = sum(w["gate2_passed_days"] for w in within)
+    result["error_by_head_pose"]["bins"] = _pool_bins(
+        [
+            p["error_by_head_pose"]["bins"]
+            for p in persons.values()
+            if "bins" in p.get("error_by_head_pose", {})
+        ]
+    )
     return result
+
+
+def _pool_bins(per_person: list[list[dict[str, Any]]]) -> list[dict[str, Any]]:
+    if not per_person:
+        return []
+    pooled = []
+    for i, first in enumerate(per_person[0]):
+        parts = [bins[i] for bins in per_person if bins[i]["n"] > 0]
+        n = sum(b["n"] for b in parts)
+        pooled.append(
+            {
+                "lo_deg": first["lo_deg"],
+                "hi_deg": first["hi_deg"],
+                "n": n,
+                "pooled_mean_px": sum(b["n"] * b["mean_px"] for b in parts) / n if n else None,
+                "mean_of_person_means_px": (
+                    float(np.mean([b["mean_px"] for b in parts])) if parts else None
+                ),
+                "persons": len(parts),
+            }
+        )
+    return pooled
 
 
 def _clean(value: Any) -> Any:
@@ -671,6 +775,7 @@ _COLUMNS: tuple[tuple[str, tuple[str, ...], str], ...] = (
     ("valid", ("n_valid",), "d"),
     ("cross px", ("cross_day", "mean_px"), ".1f"),
     ("cross LOO", ("cross_day", "validation_error_px"), ".1f"),
+    ("in-pose px", ("error_by_head_pose", "within_limit_mean_px"), ".1f"),
     ("within px", ("within_day", "mean_px"), ".1f"),
     ("days", ("within_day", "days_used"), "d"),
     ("ceiling px", ("in_sample_ceiling", "both_eyes", "mean_px"), ".1f"),
