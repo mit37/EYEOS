@@ -570,7 +570,10 @@ are bounds and explanations, not results. Only d and e follow the evaluation pro
   eye far worse than the other points to that eye.
 - **c. `constant_baselines`: the yardstick.** The error of always predicting the
   screen centre, and of always predicting the person's own mean target. A model close
-  to these has learned little from the eyes.
+  to these has learned little from the eyes. Both are in-sample constant baselines over
+  all of a person's valid frames (the mean target is taken from those same frames). A
+  constant baseline run through the protocol and scored on its test frames only is a
+  different number.
 - **d. `cross_day` and `within_day`: is it drift between sittings?** `cross_day` is the
   standard protocol for the shipping calibration and reproduces `evaluate`'s `eyeos`
   numbers. `within_day` runs the same protocol (K images per dot, 5 by default, nearest

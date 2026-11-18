@@ -472,6 +472,19 @@ def test_constant_baselines_predict_the_centre_and_the_persons_own_mean_target()
     )
 
 
+def test_the_constant_baselines_say_they_are_in_sample_over_all_valid_frames():
+    # Not to be confused with a constant baseline scored by the protocol on test frames.
+    result = _diagnose(Spec(days=(60,)))
+
+    for text in (
+        result["sections"]["constant_baselines"],
+        result["metrics"]["constant_baselines.screen_centre_mean_px"],
+        result["metrics"]["constant_baselines.own_mean_target_mean_px"],
+    ):
+        assert "all valid frames" in text
+    assert "test frames" in result["sections"]["constant_baselines"]
+
+
 # ---------------------------------------------------------------------------
 # d. the standard (cross-day) protocol against a within-day one
 # ---------------------------------------------------------------------------

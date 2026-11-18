@@ -75,7 +75,9 @@ SECTIONS: dict[str, str] = {
     ),
     "constant_baselines": (
         "c. What does a model that ignores the eyes score? A yardstick for every other "
-        "pixel number."
+        "pixel number. These are in-sample constant baselines over all valid frames (the "
+        "own mean target is taken from those same frames), not a constant baseline run "
+        "through the protocol and scored on its test frames only, so the two can differ."
     ),
     "cross_day": (
         "d. The standard protocol, exactly as `evaluate` runs it for the shipping `eyeos` "
@@ -234,11 +236,12 @@ METRICS: dict[str, str] = {
         "mean over those days of that day's value); null without such a day"
     ),
     "constant_baselines.screen_centre_mean_px": (
-        "mean px error of always predicting the screen centre, over all valid frames"
+        "mean px error of always predicting the screen centre, over all valid frames "
+        "(not the protocol's test frames)"
     ),
     "constant_baselines.own_mean_target_mean_px": (
-        "mean px error of always predicting this person's mean target over all valid frames "
-        "(an in-sample constant)"
+        "mean px error of always predicting this person's mean target over all valid frames, "
+        "scored on all valid frames (an in-sample constant)"
     ),
     "cross_day.n_calibration": "calibration images (K per dot x 9 dots)",
     "cross_day.n_test": "test images: every other valid image",
