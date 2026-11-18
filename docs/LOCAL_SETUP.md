@@ -326,11 +326,12 @@ python -m eval.public.mpiifacegaze evaluate --root datasets/MPIIFaceGaze --cache
 - `evaluate` doesn't run MediaPipe again: it reuses the cache, so it can be re-run as
   often as you like.
 
-**The "train over and over" loop.** The "models" here are per-person calibration
-regressions, fitted from a handful of calibration points; there is no neural network
-to train. So "training" means: change something, re-run `evaluate`, compare. Each run
-with `--variants` scores only the variants you name (`evaluate --help` lists them);
-give each run its own `--out` and compare the files:
+**The "train over and over" loop.** The models here are small regressions from
+landmark features to the screen, such as EyeOS's own per-person calibration, not
+neural networks. So "training" means: change something, re-run `evaluate`, compare.
+`docs/PUBLIC_DATASETS.md` explains the protocol and each variant, and `evaluate
+--help` lists their names. Each run with `--variants` scores only the variants you
+name; give each run its own `--out` and compare the files:
 
 ```powershell
 python -m eval.public.mpiifacegaze evaluate --root datasets/MPIIFaceGaze --cache datasets/cache/mpiifacegaze --out eval/results/run-a.json --variants NAME1
