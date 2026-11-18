@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import csv
 import dataclasses
+import http.client
 import importlib.util
 import io
 import json
@@ -344,6 +345,40 @@ def test_downloader_keeps_a_cut_off_download_as_part_and_fails(tmp_path, monkeyp
     assert (tmp_path / "MPIIFaceGaze.zip.part").read_bytes() == server.payload[:50]
     assert not (tmp_path / "MPIIFaceGaze.zip").exists()
     assert "rerun" in capsys.readouterr().err
+
+
+@pytest.mark.parametrize(
+    "error",
+    [http.client.IncompleteRead(b"partial"), http.client.RemoteDisconnected("closed")],
+    ids=["incomplete-read", "remote-disconnected"],
+)
+def test_downloader_keeps_the_part_file_when_a_chunked_response_breaks_off(
+    tmp_path, monkeypatch, capsys, error
+):
+    downloader = _load_downloader()
+    payload = _zip_bytes(_FAKE_ZIP_MEMBERS)
+
+    class BrokenOff(_FakeResponse):
+        """Chunked (no Content-Length): 50 bytes arrive, then the connection drops."""
+
+        def read(self, n: int = -1) -> bytes:
+            data = super().read(n)
+            if not data:
+                raise error
+            return data
+
+    def urlopen(request: urllib.request.Request, timeout: float | None = None) -> BrokenOff:
+        return BrokenOff(payload[:50], 200, {})
+
+    monkeypatch.setattr(urllib.request, "urlopen", urlopen)
+
+    assert downloader.main(["--accept-license", "--dest", str(tmp_path)]) == 1
+
+    assert (tmp_path / "MPIIFaceGaze.zip.part").read_bytes() == payload[:50]
+    assert not (tmp_path / "MPIIFaceGaze.zip").exists()
+    err = capsys.readouterr().err
+    (message,) = [line for line in err.splitlines() if "error" in line]
+    assert message.startswith("error: ") and message.endswith("rerun to resume.")
 
 
 def test_downloader_rejects_a_corrupt_zip_and_deletes_it(tmp_path, monkeypatch, capsys):

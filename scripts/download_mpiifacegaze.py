@@ -18,6 +18,7 @@ a thin wrapper around it.
 from __future__ import annotations
 
 import argparse
+import http.client
 import re
 import sys
 import urllib.error
@@ -91,6 +92,7 @@ def download(url: str, part: Path, final: Path) -> None:
         headers["Range"] = f"bytes={offset}-"
     request = urllib.request.Request(url, headers=headers)
     print(f"Downloading {url}" + (f" (resuming at byte {offset:,})" if offset else ""))
+    progress_line_open = False
     try:
         with urllib.request.urlopen(request, timeout=_TIMEOUT_S) as response:
             if offset and getattr(response, "status", 200) != 206:
@@ -109,15 +111,21 @@ def download(url: str, part: Path, final: Path) -> None:
                     if written // (8 * _CHUNK_BYTES) != last_shown:
                         last_shown = written // (8 * _CHUNK_BYTES)
                         _progress(written, total)
+                        progress_line_open = True
             _progress(written, total)
             print(file=sys.stderr)
+            progress_line_open = False
     except urllib.error.HTTPError as e:
         if e.code == 416 and offset:
             # Range Not Satisfiable: the partial file already holds every byte.
             part.replace(final)
             return
         raise DownloadError(f"{url}: HTTP {e.code} {e.reason}") from e
-    except (urllib.error.URLError, OSError) as e:
+    except (urllib.error.URLError, OSError, http.client.HTTPException) as e:
+        # OSError covers a reset or timed-out connection; HTTPException covers a chunked
+        # response cut off mid-stream (IncompleteRead).
+        if progress_line_open:
+            print(file=sys.stderr)  # end the progress line, so the error has its own
         raise DownloadError(
             f"{url}: {e}. The partial download is kept at {part}; rerun to resume."
         ) from e
