@@ -1,6 +1,7 @@
 """Output adapters: dry-run is fully tested; Windows SendInput and the pynput
 fallback are only tested on their guarded-missing-dependency / wrong-platform paths
-(this container is Linux with no pynput installed — see docs/PLAN.md)."""
+(no Windows desktop here — see docs/PLAN.md). The missing-pynput test hides pynput
+itself, so it also holds where pynput is installed."""
 
 from __future__ import annotations
 
@@ -48,7 +49,10 @@ def test_windows_sendinput_raises_off_windows():
         WindowsSendInputOutput()
 
 
-def test_pynput_adapter_raises_clear_error_without_pynput_installed():
+def test_pynput_adapter_raises_clear_error_without_pynput_installed(monkeypatch):
+    # Hide pynput even where it is installed (the windows-fallback extra on a laptop).
+    monkeypatch.setitem(sys.modules, "pynput", None)
+    monkeypatch.setitem(sys.modules, "pynput.mouse", None)
     with pytest.raises(RuntimeError, match="pynput"):
         PynputOutputAdapter()
 
