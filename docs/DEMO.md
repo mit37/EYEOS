@@ -168,12 +168,17 @@ eyeos run --config config.yaml
 ```
 
 This gives you the gates' decisions on real footage, in the session log. It does
-**not** yet give accuracy numbers. `eval/run_eval.py` needs each frame's true
-on-screen target (the `target_x`, `target_y` and `segment` columns in
-`eval/fixtures/synthetic_session.csv`), and a plain recording doesn't have them. A
-real-accuracy eval needs footage taken while known targets are shown, plus a
-labelling step, and that is not built yet. Replaying without `--calibrate` also
-means Gate 2 never passes, because calibrations aren't saved between sessions.
+**not** give accuracy numbers. `eval/run_eval.py` needs each frame's true on-screen
+target (the `target_x`, `target_y` and `segment` columns in
+`eval/fixtures/synthetic_session.csv`), and a plain recording doesn't have them.
+Replaying without `--calibrate` also means Gate 2 never passes, because calibrations
+aren't saved between sessions.
+
+**For real accuracy numbers, use `eyeos record` instead.** It shows known dots,
+look-away prompts and a reading passage, and saves each frame's landmarks labelled
+with what was on screen (no video). `python -m eval.run_eval --session ... --config
+...` then evaluates it. See [`RECORDING.md`](RECORDING.md) for the steps, what each
+stage asks of you, and what the numbers mean.
 
 Recordings must **not** be committed: `.gitignore` excludes `recordings/`, `*.mp4`,
 `*.mov`, `*.mkv` and `*.webm`. If you're comfortable with it, commit only derived

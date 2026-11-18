@@ -41,6 +41,8 @@ recordings/
 data/raw/
 # Public datasets (face images of real people) and caches derived from them
 datasets/
+# eyeos record writes a session to a hidden .<name>.partial file, then renames it
+*.partial
 
 # Local config (copied from config.example.yaml)
 config.yaml

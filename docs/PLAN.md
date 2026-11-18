@@ -184,11 +184,19 @@ is therefore behind an interface and tested only against a fake:
     `--overlay`): no environment used here had tkinter and OpenCV together. Its cost
     per frame (a frame copy, the drawing, `imshow` and `waitKeyEx(1)`) was not
     measured, so how much it slows a live session is unknown.
+- **Session recorder** (`recorder.py`, `eyeos record`). Tested against the fake tkinter
+  and synthetic frames. Outside CI it also ran on real Tk 9.0 under Xvfb (no window
+  manager) with a paced synthetic camera: all 21 dots were drawn on their labelled
+  pixels and Esc left no file. The real `eyeos record` command, on a synthetic CSV
+  source, exited 0, and the `run_eval` command it printed ran as printed. Without a
+  window manager `-fullscreen` did nothing and the window got no keyboard focus, so the recorder also sets its geometry and calls `focus_force()`,
+  and refuses to record unless its canvas covers the screen. Never run with a real
+  webcam, on Windows, or on a physical screen.
 - **Eval.** The README numbers come from a generated synthetic landmark sequence
   (`eval/fixtures/`, made by `eval/generate_synthetic.py`). Real-session numbers are
   marked "not measured", pending recordings, and so is the PRD's 5-minute reading
-  false-click test. A real-accuracy eval also needs footage recorded with known
-  on-screen targets (see `docs/DEMO.md` §4).
+  false-click test. `eyeos record` now records a labelled session from a webcam
+  (`docs/RECORDING.md`), but none has been recorded yet.
 - **Public dataset (MPIIFaceGaze).** `eval/public/` runs the landmark pipeline and
   calibration on MPIIFaceGaze (`docs/PUBLIC_DATASETS.md`). The dataset's host was not
   reachable from this container, so it is tested only on a fake dataset with a fake
