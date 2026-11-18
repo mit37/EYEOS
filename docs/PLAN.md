@@ -144,6 +144,15 @@ is therefore behind an interface and tested only against a fake:
     cameras was reasoned from OpenCV's source and not tested on hardware.
 - **Windows output** (`WindowsSendInputOutput`) needs `ctypes.windll` and is guarded to
   raise off Windows. It has never run here; `DryRunOutputAdapter` stands in for it.
+- **Local setup** (`docs/LOCAL_SETUP.md`, `scripts/setup_windows.ps1`,
+  `scripts/setup_unix.sh`, `scripts/check_setup.py`).
+  - `setup_unix.sh` ran end to end in a fresh clone on Ubuntu 24.04 with Python 3.12.
+    `check_setup.py` passed there with the real OpenCV 4.11 and MediaPipe 0.10.21.
+  - `setup_windows.ps1` has never run: this container has no PowerShell, and running
+    a downloaded one was not permitted. Its tests are static only (plain ASCII, the
+    same extras and steps as the Unix script).
+  - None of the guide's Windows, webcam or real-cursor steps has run. Their expected
+    results come from the code and its tests.
 - **Keyboard** (`PynputKeySource`, the kill switch and confirm key). It is tested
   through `FakeKeySource`. The real pynput listener has never run here. Without it,
   `eyeos run` refuses to drive the real cursor.
