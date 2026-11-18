@@ -258,6 +258,47 @@ def test_public_results_state_the_negative_result_from_the_validation_error():
     assert "which this file does not report" in paragraph
 
 
+_THREE = ("p00", "p01", "p02")
+
+
+def _between_first_two(errors: list[float]) -> float:
+    """A Gate 2 limit that only the person with the lowest error passes."""
+    low, second = sorted(errors)[:2]
+    assert low < second
+    return (low + second) / 2
+
+
+def test_one_failing_calibration_among_passing_ones_is_still_a_negative_result():
+    first = _public_results(noise=0.1, persons=_THREE)
+    limit = _between_first_two(_validation(first, "eyeos"))
+    results = _public_results(noise=0.1, persons=_THREE, limit=limit)
+    errors = _validation(results, "eyeos")
+    # Three unequal errors: their mean is not their median, so the text must use the mean.
+    assert f"{statistics.fmean(errors):.1f}" != f"{statistics.median(errors):.1f}"
+
+    paragraph = _paragraph(update_readme.public_results(results), "leave-one-out validation")
+
+    assert paragraph.startswith("**Negative result.**")
+    assert "1 of 3 persons pass" in paragraph
+    assert f"averages {statistics.fmean(errors):.1f} px per person" in paragraph
+
+
+def test_a_live_style_check_that_fails_for_some_persons_is_a_negative_result():
+    first = _public_results(("eyeos", "eyeos-live9"), persons=_THREE)
+    limit = _between_first_two(_validation(first, "eyeos-live9"))
+    assert max(_validation(first, "eyeos")) < limit  # every 45-photo check passes
+    results = _public_results(("eyeos", "eyeos-live9"), persons=_THREE, limit=limit)
+    live = _validation(results, "eyeos-live9")
+    assert f"{statistics.fmean(live):.1f}" != f"{statistics.median(live):.1f}"
+
+    paragraph = _paragraph(update_readme.public_results(results), "(`eyeos-live9`)")
+
+    assert paragraph.startswith("**Negative result.**")
+    assert "3 of 3 persons pass" in paragraph  # the photo check
+    assert "and 1 of 3 pass" in paragraph  # the live-style check
+    assert f"averages {statistics.fmean(live):.1f} px per person" in paragraph
+
+
 def test_public_results_have_no_negative_result_when_every_calibration_passes():
     results = _public_results()  # noise-free: every calibration recovers its targets
 
@@ -495,6 +536,7 @@ def test_public_results_render_a_results_file_from_before_the_baselines():
 
     assert ("Negative result" in text) == (passed < evaluated)
     assert f"{passed} of {evaluated} persons pass" in text
+    assert f"averages {statistics.fmean(errors):.1f} px per person" in text
     assert f"({min(errors):.1f} to {max(errors):.1f} px)" in text
     assert "baseline" not in text and "eyeos-live9" not in text
     header, rows = _table(text)
