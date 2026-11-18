@@ -591,6 +591,45 @@ def test_screen_model_falls_back_to_the_best_alternative_and_records_it():
     assert set(check.candidates_median_mm) == set(mpii.SCREEN_MODELS)
 
 
+def _gaze_targets_read_as(
+    model: mpii.ScreenModelVariant, person: FakePerson, targets: np.ndarray
+) -> np.ndarray:
+    """The 3D targets a dataset whose files mean ``model``'s reading would hold, written
+    out by hand rather than with screen_to_camera."""
+    w_px, h_px = person.screen_px
+    w_mm, h_mm = person.screen_mm
+    rotation = rotation_about_y(person.theta)
+    if model.transpose_r:
+        rotation = rotation.T
+    tvec = -np.array(person.tvec) if model.negate_t else np.array(person.tvec)
+    points = []
+    for x, y in targets:
+        x_mm, y_mm = x * w_mm / w_px, y * h_mm / h_px
+        if model.mirror_x:
+            x_mm = w_mm - x_mm
+        if model.mirror_y:
+            y_mm = h_mm - y_mm
+        points.append(rotation @ np.array([x_mm, y_mm, 0.0]) + tvec)
+    return np.array(points)
+
+
+@pytest.mark.parametrize("name", list(mpii.SCREEN_MODELS))
+def test_screen_model_check_recognises_each_candidate_reading(name):
+    person = FakePerson("p00")
+    screen, pose = _screen_and_pose(person)
+    targets, _ = _targets_and_gts(person)
+    gts = _gaze_targets_read_as(mpii.SCREEN_MODELS[name], person, targets)
+
+    check = mpii.check_screen_model(targets, gts, screen, pose)
+
+    assert check.model == name
+    assert check.fits
+    assert check.median_error_mm < 1e-9
+    # No other reading comes near, so the answer is not a tie broken by name.
+    others = [error for other, error in check.candidates_median_mm.items() if other != name]
+    assert all(error > 5.0 for error in others)
+
+
 def test_screen_model_reports_no_fit_with_a_reason_when_nothing_is_within_5_mm():
     person = FakePerson("p00")
     screen, pose = _screen_and_pose(person)
@@ -980,6 +1019,127 @@ def test_valid_frames_need_exactly_one_face_with_both_irises_visible():
     assert not protocol.is_valid(closed)
 
 
+def _hand_built_person(
+    calibration_distance_px: list[float],
+    calibration_yaw_deg: float = 0.0,
+    test_yaws_deg: tuple[float, ...] = (0.0,),
+    n_test: int = 60,
+) -> protocol.PersonData:
+    """Five images ``calibration_distance_px[i]`` px right of calibration dot i, all at one
+    head yaw, then ``n_test`` images over 50 px from every dot, their yaws cycling through
+    ``test_yaws_deg``. The iris offsets follow the targets exactly. make_landmarks' face
+    edges are 0.2 either side of x = 0.5, so eyeos.features reads a nose at x as a yaw of
+    (x - 0.5) / 0.2 * 60 degrees."""
+    width, height = 1280.0, 800.0
+    grid = target_points(width, height)
+    rng = random.Random(7)
+    targets: list[tuple[float, float]] = []
+    yaws: list[float] = []
+    for (gx, gy), distance in zip(grid, calibration_distance_px, strict=True):
+        targets += [(gx + distance, gy)] * 5
+        yaws += [calibration_yaw_deg] * 5
+    while len(targets) < 45 + n_test:
+        x, y = rng.uniform(0, width - 1), rng.uniform(0, height - 1)
+        if min(math.hypot(x - gx, y - gy) for gx, gy in grid) > 50:
+            yaws.append(test_yaws_deg[(len(targets) - 45) % len(test_yaws_deg)])
+            targets.append((x, y))
+    landmarks: list[FaceLandmarks | None] = [
+        make_landmarks(*offsets_for_target(x, y, width, height), nose_x=0.5 + yaw * 0.2 / 60)
+        for (x, y), yaw in zip(targets, yaws, strict=True)
+    ]
+    return protocol.PersonData("p00", (width, height), np.array(targets), landmarks)
+
+
+def test_head_pose_share_counts_test_frames_within_the_limit_of_the_calibration_pose():
+    # Calibrated at 10 deg of yaw; the test frames at 0, 20 and 30 deg are 10, 10 and
+    # 20 deg away from it, against Gate 2's 15 deg limit.
+    person = _hand_built_person([0.0] * 9, calibration_yaw_deg=10.0, test_yaws_deg=(0, 20, 30))
+    yaws = [f.yaw_deg for f in protocol.prepare(person).features]
+    assert yaws[:45] == pytest.approx([10.0] * 45)
+    assert yaws[45:48] == pytest.approx([0.0, 20.0, 30.0])
+
+    results = protocol.evaluate([person], [models.build_variants()["eyeos"]])
+
+    metrics = results["variants"]["eyeos"]["persons"]["p00"]
+    assert metrics["n_test"] == 60
+    assert metrics["head_pose_within_limit_share"] == pytest.approx(40 / 60)
+    aggregate = results["variants"]["eyeos"]["aggregate"]
+    assert aggregate["head_pose_within_limit_share_mean"] == pytest.approx(40 / 60)
+
+
+def test_calibration_mean_distance_is_the_mean_of_each_dots_mean_distance():
+    person = _hand_built_person([1.0, 2.0, 3.0, 4.0, 5.0, 6.0, 7.0, 8.0, 9.0])
+
+    results = protocol.evaluate([person], [models.build_variants()["eyeos"]])
+
+    metrics = results["variants"]["eyeos"]["persons"]["p00"]
+    assert metrics["calibration_mean_distance_per_dot_px"] == pytest.approx(
+        [1.0, 2.0, 3.0, 4.0, 5.0, 6.0, 7.0, 8.0, 9.0]
+    )
+    assert metrics["calibration_mean_distance_px"] == pytest.approx(5.0)
+    assert metrics["pixel_error_px"]["mean"] < 0.75
+
+
+def _person_result(
+    pixel_errors: list[float],
+    angular_errors: list[float] | None = None,
+    validation_px: float | None = 10.0,
+    head_pose_share: float = 1.0,
+) -> protocol.PersonResult:
+    pixel = np.array(pixel_errors, dtype=float)
+    angular = None if angular_errors is None else np.array(angular_errors, dtype=float)
+    metrics = {
+        "pixel_error_px": protocol.summary_stats(pixel),
+        "pixel_error_pct_diagonal": protocol.summary_stats(pixel / 10.0),
+        "validation_error_px": validation_px,
+        "passes_gate2": validation_px is not None and validation_px < 60,
+        "head_pose_within_limit_share": head_pose_share,
+        "angular_error_deg": None if angular is None else protocol.summary_stats(angular),
+    }
+    return protocol.PersonResult(metrics, pixel, angular)
+
+
+def test_aggregate_takes_mean_median_and_p90_of_person_means_and_of_pooled_frames():
+    results = {
+        "p00": _person_result([1, 2, 3], angular_errors=[1, 3], head_pose_share=0.5),
+        "p01": _person_result([10, 20], angular_errors=[2, 4, 6, 8], validation_px=70.0),
+        "p02": _person_result([100], validation_px=None),
+        "p03": _person_result([5, 5, 5, 5], head_pose_share=0.25),
+        "p04": protocol.PersonResult({"skipped": "too few valid frames"}),
+    }
+
+    aggregate = protocol.aggregate(results)
+
+    # Person means 2, 5, 15, 100. Pooled frames 1, 2, 3, 5, 5, 5, 5, 10, 20, 100.
+    # Percentiles interpolate linearly, as numpy's default does.
+    assert aggregate["pixel_error_px"] == pytest.approx(
+        {
+            "mean_of_person_means": 30.5,
+            "median_of_person_means": 10.0,
+            "p90_of_person_means": 15 + 0.7 * (100 - 15),
+            "pooled_median": 5.0,
+            "pooled_p90": 20 + 0.1 * (100 - 20),
+        }
+    )
+    # Only p00 and p01 have angular errors: person means 2 and 5; pooled 1, 2, 3, 4, 6, 8.
+    assert aggregate["angular_error_deg"] == pytest.approx(
+        {
+            "mean_of_person_means": 3.5,
+            "median_of_person_means": 3.5,
+            "p90_of_person_means": 2 + 0.9 * 3,
+            "pooled_median": 3.5,
+            "pooled_p90": 6 + 0.5 * 2,
+        }
+    )
+    assert aggregate["angular_error_persons"] == 2
+    assert aggregate["persons_evaluated"] == 4
+    assert aggregate["persons_skipped"] == ["p04"]
+    assert aggregate["pixel_error_pct_diagonal_mean_of_person_means"] == pytest.approx(3.05)
+    assert aggregate["validation_error_px_mean"] == pytest.approx(30.0)
+    assert aggregate["gate2_passed"] == 2
+    assert aggregate["head_pose_within_limit_share_mean"] == pytest.approx(0.6875)
+
+
 # ---------------------------------------------------------------------------
 # evaluate: the EyeOS-faithful protocol end to end on a fake dataset
 # ---------------------------------------------------------------------------
@@ -1157,6 +1317,16 @@ def test_evaluate_runs_every_variant_by_default_and_is_deterministic(tmp_path, s
         assert aggregate["persons_evaluated"] == 3, name
         assert math.isfinite(aggregate["pixel_error_px"]["mean_of_person_means"]), name
         assert math.isfinite(aggregate["angular_error_deg"]["mean_of_person_means"]), name
+        for metric in ("pixel_error_px", "angular_error_deg"):
+            means = [p[metric]["mean"] for p in variant["persons"].values()]
+            assert len(set(means)) == 3, (name, metric)
+            assert aggregate[metric]["median_of_person_means"] == pytest.approx(np.median(means)), (
+                name,
+                metric,
+            )
+            assert aggregate[metric]["p90_of_person_means"] == pytest.approx(
+                np.percentile(means, 90)
+            ), (name, metric)
 
 
 def test_evaluate_fails_loudly_on_a_cache_from_another_format(tmp_path, scipy_io):
