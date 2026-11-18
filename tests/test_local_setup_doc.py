@@ -23,6 +23,7 @@ from eyeos.logging_utils import SessionLogger
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 GUIDE = REPO_ROOT / "docs" / "LOCAL_SETUP.md"
+DEMO = REPO_ROOT / "docs" / "DEMO.md"
 INSTALL = 'pip install -e ".[dev,webcam,windows-fallback,public-eval]"'
 
 # Built on parallel branches (agents "view" and "public") and documented from their
@@ -38,6 +39,11 @@ def _guide() -> str:
 def _code_blocks(text: str, lang: str | None = None) -> list[str]:
     blocks = re.findall(r"^```(\w*)\n(.*?)^```", text, re.MULTILINE | re.DOTALL)
     return [body for tag, body in blocks if lang is None or tag == lang]
+
+
+def test_demo_links_the_guide_in_its_intro():
+    intro = DEMO.read_text(encoding="utf-8").split("\n## ", 1)[0]
+    assert "(LOCAL_SETUP.md)" in intro  # a relative link that works on GitHub
 
 
 @pytest.mark.parametrize("index", range(5))

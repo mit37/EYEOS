@@ -6,6 +6,11 @@ desktop, so the live demo couldn't be recorded here (see `docs/PLAN.md`'s
 it should take about 5 minutes. None of these steps has been run on real hardware
 yet, so if one fails, that failure is itself worth recording in `docs/PLAN.md`.
 
+New to Python tooling, or setting up the laptop for the first time? Start with
+[`docs/LOCAL_SETUP.md`](LOCAL_SETUP.md). It installs Python 3.12 and EyeOS step by
+step, runs the tests, and gets to a first live run with the webcam that can't move
+the mouse. Its end-to-end checklist gives the expected result of every step.
+
 ## What you need
 
 - Windows, with a webcam.
