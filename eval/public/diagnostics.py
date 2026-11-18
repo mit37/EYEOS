@@ -101,13 +101,18 @@ SECTIONS: dict[str, str] = {
         "the correlation matrix (all 9 pairs) shows any axis mix-up."
     ),
     "variance_split": (
-        "g. Of what the shipping model's in-sample fit (in_sample_ceiling.both_eyes) leaves "
-        "over, how much do the dataset's head pose and the day explain (linear least "
-        "squares, R^2 over both screen axes)? High r2_head_pose = head motion the iris "
-        "offsets do not account for; high r2_day = something constant within a day but "
-        "different between days (sitting, lighting, a per-day landmark bias); both low = "
-        "per-frame landmark noise, or effects not linear in these regressors. Plain R^2: "
-        "with k regressors and n frames, pure noise scores about k/n."
+        "g. Of what the shipping model's all-days in-sample fit (in_sample_ceiling.both_eyes) "
+        "leaves over, how much do the dataset's head pose and the day explain (linear least "
+        "squares, R^2 over both screen axes)? Read the _beyond_target shares. Noisy iris "
+        "offsets shrink the fit toward the centre, so its residual grows with the target "
+        "(r2_target), and anything that follows the target, such as a head that turns "
+        "toward where the eyes look, explains part of it with no head effect on the iris "
+        "offsets at all: a high raw r2_head_pose alone proves nothing. High "
+        "r2_head_pose_beyond_target = head motion the iris offsets do not account for; high "
+        "r2_day_beyond_target = something constant within a day but different between days "
+        "(sitting, lighting, a per-day landmark bias); both low = per-frame landmark noise, "
+        "or effects not linear in these regressors. Plain R^2: k regressors unrelated to "
+        "the residual score about k/n (n frames) by chance."
     ),
 }
 
@@ -297,16 +302,29 @@ METRICS: dict[str, str] = {
     "variance_split.residual_rms_px": (
         "RMS of the raw in-sample residual being split, in px (the shipping model on all frames)"
     ),
+    "variance_split.r2_target": (
+        "the control: share of the residual's variance explained by the true target (x, y) "
+        "itself; high when noise has shrunk the fit toward the centre; null when the "
+        "residual is below half a pixel RMS"
+    ),
     "variance_split.r2_head_pose": (
-        "share of the residual's variance explained by the dataset's head yaw, pitch, roll "
-        "(degrees, as head_pose_agreement reads them) and translation (mm); null without "
-        "head pose or when the residual is below half a pixel RMS"
+        "raw share of the residual's variance explained by the dataset's head yaw, pitch, "
+        "roll (degrees, as head_pose_agreement reads them) and translation (mm); counts "
+        "head pose that merely follows the target; null without head pose or when the "
+        "residual is below half a pixel RMS"
+    ),
+    "variance_split.r2_head_pose_beyond_target": (
+        "R^2 on target + head pose minus r2_target: what head pose explains beyond the "
+        "target, the share to read as head motion"
     ),
     "variance_split.r2_day": (
-        "share explained by the day folder alone (between-day variance over total); null "
-        "without days or when the residual is below half a pixel RMS"
+        "raw share explained by the day folder alone (between-day variance over total); "
+        "null without days or when the residual is below half a pixel RMS"
     ),
-    "variance_split.r2_head_pose_and_day": "share explained by head pose and day together",
+    "variance_split.r2_day_beyond_target": (
+        "R^2 on target + day minus r2_target: what the day explains beyond the target"
+    ),
+    "variance_split.r2_head_pose_and_day": "raw share explained by head pose and day together",
     "aggregate.error_by_head_pose.bins": (
         "the bins over all persons: n (frames), pooled_mean_px (over those frames), "
         "mean_of_person_means_px and persons (with at least one frame in the bin)"
@@ -802,26 +820,41 @@ def _day_dummies(days: list[str | None]) -> np.ndarray:
     return dummies
 
 
+def _beyond(with_both: float | None, alone: float | None) -> float | None:
+    return None if with_both is None or alone is None else with_both - alone
+
+
 def _variance_split(frames: _Frames) -> dict[str, Any]:
     residual = frames.targets - _shipping_in_sample(frames)
     rms = float(np.sqrt(np.mean(np.sum(residual**2, axis=1))))
     result: dict[str, Any] = {
         "residual_rms_px": rms,
+        "r2_target": None,
         "r2_head_pose": None,
+        "r2_head_pose_beyond_target": None,
         "r2_day": None,
+        "r2_day_beyond_target": None,
         "r2_head_pose_and_day": None,
     }
     if rms < MIN_RESIDUAL_RMS_PX:
         return result
+    target = frames.targets
+    result["r2_target"] = r2_target = _explained(residual, target)
     head = None
     if frames.dataset_angles is not None:
         head = frames.dataset_angles
         if frames.dataset_translation is not None:
             head = np.column_stack([head, frames.dataset_translation])
         result["r2_head_pose"] = _explained(residual, head)
+        result["r2_head_pose_beyond_target"] = _beyond(
+            _explained(residual, np.column_stack([target, head])), r2_target
+        )
     if frames.days is not None:
         days = _day_dummies(frames.days)
         result["r2_day"] = _explained(residual, days)
+        result["r2_day_beyond_target"] = _beyond(
+            _explained(residual, np.column_stack([target, days])), r2_target
+        )
         if head is not None:
             result["r2_head_pose_and_day"] = _explained(residual, np.column_stack([head, days]))
     return result
@@ -1046,8 +1079,8 @@ _COLUMNS: tuple[tuple[str, tuple[str, ...], str], ...] = (
     ("centre px", ("constant_baselines", "screen_centre_mean_px"), ".1f"),
     ("L/R corr", ("feature_sanity", "corr_left_right_x"), ".2f"),
     ("yaw slope", ("head_pose_agreement", "yaw", "slope"), ".2f"),
-    ("R2 pose", ("variance_split", "r2_head_pose"), ".2f"),
-    ("R2 day", ("variance_split", "r2_day"), ".2f"),
+    ("pose|tgt", ("variance_split", "r2_head_pose_beyond_target"), ".2f"),
+    ("day|tgt", ("variance_split", "r2_day_beyond_target"), ".2f"),
 )
 
 

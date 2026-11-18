@@ -109,7 +109,8 @@ def _face(
 @dataclass(frozen=True)
 class Spec:
     """One fake participant. Targets are uniform on a 1280x800 screen; the dataset's head
-    yaw, pitch and roll are uniform in +-their range, independent of the target."""
+    yaw, pitch and roll are uniform in +-their range, independent of the target unless
+    ``yaw_per_screen_deg`` makes the yaw follow the target's x too."""
 
     name: str = "p00"
     days: tuple[int, ...] = (150, 150, 150)  # frames per dayNN folder
@@ -119,6 +120,9 @@ class Spec:
     pitch_range_deg: float = 0.0
     roll_range_deg: float = 0.0
     shift_per_yaw_deg: float = 0.0  # iris x offset added per degree of the dataset's yaw
+    # The head turns toward where the eyes look: yaw changes by this many degrees from the
+    # screen's left edge to its right (on top of the uniform +-yaw_range_deg).
+    yaw_per_screen_deg: float = 0.0
     day_bias: tuple[float, ...] = ()  # iris offset (x and y) added on each day
     eyeos_scale: tuple[float, float] = (1.0, 1.0)  # EyeOS yaw, pitch = scale * dataset's
     roll_landmarks: bool = False  # turn the landmarks by the dataset's roll
@@ -144,6 +148,7 @@ def _frames(spec: Spec) -> list[Frame]:
             index = len(frames)
             x, y = rng.uniform(0, W - 1), rng.uniform(0, H - 1)
             yaw = rng.uniform(-spec.yaw_range_deg, spec.yaw_range_deg)
+            yaw += spec.yaw_per_screen_deg * (x / W - 0.5)
             pitch = rng.uniform(-spec.pitch_range_deg, spec.pitch_range_deg)
             roll = rng.uniform(-spec.roll_range_deg, spec.roll_range_deg)
             noise = [rng.gauss(0.0, spec.noise) for _ in range(4)]
@@ -728,7 +733,8 @@ def test_without_the_datasets_head_pose_f_and_g_say_so():
     assert "head pose" in person["head_pose_agreement"]["skipped"]
     split = person["variance_split"]
     assert split["r2_head_pose"] is None and split["r2_head_pose_and_day"] is None
-    assert split["r2_day"] is not None
+    assert split["r2_head_pose_beyond_target"] is None
+    assert split["r2_day"] is not None and split["r2_day_beyond_target"] is not None
 
 
 # ---------------------------------------------------------------------------
@@ -744,6 +750,9 @@ def test_head_motion_the_iris_offsets_miss_shows_as_a_high_head_pose_share():
     # The iris offsets shift up to 0.3 half-widths with yaw: about 0.92 of the leftover.
     assert split["r2_head_pose"] > 0.8
     assert split["r2_day"] < 0.05
+    # The yaw is independent of the target, so all of that is beyond the target.
+    assert split["r2_head_pose_beyond_target"] > 0.8
+    assert split["r2_day_beyond_target"] < 0.05
     # And EyeOS's own head pose would have absorbed it.
     assert person["in_sample_ceiling"]["with_head_pose"]["mean_px"] < 0.75
 
@@ -757,6 +766,25 @@ def test_pure_landmark_noise_shows_as_a_low_head_pose_and_day_share():
     # 6 regressors (one of them constant) on 600 frames: about 0.01 from chance alone.
     assert split["r2_head_pose"] < 0.05
     assert split["r2_day"] < 0.05
+    assert split["r2_head_pose_beyond_target"] < 0.05
+    assert split["r2_day_beyond_target"] < 0.05
+
+
+def test_a_head_that_turns_toward_the_target_is_not_read_as_head_motion():
+    # Pure landmark noise: the iris offsets do not depend on the head at all. But the head
+    # turns toward where the eyes look, so its yaw stands in for the target's x, and a
+    # noisy fit (shrunk toward the centre) leaves a residual that grows with the target.
+    split = _one(Spec(days=(200, 200, 200), noise=0.6, yaw_range_deg=3.0, yaw_per_screen_deg=30.0))[
+        "variance_split"
+    ]
+
+    # The control: the target itself explains a large share of the residual ...
+    assert split["r2_target"] > 0.25
+    # ... so the raw head-pose share is far above chance (about 6/600) ...
+    assert split["r2_head_pose"] > 0.1
+    # ... but beyond the target, the head pose explains nothing.
+    assert split["r2_head_pose_beyond_target"] < 0.02
+    assert split["r2_day_beyond_target"] < 0.02
 
 
 def test_a_per_day_bias_shows_as_a_high_day_share():
@@ -767,6 +795,8 @@ def test_a_per_day_bias_shows_as_a_high_day_share():
     assert split["r2_day"] > 0.8
     assert split["r2_head_pose"] < 0.05
     assert split["r2_head_pose_and_day"] >= split["r2_day"] - 1e-12
+    assert split["r2_day_beyond_target"] > 0.8
+    assert split["r2_head_pose_beyond_target"] < 0.05
 
 
 def test_nothing_is_left_to_split_when_the_fit_is_exact():
@@ -774,6 +804,9 @@ def test_nothing_is_left_to_split_when_the_fit_is_exact():
 
     assert split["residual_rms_px"] < 0.5
     assert split["r2_head_pose"] is None and split["r2_day"] is None
+    assert split["r2_target"] is None
+    assert split["r2_head_pose_beyond_target"] is None
+    assert split["r2_day_beyond_target"] is None
 
 
 def test_without_days_the_day_share_is_null():
@@ -781,7 +814,10 @@ def test_without_days_the_day_share_is_null():
     split = person["persons"]["p00"]["variance_split"]
 
     assert split["r2_day"] is None and split["r2_head_pose_and_day"] is None
+    assert split["r2_day_beyond_target"] is None
     assert split["r2_head_pose"] is not None
+    assert split["r2_head_pose_beyond_target"] is not None
+    assert split["r2_target"] is not None
 
 
 # ---------------------------------------------------------------------------

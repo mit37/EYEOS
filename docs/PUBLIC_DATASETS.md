@@ -591,12 +591,22 @@ are bounds and explanations, not results. Only d and e follow the evaluation pro
   checked against the real files. So the sign of a slope is not interpreted, and a
   large off-diagonal correlation would show an axis mix-up.
 - **g. `variance_split`: head motion, the day, or landmark noise?** The share (R²) of
-  the in-sample residual from b that a linear fit explains: on the dataset's head pose
-  (angles and translation), on the day folder alone, and on both. A high head-pose
-  share means head motion the iris offsets do not capture. A high day share means
-  something constant within a day but different between days. Both low means
-  per-frame landmark noise, or effects that are not linear in these. Pure noise scores
-  about k/n (k regressors, n frames), which is small when n is in the thousands.
+  the all-days in-sample residual from b that a linear fit explains: on the dataset's
+  head pose (angles and translation), on the day folder alone, and on both. Read the
+  shares beyond the target, not the raw ones. Noisy iris offsets shrink the fit toward
+  the screen centre, so its residual grows with the target (`r2_target`, the control).
+  Anything that follows the target then explains part of the residual, even with no
+  head effect on the iris offsets at all; people turn their head a little toward where
+  they look, so the raw `r2_head_pose` can be high from landmark noise alone. A test
+  checks exactly that case: on a fake with pure landmark noise and a head that turns
+  toward the target, the raw share is far above chance and the share beyond the target
+  stays near 0. `r2_head_pose_beyond_target` (R² on target and head pose, minus `r2_target`) is the
+  share to read as head motion the iris offsets do not capture;
+  `r2_day_beyond_target` likewise for something constant within a day but different
+  between days. Both low means per-frame landmark noise, or effects that are not linear
+  in these. Regressors unrelated to the residual score about k/n by chance (k
+  regressors, n frames), which is small when n is in the thousands. The terminal
+  summary shows the two beyond-target shares (`pose|tgt`, `day|tgt`).
 
 ## Adding another dataset
 
