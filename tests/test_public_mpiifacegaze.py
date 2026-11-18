@@ -1323,8 +1323,24 @@ def test_global_lopo_needs_another_person(tmp_path):
     results = protocol.evaluate(persons, [models.build_variants()["global-lopo"]])
 
     person = results["variants"]["global-lopo"]["persons"]["p00"]
-    assert person == {"skipped": "needs at least 2 persons"}
+    assert person == {"skipped": "needs at least one other person with valid frames"}
     assert results["variants"]["global-lopo"]["aggregate"]["pixel_error_px"] is None
+
+
+def test_global_lopo_skips_instead_of_training_on_others_without_valid_frames(tmp_path):
+    no_faces = {i: 0 for i in range(240)}
+    persons = [
+        _person_data(tmp_path, FakePerson("p00")),
+        _person_data(tmp_path, FakePerson("p01", seed=1, faces=no_faces)),
+    ]
+    spy = _SpyVariant(needs_other_persons=True)
+
+    results = protocol.evaluate(persons, [models.build_variants()["global-lopo"], spy])
+
+    lopo = results["variants"]["global-lopo"]["persons"]
+    assert lopo["p00"] == {"skipped": "needs at least one other person with valid frames"}
+    assert "0 valid frames" in lopo["p01"]["skipped"]
+    assert spy.seen == []
 
 
 def test_global_lopo_per_user_correction_absorbs_a_quirk_the_others_do_not_share(tmp_path):

@@ -6,6 +6,13 @@ MediaPipe landmarks once (slow, cached, restartable) and evaluate (fast, repeata
     python scripts/download_mpiifacegaze.py --accept-license
     python -m eval.public.mpiifacegaze extract --root datasets/MPIIFaceGaze \\
         --cache datasets/cache/mpiifacegaze [--persons p00,p01] [--limit N] [--workers N]
+    python -m eval.public.mpiifacegaze evaluate --root datasets/MPIIFaceGaze \\
+        --cache datasets/cache/mpiifacegaze --out eval/results/mpiifacegaze.json \\
+        [--variants NAMES]
+
+The protocol itself (eval/public/protocol.py) and the models it compares
+(eval/public/models.py) know nothing about MPIIFaceGaze; this module only reads the
+dataset, checks its screen model and caches the landmarks.
 
 Expected layout (our best knowledge of the format; every reader here fails loudly, naming
 the file and showing the offending line or keys, when the data does not fit it):

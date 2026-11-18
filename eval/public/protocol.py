@@ -249,7 +249,7 @@ def evaluate_person(
             }
         )
     if variant.needs_other_persons and not others:
-        return PersonResult({"skipped": "needs at least 2 persons"})
+        return PersonResult({"skipped": "needs at least one other person with valid frames"})
 
     valid_targets = data.targets_px[person.valid_rows]
     selected, mean_distance = select_calibration_set(valid_targets, grid, k)
@@ -361,6 +361,12 @@ def aggregate(results: dict[str, PersonResult]) -> dict[str, Any]:
     }
 
 
+def _others(prepared: Sequence[PreparedPerson], person: PreparedPerson) -> list[PreparedPerson]:
+    """Everyone a cross-person variant may learn from: never ``person`` itself, and only
+    people with at least one valid frame."""
+    return [o for o in prepared if o.name != person.name and len(o.valid_rows) > 0]
+
+
 def evaluate(
     persons: Sequence[PersonData],
     variants: Sequence[Variant],
@@ -391,7 +397,7 @@ def evaluate(
             p.name: evaluate_person(
                 variant,
                 p,
-                [o for o in prepared if o.name != p.name] if variant.needs_other_persons else [],
+                _others(prepared, p) if variant.needs_other_persons else [],
                 k_per_dot,
                 limits,
             )
