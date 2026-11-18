@@ -115,11 +115,19 @@ def test_the_docs_make_no_claim_the_real_run_does_not_support(doc, unsupported):
     assert unsupported not in prose
 
 
-def test_the_synthetic_caveat_sits_with_the_synthetic_table_not_under_the_real_one():
-    text = README.read_text(encoding="utf-8")
-    caveat = text.index("What the synthetic numbers mean")
-    public_end = text.index("<!-- public-results:end -->")
-    after_public = text[public_end : text.index("\n## ", public_end)]
+@pytest.mark.parametrize(
+    "phrase",
+    [
+        "What the synthetic numbers mean",
+        # The caveat's body, so that a copy of it without the heading is caught too.
+        "function of the noise injected into the synthetic fixture",
+        "the pipeline's math does what it should",
+    ],
+)
+def test_the_synthetic_caveat_sits_with_the_synthetic_table_not_under_the_real_one(phrase):
+    text = " ".join(README.read_text(encoding="utf-8").split())
+    synthetic_end = text.index("<!-- results:end -->")
+    public_start = text.index("<!-- public-results:start -->")
 
-    assert text.index("<!-- results:end -->") < caveat < text.index("<!-- public-results:start -->")
-    assert "injected noise" not in after_public
+    assert text.count(phrase) == 1
+    assert synthetic_end < text.index(phrase) < public_start
