@@ -5,9 +5,307 @@
     "X. Zhang, Y. Sugano, M. Fritz, A. Bulling. \"It's Written All Over Your Face: Full-Face Appearance-Based Gaze Estimation.\" CVPR Workshops (CVPRW), 2017.",
     "X. Zhang, Y. Sugano, M. Fritz, A. Bulling. \"Appearance-Based Gaze Estimation in the Wild.\" CVPR, 2015."
   ],
-  "generated": "2026-11-18T01:50:58+00:00",
-  "git_commit": "d3661eee3481b6a48921867f9c4522bf15586d1d",
+  "generated": "2026-11-18T05:48:44+00:00",
+  "git_commit": "b0f817a1e4b7e0920ebdcab0c1813494f83e014d",
   "git_dirty": false,
+  "environment": {
+    "python": "3.12.3",
+    "platform": "Linux-6.18.44-fc-v595-x86_64-with-glibc2.39",
+    "packages": {
+      "numpy": "1.26.4",
+      "scipy": "1.17.1",
+      "opencv": "4.11.0.86",
+      "mediapipe": "0.10.21"
+    },
+    "opencv_distribution": "opencv-contrib-python",
+    "extract": {
+      "p00": {
+        "extracted": "2026-11-18T05:47:29+00:00",
+        "images": 2927,
+        "with_face": 2927,
+        "detector": "eval.public.mpiifacegaze.MediaPipeImageDetector",
+        "face_mesh": {
+          "static_image_mode": true,
+          "max_num_faces": 2,
+          "refine_landmarks": true,
+          "min_detection_confidence": 0.5
+        },
+        "python": "3.12.3",
+        "platform": "Linux-6.18.44-fc-v595-x86_64-with-glibc2.39",
+        "packages": {
+          "mediapipe": "0.10.21",
+          "opencv": "4.11.0.86"
+        },
+        "opencv_distribution": "opencv-contrib-python"
+      },
+      "p01": {
+        "extracted": "2026-11-18T05:47:28+00:00",
+        "images": 2904,
+        "with_face": 2904,
+        "detector": "eval.public.mpiifacegaze.MediaPipeImageDetector",
+        "face_mesh": {
+          "static_image_mode": true,
+          "max_num_faces": 2,
+          "refine_landmarks": true,
+          "min_detection_confidence": 0.5
+        },
+        "python": "3.12.3",
+        "platform": "Linux-6.18.44-fc-v595-x86_64-with-glibc2.39",
+        "packages": {
+          "mediapipe": "0.10.21",
+          "opencv": "4.11.0.86"
+        },
+        "opencv_distribution": "opencv-contrib-python"
+      },
+      "p02": {
+        "extracted": "2026-11-18T05:47:29+00:00",
+        "images": 2916,
+        "with_face": 2916,
+        "detector": "eval.public.mpiifacegaze.MediaPipeImageDetector",
+        "face_mesh": {
+          "static_image_mode": true,
+          "max_num_faces": 2,
+          "refine_landmarks": true,
+          "min_detection_confidence": 0.5
+        },
+        "python": "3.12.3",
+        "platform": "Linux-6.18.44-fc-v595-x86_64-with-glibc2.39",
+        "packages": {
+          "mediapipe": "0.10.21",
+          "opencv": "4.11.0.86"
+        },
+        "opencv_distribution": "opencv-contrib-python"
+      },
+      "p03": {
+        "extracted": "2026-11-18T05:47:32+00:00",
+        "images": 2929,
+        "with_face": 2929,
+        "detector": "eval.public.mpiifacegaze.MediaPipeImageDetector",
+        "face_mesh": {
+          "static_image_mode": true,
+          "max_num_faces": 2,
+          "refine_landmarks": true,
+          "min_detection_confidence": 0.5
+        },
+        "python": "3.12.3",
+        "platform": "Linux-6.18.44-fc-v595-x86_64-with-glibc2.39",
+        "packages": {
+          "mediapipe": "0.10.21",
+          "opencv": "4.11.0.86"
+        },
+        "opencv_distribution": "opencv-contrib-python"
+      },
+      "p04": {
+        "extracted": "2026-11-18T05:47:55+00:00",
+        "images": 2860,
+        "with_face": 2860,
+        "detector": "eval.public.mpiifacegaze.MediaPipeImageDetector",
+        "face_mesh": {
+          "static_image_mode": true,
+          "max_num_faces": 2,
+          "refine_landmarks": true,
+          "min_detection_confidence": 0.5
+        },
+        "python": "3.12.3",
+        "platform": "Linux-6.18.44-fc-v595-x86_64-with-glibc2.39",
+        "packages": {
+          "mediapipe": "0.10.21",
+          "opencv": "4.11.0.86"
+        },
+        "opencv_distribution": "opencv-contrib-python"
+      },
+      "p05": {
+        "extracted": "2026-11-18T05:47:54+00:00",
+        "images": 2870,
+        "with_face": 2870,
+        "detector": "eval.public.mpiifacegaze.MediaPipeImageDetector",
+        "face_mesh": {
+          "static_image_mode": true,
+          "max_num_faces": 2,
+          "refine_landmarks": true,
+          "min_detection_confidence": 0.5
+        },
+        "python": "3.12.3",
+        "platform": "Linux-6.18.44-fc-v595-x86_64-with-glibc2.39",
+        "packages": {
+          "mediapipe": "0.10.21",
+          "opencv": "4.11.0.86"
+        },
+        "opencv_distribution": "opencv-contrib-python"
+      },
+      "p06": {
+        "extracted": "2026-11-18T05:47:55+00:00",
+        "images": 2877,
+        "with_face": 2877,
+        "detector": "eval.public.mpiifacegaze.MediaPipeImageDetector",
+        "face_mesh": {
+          "static_image_mode": true,
+          "max_num_faces": 2,
+          "refine_landmarks": true,
+          "min_detection_confidence": 0.5
+        },
+        "python": "3.12.3",
+        "platform": "Linux-6.18.44-fc-v595-x86_64-with-glibc2.39",
+        "packages": {
+          "mediapipe": "0.10.21",
+          "opencv": "4.11.0.86"
+        },
+        "opencv_distribution": "opencv-contrib-python"
+      },
+      "p07": {
+        "extracted": "2026-11-18T05:47:56+00:00",
+        "images": 2843,
+        "with_face": 2834,
+        "detector": "eval.public.mpiifacegaze.MediaPipeImageDetector",
+        "face_mesh": {
+          "static_image_mode": true,
+          "max_num_faces": 2,
+          "refine_landmarks": true,
+          "min_detection_confidence": 0.5
+        },
+        "python": "3.12.3",
+        "platform": "Linux-6.18.44-fc-v595-x86_64-with-glibc2.39",
+        "packages": {
+          "mediapipe": "0.10.21",
+          "opencv": "4.11.0.86"
+        },
+        "opencv_distribution": "opencv-contrib-python"
+      },
+      "p08": {
+        "extracted": "2026-11-18T05:48:18+00:00",
+        "images": 2767,
+        "with_face": 2767,
+        "detector": "eval.public.mpiifacegaze.MediaPipeImageDetector",
+        "face_mesh": {
+          "static_image_mode": true,
+          "max_num_faces": 2,
+          "refine_landmarks": true,
+          "min_detection_confidence": 0.5
+        },
+        "python": "3.12.3",
+        "platform": "Linux-6.18.44-fc-v595-x86_64-with-glibc2.39",
+        "packages": {
+          "mediapipe": "0.10.21",
+          "opencv": "4.11.0.86"
+        },
+        "opencv_distribution": "opencv-contrib-python"
+      },
+      "p09": {
+        "extracted": "2026-11-18T05:48:18+00:00",
+        "images": 2719,
+        "with_face": 2719,
+        "detector": "eval.public.mpiifacegaze.MediaPipeImageDetector",
+        "face_mesh": {
+          "static_image_mode": true,
+          "max_num_faces": 2,
+          "refine_landmarks": true,
+          "min_detection_confidence": 0.5
+        },
+        "python": "3.12.3",
+        "platform": "Linux-6.18.44-fc-v595-x86_64-with-glibc2.39",
+        "packages": {
+          "mediapipe": "0.10.21",
+          "opencv": "4.11.0.86"
+        },
+        "opencv_distribution": "opencv-contrib-python"
+      },
+      "p10": {
+        "extracted": "2026-11-18T05:48:13+00:00",
+        "images": 2194,
+        "with_face": 2194,
+        "detector": "eval.public.mpiifacegaze.MediaPipeImageDetector",
+        "face_mesh": {
+          "static_image_mode": true,
+          "max_num_faces": 2,
+          "refine_landmarks": true,
+          "min_detection_confidence": 0.5
+        },
+        "python": "3.12.3",
+        "platform": "Linux-6.18.44-fc-v595-x86_64-with-glibc2.39",
+        "packages": {
+          "mediapipe": "0.10.21",
+          "opencv": "4.11.0.86"
+        },
+        "opencv_distribution": "opencv-contrib-python"
+      },
+      "p11": {
+        "extracted": "2026-11-18T05:48:15+00:00",
+        "images": 2262,
+        "with_face": 2262,
+        "detector": "eval.public.mpiifacegaze.MediaPipeImageDetector",
+        "face_mesh": {
+          "static_image_mode": true,
+          "max_num_faces": 2,
+          "refine_landmarks": true,
+          "min_detection_confidence": 0.5
+        },
+        "python": "3.12.3",
+        "platform": "Linux-6.18.44-fc-v595-x86_64-with-glibc2.39",
+        "packages": {
+          "mediapipe": "0.10.21",
+          "opencv": "4.11.0.86"
+        },
+        "opencv_distribution": "opencv-contrib-python"
+      },
+      "p12": {
+        "extracted": "2026-11-18T05:48:26+00:00",
+        "images": 1601,
+        "with_face": 1543,
+        "detector": "eval.public.mpiifacegaze.MediaPipeImageDetector",
+        "face_mesh": {
+          "static_image_mode": true,
+          "max_num_faces": 2,
+          "refine_landmarks": true,
+          "min_detection_confidence": 0.5
+        },
+        "python": "3.12.3",
+        "platform": "Linux-6.18.44-fc-v595-x86_64-with-glibc2.39",
+        "packages": {
+          "mediapipe": "0.10.21",
+          "opencv": "4.11.0.86"
+        },
+        "opencv_distribution": "opencv-contrib-python"
+      },
+      "p13": {
+        "extracted": "2026-11-18T05:48:28+00:00",
+        "images": 1498,
+        "with_face": 1498,
+        "detector": "eval.public.mpiifacegaze.MediaPipeImageDetector",
+        "face_mesh": {
+          "static_image_mode": true,
+          "max_num_faces": 2,
+          "refine_landmarks": true,
+          "min_detection_confidence": 0.5
+        },
+        "python": "3.12.3",
+        "platform": "Linux-6.18.44-fc-v595-x86_64-with-glibc2.39",
+        "packages": {
+          "mediapipe": "0.10.21",
+          "opencv": "4.11.0.86"
+        },
+        "opencv_distribution": "opencv-contrib-python"
+      },
+      "p14": {
+        "extracted": "2026-11-18T05:48:30+00:00",
+        "images": 1500,
+        "with_face": 1500,
+        "detector": "eval.public.mpiifacegaze.MediaPipeImageDetector",
+        "face_mesh": {
+          "static_image_mode": true,
+          "max_num_faces": 2,
+          "refine_landmarks": true,
+          "min_detection_confidence": 0.5
+        },
+        "python": "3.12.3",
+        "platform": "Linux-6.18.44-fc-v595-x86_64-with-glibc2.39",
+        "packages": {
+          "mediapipe": "0.10.21",
+          "opencv": "4.11.0.86"
+        },
+        "opencv_distribution": "opencv-contrib-python"
+      }
+    }
+  },
   "config": {
     "root": "datasets/MPIIFaceGaze",
     "cache": "datasets/cache/mpiifacegaze",
@@ -40,7 +338,10 @@
       "per-dot-10",
       "per-dot-20",
       "with-head-pose",
-      "global-lopo"
+      "global-lopo",
+      "centre",
+      "calibration-mean",
+      "eyeos-live9"
     ],
     "k_per_dot": 5,
     "calibration_grid": "eyeos.calibration.target_points: 3x3 at 10/50/90% of the screen",
@@ -6767,16 +7068,1638 @@
           "head_pose_within_limit_share": 0.993127147766323
         }
       }
+    },
+    "centre": {
+      "description": "baseline: always predicts the screen centre and ignores the image; validation error = RMS distance of the calibration targets to the centre",
+      "k_per_dot": 5,
+      "aggregate": {
+        "persons_evaluated": 15,
+        "persons_skipped": [],
+        "pixel_error_px": {
+          "mean_of_person_means": 441.43107544402756,
+          "median_of_person_means": 453.528018391043,
+          "p90_of_person_means": 479.7328872670657,
+          "pooled_median": 439.5531819715592,
+          "pooled_p90": 685.6775481213126
+        },
+        "pixel_error_pct_diagonal_mean_of_person_means": 26.88221867287692,
+        "angular_error_deg": {
+          "mean_of_person_means": 10.890776286186444,
+          "median_of_person_means": 10.38408460674823,
+          "p90_of_person_means": 12.2515080738588,
+          "pooled_median": 10.6620478171984,
+          "pooled_p90": 17.317822572957756
+        },
+        "angular_error_persons": 15,
+        "validation_error_px_mean": 536.7375443951868,
+        "gate2_passed": 0,
+        "head_pose_within_limit_share_mean": 0.8962983290241467
+      },
+      "persons": {
+        "p00": {
+          "n_calibration": 45,
+          "n_test": 2875,
+          "calibration_mean_distance_px": 17.780874135497427,
+          "calibration_mean_distance_per_dot_px": [
+            16.79892097759984,
+            21.86025970620589,
+            14.964537278534056,
+            19.998531174633722,
+            18.75839166305205,
+            17.40386980433424,
+            22.315720393994834,
+            14.579804193853139,
+            13.347832027269067
+          ],
+          "validation_error_px": 492.66253945046174,
+          "passes_gate2": false,
+          "pixel_error_px": {
+            "mean": 403.6765467245266,
+            "median": 401.83827592702016,
+            "p90": 620.7731930770083
+          },
+          "pixel_error_pct_diagonal": {
+            "mean": 26.7435177335179,
+            "median": 26.621732536753253,
+            "p90": 41.12614178915047
+          },
+          "angular_error_deg": {
+            "mean": 10.778630866277181,
+            "median": 10.665699179371224,
+            "p90": 16.68848597643951
+          },
+          "head_pose_within_limit_share": 0.9495652173913044
+        },
+        "p01": {
+          "n_calibration": 45,
+          "n_test": 2859,
+          "calibration_mean_distance_px": 20.732885093959197,
+          "calibration_mean_distance_per_dot_px": [
+            20.048130250457838,
+            16.73226569374961,
+            18.655681226093474,
+            13.603278028719751,
+            35.51604940874082,
+            20.16558458210519,
+            19.511698513269288,
+            20.91371040558762,
+            21.449567736909195
+          ],
+          "validation_error_px": 551.9759254009383,
+          "passes_gate2": false,
+          "pixel_error_px": {
+            "mean": 454.91532021524705,
+            "median": 447.4874299910557,
+            "p90": 700.3583273533363
+          },
+          "pixel_error_pct_diagonal": {
+            "mean": 26.789404167254236,
+            "median": 26.351984840000746,
+            "p90": 41.24324123551871
+          },
+          "angular_error_deg": {
+            "mean": 10.381228817457394,
+            "median": 10.330630880046826,
+            "p90": 16.082740653302725
+          },
+          "head_pose_within_limit_share": 0.8978663868485485
+        },
+        "p02": {
+          "n_calibration": 45,
+          "n_test": 2870,
+          "calibration_mean_distance_px": 17.309405750905288,
+          "calibration_mean_distance_per_dot_px": [
+            15.96222813377401,
+            21.456611819786655,
+            12.906848303990483,
+            15.783252258085735,
+            14.535492298469705,
+            19.918843149527568,
+            15.721460447549447,
+            23.404091309735218,
+            16.095824037228773
+          ],
+          "validation_error_px": 496.1265743515235,
+          "passes_gate2": false,
+          "pixel_error_px": {
+            "mean": 406.97254739853463,
+            "median": 403.51331432169854,
+            "p90": 625.180853827942
+          },
+          "pixel_error_pct_diagonal": {
+            "mean": 26.961877341452155,
+            "median": 26.732703608458774,
+            "p90": 41.418148729886525
+          },
+          "angular_error_deg": {
+            "mean": 10.235729398467722,
+            "median": 10.149998422264002,
+            "p90": 15.863932847970036
+          },
+          "head_pose_within_limit_share": 0.9864111498257839
+        },
+        "p03": {
+          "n_calibration": 45,
+          "n_test": 2878,
+          "calibration_mean_distance_px": 20.77132660727564,
+          "calibration_mean_distance_per_dot_px": [
+            17.616556721275153,
+            22.9698489129215,
+            20.551876205650238,
+            20.079565196072412,
+            21.128774975163306,
+            28.874863338063328,
+            17.227014906191307,
+            18.049852677106525,
+            20.443586533036978
+          ],
+          "validation_error_px": 556.161966816622,
+          "passes_gate2": false,
+          "pixel_error_px": {
+            "mean": 453.61249128331576,
+            "median": 450.4558671919271,
+            "p90": 698.7256233365183
+          },
+          "pixel_error_pct_diagonal": {
+            "mean": 26.71268217248434,
+            "median": 26.52679245888162,
+            "p90": 41.14709330237955
+          },
+          "angular_error_deg": {
+            "mean": 14.371370785127377,
+            "median": 14.305061587222243,
+            "p90": 21.941371608306934
+          },
+          "head_pose_within_limit_share": 0.9815844336344683
+        },
+        "p04": {
+          "n_calibration": 45,
+          "n_test": 2815,
+          "calibration_mean_distance_px": 16.843065002953647,
+          "calibration_mean_distance_per_dot_px": [
+            18.520887783273405,
+            19.86155420361387,
+            10.040035996045344,
+            15.887602355715952,
+            15.993594541676192,
+            18.845936437907703,
+            19.174815757147194,
+            12.00706403851144,
+            21.256093912691714
+          ],
+          "validation_error_px": 492.0627557086144,
+          "passes_gate2": false,
+          "pixel_error_px": {
+            "mean": 401.78102212379065,
+            "median": 401.00124688085447,
+            "p90": 621.4680291004564
+          },
+          "pixel_error_pct_diagonal": {
+            "mean": 26.617939479875403,
+            "median": 26.566279473350793,
+            "p90": 41.172174583638416
+          },
+          "angular_error_deg": {
+            "mean": 11.78842826386321,
+            "median": 11.855596686308965,
+            "p90": 18.265555485699377
+          },
+          "head_pose_within_limit_share": 0.8046181172291297
+        },
+        "p05": {
+          "n_calibration": 45,
+          "n_test": 2825,
+          "calibration_mean_distance_px": 21.620173201093447,
+          "calibration_mean_distance_per_dot_px": [
+            25.01832774553669,
+            16.559864703946193,
+            20.45623393895805,
+            16.659730381162007,
+            18.590569018454094,
+            24.385661791113073,
+            30.21275609648426,
+            24.920563442237246,
+            17.777851691949383
+          ],
+          "validation_error_px": 555.2231983626044,
+          "passes_gate2": false,
+          "pixel_error_px": {
+            "mean": 453.528018391043,
+            "median": 448.13502429513363,
+            "p90": 697.8580080720625
+          },
+          "pixel_error_pct_diagonal": {
+            "mean": 26.707707667666163,
+            "median": 26.39012087274668,
+            "p90": 41.09600050565819
+          },
+          "angular_error_deg": {
+            "mean": 10.205476815926005,
+            "median": 10.071614336219193,
+            "p90": 15.764290847942334
+          },
+          "head_pose_within_limit_share": 0.9773451327433629
+        },
+        "p06": {
+          "n_calibration": 45,
+          "n_test": 2832,
+          "calibration_mean_distance_px": 18.940512794147963,
+          "calibration_mean_distance_per_dot_px": [
+            16.53945273965091,
+            25.370142923547633,
+            13.914356797813536,
+            22.925259411973844,
+            25.661712039432267,
+            17.953491173097568,
+            10.991183207379589,
+            19.38854552739688,
+            17.720471327039466
+          ],
+          "validation_error_px": 645.922922818367,
+          "passes_gate2": false,
+          "pixel_error_px": {
+            "mean": 532.2430044692757,
+            "median": 533.1327219694512,
+            "p90": 817.6469256410882
+          },
+          "pixel_error_pct_diagonal": {
+            "mean": 26.865545542173702,
+            "median": 26.910455002363733,
+            "p90": 41.27161941777483
+          },
+          "angular_error_deg": {
+            "mean": 11.240710767293162,
+            "median": 10.8821484375446,
+            "p90": 18.04259271186812
+          },
+          "head_pose_within_limit_share": 0.8029661016949152
+        },
+        "p07": {
+          "n_calibration": 45,
+          "n_test": 2785,
+          "calibration_mean_distance_px": 20.735870438559804,
+          "calibration_mean_distance_per_dot_px": [
+            17.231556707023337,
+            16.55477443274189,
+            23.69834765077431,
+            24.06224274117502,
+            32.319931178539775,
+            19.1695632189662,
+            15.812252829885761,
+            13.744755000804968,
+            24.029410187126967
+          ],
+          "validation_error_px": 555.6967598329946,
+          "passes_gate2": false,
+          "pixel_error_px": {
+            "mean": 494.0681757369284,
+            "median": 477.2808397578935,
+            "p90": 748.4827239500515
+          },
+          "pixel_error_pct_diagonal": {
+            "mean": 29.095067714430762,
+            "median": 28.106482128390127,
+            "p90": 44.07722781158001
+          },
+          "angular_error_deg": {
+            "mean": 9.853061969692513,
+            "median": 9.436386421993006,
+            "p90": 15.745645717879373
+          },
+          "head_pose_within_limit_share": 0.9070017953321364
+        },
+        "p08": {
+          "n_calibration": 45,
+          "n_test": 2716,
+          "calibration_mean_distance_px": 17.442688135041042,
+          "calibration_mean_distance_per_dot_px": [
+            19.548759763064453,
+            23.148974957285493,
+            10.662618131637803,
+            16.74921633470574,
+            14.286501457957048,
+            12.05753482518312,
+            17.248338672738484,
+            27.72870080116595,
+            15.553548271631282
+          ],
+          "validation_error_px": 556.2104318011704,
+          "passes_gate2": false,
+          "pixel_error_px": {
+            "mean": 451.21149270081884,
+            "median": 448.0050222929299,
+            "p90": 699.0481884597557
+          },
+          "pixel_error_pct_diagonal": {
+            "mean": 26.57129031652073,
+            "median": 26.382465214594873,
+            "p90": 41.16608876609041
+          },
+          "angular_error_deg": {
+            "mean": 11.173330861755387,
+            "median": 10.870416885967064,
+            "p90": 17.817379795473613
+          },
+          "head_pose_within_limit_share": 0.7540500736377025
+        },
+        "p09": {
+          "n_calibration": 45,
+          "n_test": 2673,
+          "calibration_mean_distance_px": 18.67251008333093,
+          "calibration_mean_distance_per_dot_px": [
+            11.150185236882512,
+            12.260912784187678,
+            23.422776825252523,
+            13.315161311852274,
+            20.18853757803256,
+            12.026286058043231,
+            28.35307769307037,
+            25.002800513761024,
+            22.332852748896205
+          ],
+          "validation_error_px": 555.931630488658,
+          "passes_gate2": false,
+          "pixel_error_px": {
+            "mean": 453.89931324049024,
+            "median": 455.57985030069096,
+            "p90": 699.1178443860765
+          },
+          "pixel_error_pct_diagonal": {
+            "mean": 26.729572765070134,
+            "median": 26.828537527352626,
+            "p90": 41.17019071799208
+          },
+          "angular_error_deg": {
+            "mean": 10.288769078400627,
+            "median": 10.136104637180095,
+            "p90": 15.958394425055523
+          },
+          "head_pose_within_limit_share": 0.9603441825664047
+        },
+        "p10": {
+          "n_calibration": 45,
+          "n_test": 2149,
+          "calibration_mean_distance_px": 24.944027863489534,
+          "calibration_mean_distance_per_dot_px": [
+            35.37778007063673,
+            25.29564577183233,
+            22.070108103721132,
+            26.92248959933434,
+            22.125921600617662,
+            23.013005392099704,
+            20.261851484441678,
+            21.919278255760723,
+            27.51017049296153
+          ],
+          "validation_error_px": 553.7611398428027,
+          "passes_gate2": false,
+          "pixel_error_px": {
+            "mean": 454.23944543890985,
+            "median": 449.418513192325,
+            "p90": 697.4736756620964
+          },
+          "pixel_error_pct_diagonal": {
+            "mean": 26.749602732250505,
+            "median": 26.465703956637494,
+            "p90": 41.07336764233698
+          },
+          "angular_error_deg": {
+            "mean": 10.38408460674823,
+            "median": 10.228736627794518,
+            "p90": 16.117696395458168
+          },
+          "head_pose_within_limit_share": 0.9148441135411819
+        },
+        "p11": {
+          "n_calibration": 45,
+          "n_test": 2217,
+          "calibration_mean_distance_px": 19.26395219604099,
+          "calibration_mean_distance_per_dot_px": [
+            17.48895787386776,
+            25.07547798017737,
+            26.786023658299143,
+            22.26915897598888,
+            12.128237090542694,
+            20.65796728692054,
+            14.370969744712578,
+            16.8239838931669,
+            17.774793260693045
+          ],
+          "validation_error_px": 495.7636757793195,
+          "passes_gate2": false,
+          "pixel_error_px": {
+            "mean": 398.9689913899459,
+            "median": 400.23243246893423,
+            "p90": 614.5894281655352
+          },
+          "pixel_error_pct_diagonal": {
+            "mean": 26.431642816351147,
+            "median": 26.51534562042868,
+            "p90": 40.71646818311178
+          },
+          "angular_error_deg": {
+            "mean": 9.715977963239101,
+            "median": 9.569168121760782,
+            "p90": 15.232149042910747
+          },
+          "head_pose_within_limit_share": 0.9837618403247632
+        },
+        "p12": {
+          "n_calibration": 45,
+          "n_test": 1498,
+          "calibration_mean_distance_px": 22.526057477273653,
+          "calibration_mean_distance_per_dot_px": [
+            25.695967677915036,
+            18.37990220542026,
+            33.479730241521295,
+            24.107049571520797,
+            8.83442595829423,
+            26.154550960143446,
+            12.75395742040337,
+            24.647273486455976,
+            28.681659773788475
+          ],
+          "validation_error_px": 491.57131278742816,
+          "passes_gate2": false,
+          "pixel_error_px": {
+            "mean": 400.17544913087215,
+            "median": 402.16041526272335,
+            "p90": 616.2763990127277
+          },
+          "pixel_error_pct_diagonal": {
+            "mean": 26.511570481832337,
+            "median": 26.64307422506026,
+            "p90": 40.82822977821531
+          },
+          "angular_error_deg": {
+            "mean": 9.686254603870285,
+            "median": 9.271550830742632,
+            "p90": 16.148380103503385
+          },
+          "head_pose_within_limit_share": 0.87716955941255
+        },
+        "p13": {
+          "n_calibration": 45,
+          "n_test": 1453,
+          "calibration_mean_distance_px": 21.127684254082215,
+          "calibration_mean_distance_per_dot_px": [
+            20.84626425824226,
+            18.647054254324622,
+            27.47410955114726,
+            21.935299348963344,
+            18.67987468489892,
+            18.909443143149385,
+            14.370408001910045,
+            18.337419121776147,
+            30.949285922327952
+          ],
+          "validation_error_px": 496.8419824809046,
+          "passes_gate2": false,
+          "pixel_error_px": {
+            "mean": 403.94435885444386,
+            "median": 400.0049999687504,
+            "p90": 625.9157961764005
+          },
+          "pixel_error_pct_diagonal": {
+            "mean": 26.76126025163993,
+            "median": 26.50027824742622,
+            "p90": 41.46683856309233
+          },
+          "angular_error_deg": {
+            "mean": 10.698361547489279,
+            "median": 10.468311349593119,
+            "p90": 17.521525774434316
+          },
+          "head_pose_within_limit_share": 0.653819683413627
+        },
+        "p14": {
+          "n_calibration": 45,
+          "n_test": 1455,
+          "calibration_mean_distance_px": 27.92671300934336,
+          "calibration_mean_distance_per_dot_px": [
+            28.420184908036124,
+            35.616730837033664,
+            39.027700886173555,
+            21.415363350689734,
+            26.165570003909842,
+            28.376858671806094,
+            34.88725409604173,
+            24.34302530743526,
+            13.087729022964226
+          ],
+          "validation_error_px": 555.1503500053936,
+          "passes_gate2": false,
+          "pixel_error_px": {
+            "mean": 458.22995456227153,
+            "median": 458.3503027161649,
+            "p90": 704.8325733928027
+          },
+          "pixel_error_pct_diagonal": {
+            "mean": 26.98459891063436,
+            "median": 26.99168606552267,
+            "p90": 41.50672408643323
+          },
+          "angular_error_deg": {
+            "mean": 12.560227947189194,
+            "median": 12.45104101442075,
+            "p90": 19.185917963201035
+          },
+          "head_pose_within_limit_share": 0.993127147766323
+        }
+      }
+    },
+    "calibration-mean": {
+      "description": "baseline: always predicts the mean of the calibration targets and ignores the image; validation error = leave-one-out RMS of that mean",
+      "k_per_dot": 5,
+      "aggregate": {
+        "persons_evaluated": 15,
+        "persons_skipped": [],
+        "pixel_error_px": {
+          "mean_of_person_means": 441.44695786827504,
+          "median_of_person_means": 453.482524736137,
+          "p90_of_person_means": 479.7143806337072,
+          "pooled_median": 439.53498030497957,
+          "pooled_p90": 686.2215385719105
+        },
+        "pixel_error_pct_diagonal_mean_of_person_means": 26.883286710749907,
+        "angular_error_deg": {
+          "mean_of_person_means": 10.891073913356612,
+          "median_of_person_means": 10.382979213760132,
+          "p90_of_person_means": 12.25080973310282,
+          "pooled_median": 10.658002915139221,
+          "pooled_p90": 17.320609516390814
+        },
+        "angular_error_persons": 15,
+        "validation_error_px_mean": 548.9256433889315,
+        "gate2_passed": 0,
+        "head_pose_within_limit_share_mean": 0.8962983290241467
+      },
+      "persons": {
+        "p00": {
+          "n_calibration": 45,
+          "n_test": 2875,
+          "calibration_mean_distance_px": 17.780874135497427,
+          "calibration_mean_distance_per_dot_px": [
+            16.79892097759984,
+            21.86025970620589,
+            14.964537278534056,
+            19.998531174633722,
+            18.75839166305205,
+            17.40386980433424,
+            22.315720393994834,
+            14.579804193853139,
+            13.347832027269067
+          ],
+          "validation_error_px": 503.8349378795591,
+          "passes_gate2": false,
+          "pixel_error_px": {
+            "mean": 403.7166248326232,
+            "median": 403.5653602577902,
+            "p90": 618.8878681048685
+          },
+          "pixel_error_pct_diagonal": {
+            "mean": 26.74617290286897,
+            "median": 26.73615164482878,
+            "p90": 41.00123925955102
+          },
+          "angular_error_deg": {
+            "mean": 10.779273800989085,
+            "median": 10.67759390396133,
+            "p90": 16.701490930390808
+          },
+          "head_pose_within_limit_share": 0.9495652173913044
+        },
+        "p01": {
+          "n_calibration": 45,
+          "n_test": 2859,
+          "calibration_mean_distance_px": 20.732885093959197,
+          "calibration_mean_distance_per_dot_px": [
+            20.048130250457838,
+            16.73226569374961,
+            18.655681226093474,
+            13.603278028719751,
+            35.51604940874082,
+            20.16558458210519,
+            19.511698513269288,
+            20.91371040558762,
+            21.449567736909195
+          ],
+          "validation_error_px": 564.5128961479581,
+          "passes_gate2": false,
+          "pixel_error_px": {
+            "mean": 454.93128017060855,
+            "median": 448.153991391352,
+            "p90": 700.0115701738472
+          },
+          "pixel_error_pct_diagonal": {
+            "mean": 26.790344029412474,
+            "median": 26.391237821734535,
+            "p90": 41.222821131344524
+          },
+          "angular_error_deg": {
+            "mean": 10.381392593393306,
+            "median": 10.334737867446805,
+            "p90": 16.066414211552623
+          },
+          "head_pose_within_limit_share": 0.8978663868485485
+        },
+        "p02": {
+          "n_calibration": 45,
+          "n_test": 2870,
+          "calibration_mean_distance_px": 17.309405750905288,
+          "calibration_mean_distance_per_dot_px": [
+            15.96222813377401,
+            21.456611819786655,
+            12.906848303990483,
+            15.783252258085735,
+            14.535492298469705,
+            19.918843149527568,
+            15.721460447549447,
+            23.404091309735218,
+            16.095824037228773
+          ],
+          "validation_error_px": 507.37186938474946,
+          "passes_gate2": false,
+          "pixel_error_px": {
+            "mean": 407.1871467898782,
+            "median": 403.5133053112142,
+            "p90": 626.2927378839912
+          },
+          "pixel_error_pct_diagonal": {
+            "mean": 26.976094522694343,
+            "median": 26.732703011515383,
+            "p90": 41.4918109012756
+          },
+          "angular_error_deg": {
+            "mean": 10.241535632730141,
+            "median": 10.128119462326875,
+            "p90": 15.877802803188278
+          },
+          "head_pose_within_limit_share": 0.9864111498257839
+        },
+        "p03": {
+          "n_calibration": 45,
+          "n_test": 2878,
+          "calibration_mean_distance_px": 20.77132660727564,
+          "calibration_mean_distance_per_dot_px": [
+            17.616556721275153,
+            22.9698489129215,
+            20.551876205650238,
+            20.079565196072412,
+            21.128774975163306,
+            28.874863338063328,
+            17.227014906191307,
+            18.049852677106525,
+            20.443586533036978
+          ],
+          "validation_error_px": 568.7976435407593,
+          "passes_gate2": false,
+          "pixel_error_px": {
+            "mean": 453.6547045395922,
+            "median": 450.06832492063836,
+            "p90": 699.9141375394231
+          },
+          "pixel_error_pct_diagonal": {
+            "mean": 26.715168059271075,
+            "median": 26.50397057077168,
+            "p90": 41.21708344323713
+          },
+          "angular_error_deg": {
+            "mean": 14.372727784646024,
+            "median": 14.312145896319013,
+            "p90": 21.954248872166946
+          },
+          "head_pose_within_limit_share": 0.9815844336344683
+        },
+        "p04": {
+          "n_calibration": 45,
+          "n_test": 2815,
+          "calibration_mean_distance_px": 16.843065002953647,
+          "calibration_mean_distance_per_dot_px": [
+            18.520887783273405,
+            19.86155420361387,
+            10.040035996045344,
+            15.887602355715952,
+            15.993594541676192,
+            18.845936437907703,
+            19.174815757147194,
+            12.00706403851144,
+            21.256093912691714
+          ],
+          "validation_error_px": 503.24128231211364,
+          "passes_gate2": false,
+          "pixel_error_px": {
+            "mean": 401.78320584046367,
+            "median": 400.8241509689754,
+            "p90": 620.2451094153795
+          },
+          "pixel_error_pct_diagonal": {
+            "mean": 26.61808415081565,
+            "median": 26.554546892653942,
+            "p90": 41.091156316538445
+          },
+          "angular_error_deg": {
+            "mean": 11.788333367523746,
+            "median": 11.851876712078173,
+            "p90": 18.268457892299413
+          },
+          "head_pose_within_limit_share": 0.8046181172291297
+        },
+        "p05": {
+          "n_calibration": 45,
+          "n_test": 2825,
+          "calibration_mean_distance_px": 21.620173201093447,
+          "calibration_mean_distance_per_dot_px": [
+            25.01832774553669,
+            16.559864703946193,
+            20.45623393895805,
+            16.659730381162007,
+            18.590569018454094,
+            24.385661791113073,
+            30.21275609648426,
+            24.920563442237246,
+            17.777851691949383
+          ],
+          "validation_error_px": 567.83509602788,
+          "passes_gate2": false,
+          "pixel_error_px": {
+            "mean": 453.482524736137,
+            "median": 447.93079822669034,
+            "p90": 697.7201444386614
+          },
+          "pixel_error_pct_diagonal": {
+            "mean": 26.705028602235387,
+            "median": 26.37809425054713,
+            "p90": 41.08788188570624
+          },
+          "angular_error_deg": {
+            "mean": 10.204166696455234,
+            "median": 10.068528049186494,
+            "p90": 15.777326373662437
+          },
+          "head_pose_within_limit_share": 0.9773451327433629
+        },
+        "p06": {
+          "n_calibration": 45,
+          "n_test": 2832,
+          "calibration_mean_distance_px": 18.940512794147963,
+          "calibration_mean_distance_per_dot_px": [
+            16.53945273965091,
+            25.370142923547633,
+            13.914356797813536,
+            22.925259411973844,
+            25.661712039432267,
+            17.953491173097568,
+            10.991183207379589,
+            19.38854552739688,
+            17.720471327039466
+          ],
+          "validation_error_px": 660.5966741583634,
+          "passes_gate2": false,
+          "pixel_error_px": {
+            "mean": 532.2781894487126,
+            "median": 533.2067678181414,
+            "p90": 817.0499365759606
+          },
+          "pixel_error_pct_diagonal": {
+            "mean": 26.867321542345675,
+            "median": 26.914192547251112,
+            "p90": 41.241485744278535
+          },
+          "angular_error_deg": {
+            "mean": 11.241183039163062,
+            "median": 10.897002480496937,
+            "p90": 18.019916448481638
+          },
+          "head_pose_within_limit_share": 0.8029661016949152
+        },
+        "p07": {
+          "n_calibration": 45,
+          "n_test": 2785,
+          "calibration_mean_distance_px": 20.735870438559804,
+          "calibration_mean_distance_per_dot_px": [
+            17.231556707023337,
+            16.55477443274189,
+            23.69834765077431,
+            24.06224274117502,
+            32.319931178539775,
+            19.1695632189662,
+            15.812252829885761,
+            13.744755000804968,
+            24.029410187126967
+          ],
+          "validation_error_px": 568.3251582828179,
+          "passes_gate2": false,
+          "pixel_error_px": {
+            "mean": 494.061429323479,
+            "median": 477.32588448564155,
+            "p90": 748.3859966305869
+          },
+          "pixel_error_pct_diagonal": {
+            "mean": 29.09467042643332,
+            "median": 28.109134757052264,
+            "p90": 44.07153165860383
+          },
+          "angular_error_deg": {
+            "mean": 9.852896659620864,
+            "median": 9.426933385555378,
+            "p90": 15.750679533001001
+          },
+          "head_pose_within_limit_share": 0.9070017953321364
+        },
+        "p08": {
+          "n_calibration": 45,
+          "n_test": 2716,
+          "calibration_mean_distance_px": 17.442688135041042,
+          "calibration_mean_distance_per_dot_px": [
+            19.548759763064453,
+            23.148974957285493,
+            10.662618131637803,
+            16.74921633470574,
+            14.286501457957048,
+            12.05753482518312,
+            17.248338672738484,
+            27.72870080116595,
+            15.553548271631282
+          ],
+          "validation_error_px": 568.8370403836205,
+          "passes_gate2": false,
+          "pixel_error_px": {
+            "mean": 451.22161392366553,
+            "median": 449.14919556431914,
+            "p90": 699.3116781897564
+          },
+          "pixel_error_pct_diagonal": {
+            "mean": 26.571886342896313,
+            "median": 26.449844172485573,
+            "p90": 41.18160535249065
+          },
+          "angular_error_deg": {
+            "mean": 11.173563048518716,
+            "median": 10.890127784025111,
+            "p90": 17.80671876876129
+          },
+          "head_pose_within_limit_share": 0.7540500736377025
+        },
+        "p09": {
+          "n_calibration": 45,
+          "n_test": 2673,
+          "calibration_mean_distance_px": 18.67251008333093,
+          "calibration_mean_distance_per_dot_px": [
+            11.150185236882512,
+            12.260912784187678,
+            23.422776825252523,
+            13.315161311852274,
+            20.18853757803256,
+            12.026286058043231,
+            28.35307769307037,
+            25.002800513761024,
+            22.332852748896205
+          ],
+          "validation_error_px": 568.5583597759111,
+          "passes_gate2": false,
+          "pixel_error_px": {
+            "mean": 453.84914537482194,
+            "median": 454.9648338058668,
+            "p90": 699.8349485818696
+          },
+          "pixel_error_pct_diagonal": {
+            "mean": 26.72661844111164,
+            "median": 26.79231996175915,
+            "p90": 41.21242010284121
+          },
+          "angular_error_deg": {
+            "mean": 10.287484777170556,
+            "median": 10.133120164954748,
+            "p90": 15.934660771781346
+          },
+          "head_pose_within_limit_share": 0.9603441825664047
+        },
+        "p10": {
+          "n_calibration": 45,
+          "n_test": 2149,
+          "calibration_mean_distance_px": 24.944027863489534,
+          "calibration_mean_distance_per_dot_px": [
+            35.37778007063673,
+            25.29564577183233,
+            22.070108103721132,
+            26.92248959933434,
+            22.125921600617662,
+            23.013005392099704,
+            20.261851484441678,
+            21.919278255760723,
+            27.51017049296153
+          ],
+          "validation_error_px": 566.3371637618807,
+          "passes_gate2": false,
+          "pixel_error_px": {
+            "mean": 454.20205337590187,
+            "median": 449.89776616471437,
+            "p90": 697.8214640529043
+          },
+          "pixel_error_pct_diagonal": {
+            "mean": 26.747400759610642,
+            "median": 26.493926575233015,
+            "p90": 41.09384847327849
+          },
+          "angular_error_deg": {
+            "mean": 10.382979213760132,
+            "median": 10.212133686914568,
+            "p90": 16.14297641088491
+          },
+          "head_pose_within_limit_share": 0.9148441135411819
+        },
+        "p11": {
+          "n_calibration": 45,
+          "n_test": 2217,
+          "calibration_mean_distance_px": 19.26395219604099,
+          "calibration_mean_distance_per_dot_px": [
+            17.48895787386776,
+            25.07547798017737,
+            26.786023658299143,
+            22.26915897598888,
+            12.128237090542694,
+            20.65796728692054,
+            14.370969744712578,
+            16.8239838931669,
+            17.774793260693045
+          ],
+          "validation_error_px": 507.0198151701831,
+          "passes_gate2": false,
+          "pixel_error_px": {
+            "mean": 399.02346799771885,
+            "median": 399.4108160778824,
+            "p90": 615.0680756305183
+          },
+          "pixel_error_pct_diagonal": {
+            "mean": 26.43525188439797,
+            "median": 26.46091364338534,
+            "p90": 40.748178514246305
+          },
+          "angular_error_deg": {
+            "mean": 9.717080902203119,
+            "median": 9.544875227164114,
+            "p90": 15.21947734810712
+          },
+          "head_pose_within_limit_share": 0.9837618403247632
+        },
+        "p12": {
+          "n_calibration": 45,
+          "n_test": 1498,
+          "calibration_mean_distance_px": 22.526057477273653,
+          "calibration_mean_distance_per_dot_px": [
+            25.695967677915036,
+            18.37990220542026,
+            33.479730241521295,
+            24.107049571520797,
+            8.83442595829423,
+            26.154550960143446,
+            12.75395742040337,
+            24.647273486455976,
+            28.681659773788475
+          ],
+          "validation_error_px": 502.73285690635254,
+          "passes_gate2": false,
+          "pixel_error_px": {
+            "mean": 400.25306351787583,
+            "median": 402.1579215492495,
+            "p90": 616.4504557484416
+          },
+          "pixel_error_pct_diagonal": {
+            "mean": 26.516712424687455,
+            "median": 26.642909016873027,
+            "p90": 40.839761013893906
+          },
+          "angular_error_deg": {
+            "mean": 9.688540616889915,
+            "median": 9.279022718537835,
+            "p90": 16.150256335688383
+          },
+          "head_pose_within_limit_share": 0.87716955941255
+        },
+        "p13": {
+          "n_calibration": 45,
+          "n_test": 1453,
+          "calibration_mean_distance_px": 21.127684254082215,
+          "calibration_mean_distance_per_dot_px": [
+            20.84626425824226,
+            18.647054254324622,
+            27.47410955114726,
+            21.935299348963344,
+            18.67987468489892,
+            18.909443143149385,
+            14.370408001910045,
+            18.337419121776147,
+            30.949285922327952
+          ],
+          "validation_error_px": 508.11840147484855,
+          "passes_gate2": false,
+          "pixel_error_px": {
+            "mean": 403.86611055359964,
+            "median": 399.20045090154895,
+            "p90": 625.380518374152
+          },
+          "pixel_error_pct_diagonal": {
+            "mean": 26.75607631207686,
+            "median": 26.446976978326557,
+            "p90": 41.43137647961747
+          },
+          "angular_error_deg": {
+            "mean": 10.695823257129712,
+            "median": 10.436685554669054,
+            "p90": 17.52721659031248
+          },
+          "head_pose_within_limit_share": 0.653819683413627
+        },
+        "p14": {
+          "n_calibration": 45,
+          "n_test": 1455,
+          "calibration_mean_distance_px": 27.92671300934336,
+          "calibration_mean_distance_per_dot_px": [
+            28.420184908036124,
+            35.616730837033664,
+            39.027700886173555,
+            21.415363350689734,
+            26.165570003909842,
+            28.376858671806094,
+            34.88725409604173,
+            24.34302530743526,
+            13.087729022964226
+          ],
+          "validation_error_px": 567.7654556269744,
+          "passes_gate2": false,
+          "pixel_error_px": {
+            "mean": 458.1938075990496,
+            "median": 457.3007762949895,
+            "p90": 704.3557339524
+          },
+          "pixel_error_pct_diagonal": {
+            "mean": 26.982470260390805,
+            "median": 26.92988074433064,
+            "p90": 41.47864359777043
+          },
+          "angular_error_deg": {
+            "mean": 12.559127310155535,
+            "median": 12.42994847345645,
+            "p90": 19.158453363466737
+          },
+          "head_pose_within_limit_share": 0.993127147766323
+        }
+      }
+    },
+    "eyeos-live9": {
+      "description": "shipping eyeos.calibration.Calibration fitted the way a live session fits it: each dot's K images averaged into one sample (as calibration_session.collect_dot_features averages frames) at the grid point, not the images' true targets; validation error = leave-one-out over those 9 samples, the statistic live Gate 2 judges",
+      "k_per_dot": 5,
+      "aggregate": {
+        "persons_evaluated": 15,
+        "persons_skipped": [],
+        "pixel_error_px": {
+          "mean_of_person_means": 281.6778278182028,
+          "median_of_person_means": 271.5598701075157,
+          "p90_of_person_means": 347.4079372983529,
+          "pooled_median": 246.06909595372744,
+          "pooled_p90": 508.99390958482184
+        },
+        "pixel_error_pct_diagonal_mean_of_person_means": 17.22604081026192,
+        "angular_error_deg": {
+          "mean_of_person_means": 6.7953590544697935,
+          "median_of_person_means": 6.622515651445811,
+          "p90_of_person_means": 8.11264600780718,
+          "pooled_median": 5.898052216222327,
+          "pooled_p90": 12.212784644908728
+        },
+        "angular_error_persons": 15,
+        "validation_error_px_mean": 223.44960627261287,
+        "gate2_passed": 0,
+        "head_pose_within_limit_share_mean": 0.8962983290241467
+      },
+      "persons": {
+        "p00": {
+          "n_calibration": 45,
+          "n_test": 2875,
+          "calibration_mean_distance_px": 17.780874135497427,
+          "calibration_mean_distance_per_dot_px": [
+            16.79892097759984,
+            21.86025970620589,
+            14.964537278534056,
+            19.998531174633722,
+            18.75839166305205,
+            17.40386980433424,
+            22.315720393994834,
+            14.579804193853139,
+            13.347832027269067
+          ],
+          "validation_error_px": 140.7089968011148,
+          "passes_gate2": false,
+          "pixel_error_px": {
+            "mean": 200.13429362310487,
+            "median": 180.7373785358192,
+            "p90": 359.21615599831836
+          },
+          "pixel_error_pct_diagonal": {
+            "mean": 13.258870434816346,
+            "median": 11.973827380367208,
+            "p90": 23.798022738890708
+          },
+          "angular_error_deg": {
+            "mean": 5.206677219082054,
+            "median": 4.733529509663829,
+            "p90": 9.341191858239517
+          },
+          "head_pose_within_limit_share": 0.9495652173913044
+        },
+        "p01": {
+          "n_calibration": 45,
+          "n_test": 2859,
+          "calibration_mean_distance_px": 20.732885093959197,
+          "calibration_mean_distance_per_dot_px": [
+            20.048130250457838,
+            16.73226569374961,
+            18.655681226093474,
+            13.603278028719751,
+            35.51604940874082,
+            20.16558458210519,
+            19.511698513269288,
+            20.91371040558762,
+            21.449567736909195
+          ],
+          "validation_error_px": 195.76141839817177,
+          "passes_gate2": false,
+          "pixel_error_px": {
+            "mean": 272.804809090592,
+            "median": 254.09643838511394,
+            "p90": 475.60266674593095
+          },
+          "pixel_error_pct_diagonal": {
+            "mean": 16.06513996064263,
+            "median": 14.963427000299303,
+            "p90": 28.00765658200323
+          },
+          "angular_error_deg": {
+            "mean": 6.1273113802230785,
+            "median": 5.740482593391397,
+            "p90": 10.736705904315917
+          },
+          "head_pose_within_limit_share": 0.8978663868485485
+        },
+        "p02": {
+          "n_calibration": 45,
+          "n_test": 2870,
+          "calibration_mean_distance_px": 17.309405750905288,
+          "calibration_mean_distance_per_dot_px": [
+            15.96222813377401,
+            21.456611819786655,
+            12.906848303990483,
+            15.783252258085735,
+            14.535492298469705,
+            19.918843149527568,
+            15.721460447549447,
+            23.404091309735218,
+            16.095824037228773
+          ],
+          "validation_error_px": 242.43329404498976,
+          "passes_gate2": false,
+          "pixel_error_px": {
+            "mean": 199.46250296865702,
+            "median": 180.08602811293167,
+            "p90": 350.9710812401125
+          },
+          "pixel_error_pct_diagonal": {
+            "mean": 13.214364392971172,
+            "median": 11.930675501154582,
+            "p90": 23.251787628628694
+          },
+          "angular_error_deg": {
+            "mean": 4.928172812705008,
+            "median": 4.445737081830325,
+            "p90": 8.63555144388605
+          },
+          "head_pose_within_limit_share": 0.9864111498257839
+        },
+        "p03": {
+          "n_calibration": 45,
+          "n_test": 2878,
+          "calibration_mean_distance_px": 20.77132660727564,
+          "calibration_mean_distance_per_dot_px": [
+            17.616556721275153,
+            22.9698489129215,
+            20.551876205650238,
+            20.079565196072412,
+            21.128774975163306,
+            28.874863338063328,
+            17.227014906191307,
+            18.049852677106525,
+            20.443586533036978
+          ],
+          "validation_error_px": 165.32743584354614,
+          "passes_gate2": false,
+          "pixel_error_px": {
+            "mean": 252.88309265642835,
+            "median": 218.76813434167852,
+            "p90": 470.38063879637315
+          },
+          "pixel_error_pct_diagonal": {
+            "mean": 14.891974561403662,
+            "median": 12.88298658972921,
+            "p90": 27.70013777334405
+          },
+          "angular_error_deg": {
+            "mean": 7.880563159224571,
+            "median": 6.792819653125065,
+            "p90": 14.894589103950562
+          },
+          "head_pose_within_limit_share": 0.9815844336344683
+        },
+        "p04": {
+          "n_calibration": 45,
+          "n_test": 2815,
+          "calibration_mean_distance_px": 16.843065002953647,
+          "calibration_mean_distance_per_dot_px": [
+            18.520887783273405,
+            19.86155420361387,
+            10.040035996045344,
+            15.887602355715952,
+            15.993594541676192,
+            18.845936437907703,
+            19.174815757147194,
+            12.00706403851144,
+            21.256093912691714
+          ],
+          "validation_error_px": 228.3565877987265,
+          "passes_gate2": false,
+          "pixel_error_px": {
+            "mean": 265.2455508410482,
+            "median": 239.30106560565082,
+            "p90": 468.14523324810284
+          },
+          "pixel_error_pct_diagonal": {
+            "mean": 17.57248259828939,
+            "median": 15.853663889078295,
+            "p90": 31.014559673629492
+          },
+          "angular_error_deg": {
+            "mean": 7.708495558629198,
+            "median": 6.903740649052636,
+            "p90": 13.878144384370769
+          },
+          "head_pose_within_limit_share": 0.8046181172291297
+        },
+        "p05": {
+          "n_calibration": 45,
+          "n_test": 2825,
+          "calibration_mean_distance_px": 21.620173201093447,
+          "calibration_mean_distance_per_dot_px": [
+            25.01832774553669,
+            16.559864703946193,
+            20.45623393895805,
+            16.659730381162007,
+            18.590569018454094,
+            24.385661791113073,
+            30.21275609648426,
+            24.920563442237246,
+            17.777851691949383
+          ],
+          "validation_error_px": 230.48652440397848,
+          "passes_gate2": false,
+          "pixel_error_px": {
+            "mean": 270.7486277341213,
+            "median": 241.6298822579691,
+            "p90": 484.95389981620724
+          },
+          "pixel_error_pct_diagonal": {
+            "mean": 15.944053967377767,
+            "median": 14.229286829979644,
+            "p90": 28.558339205888682
+          },
+          "angular_error_deg": {
+            "mean": 5.973367879296616,
+            "median": 5.41930075434139,
+            "p90": 10.645245515579797
+          },
+          "head_pose_within_limit_share": 0.9773451327433629
+        },
+        "p06": {
+          "n_calibration": 45,
+          "n_test": 2832,
+          "calibration_mean_distance_px": 18.940512794147963,
+          "calibration_mean_distance_per_dot_px": [
+            16.53945273965091,
+            25.370142923547633,
+            13.914356797813536,
+            22.925259411973844,
+            25.661712039432267,
+            17.953491173097568,
+            10.991183207379589,
+            19.38854552739688,
+            17.720471327039466
+          ],
+          "validation_error_px": 225.10931188564223,
+          "passes_gate2": false,
+          "pixel_error_px": {
+            "mean": 324.04532749484997,
+            "median": 292.42916626616966,
+            "p90": 577.8787929251325
+          },
+          "pixel_error_pct_diagonal": {
+            "mean": 16.35654096050036,
+            "median": 14.760680775912725,
+            "p90": 29.16906168577499
+          },
+          "angular_error_deg": {
+            "mean": 6.622515651445811,
+            "median": 5.995800362713764,
+            "p90": 11.864279312703006
+          },
+          "head_pose_within_limit_share": 0.8029661016949152
+        },
+        "p07": {
+          "n_calibration": 45,
+          "n_test": 2785,
+          "calibration_mean_distance_px": 20.735870438559804,
+          "calibration_mean_distance_per_dot_px": [
+            17.231556707023337,
+            16.55477443274189,
+            23.69834765077431,
+            24.06224274117502,
+            32.319931178539775,
+            19.1695632189662,
+            15.812252829885761,
+            13.744755000804968,
+            24.029410187126967
+          ],
+          "validation_error_px": 274.0245153885026,
+          "passes_gate2": false,
+          "pixel_error_px": {
+            "mean": 354.02513881417383,
+            "median": 310.90995481007036,
+            "p90": 657.9268817535176
+          },
+          "pixel_error_pct_diagonal": {
+            "mean": 20.848105367332312,
+            "median": 18.309105165085988,
+            "p90": 38.74450554766243
+          },
+          "angular_error_deg": {
+            "mean": 6.889075650095939,
+            "median": 6.165120687099628,
+            "p90": 12.553335838421969
+          },
+          "head_pose_within_limit_share": 0.9070017953321364
+        },
+        "p08": {
+          "n_calibration": 45,
+          "n_test": 2716,
+          "calibration_mean_distance_px": 17.442688135041042,
+          "calibration_mean_distance_per_dot_px": [
+            19.548759763064453,
+            23.148974957285493,
+            10.662618131637803,
+            16.74921633470574,
+            14.286501457957048,
+            12.05753482518312,
+            17.248338672738484,
+            27.72870080116595,
+            15.553548271631282
+          ],
+          "validation_error_px": 266.1325195314652,
+          "passes_gate2": false,
+          "pixel_error_px": {
+            "mean": 337.4821350246216,
+            "median": 304.63994305186833,
+            "p90": 604.5168948695609
+          },
+          "pixel_error_pct_diagonal": {
+            "mean": 19.873908203673277,
+            "median": 17.939871877791035,
+            "p90": 35.59925705498679
+          },
+          "angular_error_deg": {
+            "mean": 8.267367906862255,
+            "median": 7.213472290080926,
+            "p90": 14.921758080807958
+          },
+          "head_pose_within_limit_share": 0.7540500736377025
+        },
+        "p09": {
+          "n_calibration": 45,
+          "n_test": 2673,
+          "calibration_mean_distance_px": 18.67251008333093,
+          "calibration_mean_distance_per_dot_px": [
+            11.150185236882512,
+            12.260912784187678,
+            23.422776825252523,
+            13.315161311852274,
+            20.18853757803256,
+            12.026286058043231,
+            28.35307769307037,
+            25.002800513761024,
+            22.332852748896205
+          ],
+          "validation_error_px": 222.1592631273568,
+          "passes_gate2": false,
+          "pixel_error_px": {
+            "mean": 271.5598701075157,
+            "median": 251.04780421266383,
+            "p90": 489.9836714970288
+          },
+          "pixel_error_pct_diagonal": {
+            "mean": 15.991827033820508,
+            "median": 14.7838966803153,
+            "p90": 28.854536279143513
+          },
+          "angular_error_deg": {
+            "mean": 6.078777641727702,
+            "median": 5.495938656379953,
+            "p90": 11.025385726117122
+          },
+          "head_pose_within_limit_share": 0.9603441825664047
+        },
+        "p10": {
+          "n_calibration": 45,
+          "n_test": 2149,
+          "calibration_mean_distance_px": 24.944027863489534,
+          "calibration_mean_distance_per_dot_px": [
+            35.37778007063673,
+            25.29564577183233,
+            22.070108103721132,
+            26.92248959933434,
+            22.125921600617662,
+            23.013005392099704,
+            20.261851484441678,
+            21.919278255760723,
+            27.51017049296153
+          ],
+          "validation_error_px": 220.2303736289559,
+          "passes_gate2": false,
+          "pixel_error_px": {
+            "mean": 269.8912048490189,
+            "median": 244.13520843991347,
+            "p90": 483.84223900041724
+          },
+          "pixel_error_pct_diagonal": {
+            "mean": 15.893561387351237,
+            "median": 14.376822410067726,
+            "p90": 28.492874866554047
+          },
+          "angular_error_deg": {
+            "mean": 6.050525513878362,
+            "median": 5.476989473849603,
+            "p90": 10.756081503129044
+          },
+          "head_pose_within_limit_share": 0.9148441135411819
+        },
+        "p11": {
+          "n_calibration": 45,
+          "n_test": 2217,
+          "calibration_mean_distance_px": 19.26395219604099,
+          "calibration_mean_distance_per_dot_px": [
+            17.48895787386776,
+            25.07547798017737,
+            26.786023658299143,
+            22.26915897598888,
+            12.128237090542694,
+            20.65796728692054,
+            14.370969744712578,
+            16.8239838931669,
+            17.774793260693045
+          ],
+          "validation_error_px": 181.33930082687488,
+          "passes_gate2": false,
+          "pixel_error_px": {
+            "mean": 301.21717976465936,
+            "median": 278.32534918688236,
+            "p90": 532.4794663478654
+          },
+          "pixel_error_pct_diagonal": {
+            "mean": 19.9555982482521,
+            "median": 18.439017505632822,
+            "p90": 35.27669409222844
+          },
+          "angular_error_deg": {
+            "mean": 7.248223432818448,
+            "median": 6.618946072135532,
+            "p90": 12.876139850275772
+          },
+          "head_pose_within_limit_share": 0.9837618403247632
+        },
+        "p12": {
+          "n_calibration": 45,
+          "n_test": 1498,
+          "calibration_mean_distance_px": 22.526057477273653,
+          "calibration_mean_distance_per_dot_px": [
+            25.695967677915036,
+            18.37990220542026,
+            33.479730241521295,
+            24.107049571520797,
+            8.83442595829423,
+            26.154550960143446,
+            12.75395742040337,
+            24.647273486455976,
+            28.681659773788475
+          ],
+          "validation_error_px": 222.83205243052018,
+          "passes_gate2": false,
+          "pixel_error_px": {
+            "mean": 314.3539647303121,
+            "median": 287.7272806225034,
+            "p90": 564.6564736355142
+          },
+          "pixel_error_pct_diagonal": {
+            "mean": 20.825908511607807,
+            "median": 19.06189421749054,
+            "p90": 37.40841656159451
+          },
+          "angular_error_deg": {
+            "mean": 7.357352874031493,
+            "median": 6.433485171659818,
+            "p90": 13.451387761372585
+          },
+          "head_pose_within_limit_share": 0.87716955941255
+        },
+        "p13": {
+          "n_calibration": 45,
+          "n_test": 1453,
+          "calibration_mean_distance_px": 21.127684254082215,
+          "calibration_mean_distance_per_dot_px": [
+            20.84626425824226,
+            18.647054254324622,
+            27.47410955114726,
+            21.935299348963344,
+            18.67987468489892,
+            18.909443143149385,
+            14.370408001910045,
+            18.337419121776147,
+            30.949285922327952
+          ],
+          "validation_error_px": 390.5270374636142,
+          "passes_gate2": false,
+          "pixel_error_px": {
+            "mean": 390.7757875792242,
+            "median": 362.86223281019477,
+            "p90": 692.0088149509698
+          },
+          "pixel_error_pct_diagonal": {
+            "mean": 25.888844149487078,
+            "median": 24.039574844573792,
+            "p90": 45.84549229960884
+          },
+          "angular_error_deg": {
+            "mean": 10.242100998206743,
+            "median": 9.356923518946727,
+            "p90": 18.38434219855902
+          },
+          "head_pose_within_limit_share": 0.653819683413627
+        },
+        "p14": {
+          "n_calibration": 45,
+          "n_test": 1455,
+          "calibration_mean_distance_px": 27.92671300934336,
+          "calibration_mean_distance_per_dot_px": [
+            28.420184908036124,
+            35.616730837033664,
+            39.027700886173555,
+            21.415363350689734,
+            26.165570003909842,
+            28.376858671806094,
+            34.88725409604173,
+            24.34302530743526,
+            13.087729022964226
+          ],
+          "validation_error_px": 146.31546251573323,
+          "passes_gate2": false,
+          "pixel_error_px": {
+            "mean": 200.53793199471468,
+            "median": 187.42731924668826,
+            "p90": 348.497552661064
+          },
+          "pixel_error_pct_diagonal": {
+            "mean": 11.809432376403176,
+            "median": 11.037364503153597,
+            "p90": 20.52259261156292
+          },
+          "angular_error_deg": {
+            "mean": 5.349858138819626,
+            "median": 4.998835775777006,
+            "p90": 9.096387216417616
+          },
+          "head_pose_within_limit_share": 0.993127147766323
+        }
+      }
     }
   },
   "notes": {
+    "license": "The license field names the dataset's license (MPIIFaceGaze is CC BY-NC-SA 4.0). This file holds only metrics, counts and run metadata: EyeOS's models' errors on that data per person and in aggregate, detection counts, the config, the git commit and the environment; no images, landmarks or annotations.",
     "static_photos": "MPIIFaceGaze is still photos, not live video, so the One Euro filter, dwell (Gate 3) and click confirmation are not exercised: every error is one frame's calibration output, rounded and clamped to the screen like the cursor pixel.",
-    "calibration_set": "For each of EyeOS's 9 calibration dots, the K valid images whose true target is nearest the dot stand in for looking at it, and are added with their true targets. calibration_mean_distance_px says how far from the dots those images were.",
+    "calibration_set": "For each of EyeOS's 9 calibration dots, the K valid images whose true target is nearest the dot stand in for looking at it, and are added with their true targets (eyeos-live9 instead averages them into one sample per dot; see eyeos_live9). calibration_mean_distance_px says how far from the dots those images were.",
     "screens": "Each participant's own laptop screen (screenSize.mat) is the screen, not the user's: pixel errors are in that screen's pixels, and % of the diagonal compares across screens.",
     "valid_frames": "valid = exactly one face and both irises visible, what Gate 1 needs; detection_rate = valid / images. Invalid frames are in neither the calibration nor the test set.",
     "test_sets": "the test set is every valid image not used for calibration, so a variant with more images per dot is tested on slightly fewer images.",
     "angular_error": "the angle between (P_pred - fc) and (gt - fc), with the predicted pixel P_pred mapped to camera coordinates by the screen model recorded under screen_model; null for a person whose screen model does not reproduce the annotated gt within the tolerance.",
     "head_pose": "EyeOS's own simplified head pose (eyeos.features), not the dataset's: the share of test frames within Gate 2's head-pose limit of the calibration pose.",
-    "validation_error_px": "Calibration's own leave-one-out RMS error for the eyeos.calibration variants, and the same leave-one-out definition for the other models; Gate 2 passes below the limit."
+    "validation_error_px": "For every variant except eyeos-live9: the leave-one-out RMS error over its 9 x K calibration photos (45 at the default K = 5), each labelled with its own true target, with the other photos of the same dot left in the fit (Calibration's own for the eyeos.calibration variants, the same definition for the others). That is not what live Gate 2 judges: live, it is the leave-one-out over 9 samples, each a dot's averaged frames placed at the dot. eyeos-live9's validation_error_px is that statistic, on these photos, not in a live session (see eyeos_live9). passes_gate2 and gate2_passed: validation_error_px below config.gate2_max_validation_error_px.",
+    "restatements": "eyeos and ridge-0.001 are the same model by construction (Calibration's default ridge_lambda is 1e-3), and so is per-dot-5 when config.k_per_dot is 5, the default: their per-person results are identical, one result listed under several names.",
+    "baselines": "centre and calibration-mean ignore the image: they always predict the screen centre, or the mean of the calibration targets, and give every other error its scale. centre's validation_error_px is the RMS distance of the calibration targets to the centre; calibration-mean's is the leave-one-out RMS of the mean.",
+    "eyeos_live9": "eyeos-live9 fits the shipping Calibration the way a live session does (eyeos.calibration_session): each dot's K images are averaged into one sample (iris offsets and head pose, as collect_dot_features averages frames) placed at the grid point, not at the images' true targets. Unlike live, the K images are separate moments, often from different days, not consecutive frames of one.",
+    "environment": "where evaluate ran: Python, platform and library versions, each from its pip distribution or else the importable module's __version__ (null = neither found; opencv_distribution is null for an OpenCV without pip metadata, e.g. conda's). environment.extract copies, per evaluated person, the cache's manifest.json entry written by extract (detector, FaceMesh settings, mediapipe and OpenCV versions); null when the cache has no manifest, or for a person it does not list."
   }
 }
