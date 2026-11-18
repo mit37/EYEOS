@@ -415,12 +415,12 @@ averages 319 px; Gate 2 needs < 60 px.
   than `with-head-pose` for 8 of 15. Neither brings anyone under Gate 2's limit. The
   gain from head pose is largest for p13 (130 px, 37 %) and p04 (64 px, 26 %), the 1st
   and 4th lowest by share of test frames within the head-pose limit. Beyond them the
-  relation is loose: p08, 2nd lowest, gains 49 px (15 %, 5th of 15 by relative gain);
-  p06, 3rd lowest, gains 18 px (6 %); p00, with 95 % within the limit, gains 43 px
-  (23 %). (All counts and gains here are computed from the JSON's per-person mean pixel
-  errors: a gain is `eyeos` minus `with-head-pose`, and the relative gain divides it by
-  `eyeos`. The share is `eyeos`'s `head_pose_within_limit_share`, in EyeOS's own
-  head-pose units.)
+  relation is loose: p08, 2nd lowest, gains 49 px (15 %: 3rd of 15 by absolute gain,
+  5th by relative gain); p06, 3rd lowest, gains 18 px (6 %); p00, with 95 % within the
+  limit, gains 43 px (23 %). (All counts and gains here are computed from the JSON's
+  per-person mean pixel errors: a gain is `eyeos` minus `with-head-pose`, and the
+  relative gain divides it by `eyeos`. The share is `eyeos`'s
+  `head_pose_within_limit_share`, in EyeOS's own head-pose units.)
 - **More calibration images help a little; more model capacity and more
   regularisation do not.** 20 images per dot instead of 5 gains 3 % (251 px), 1 image
   per dot loses 16 % (300 px). The quadratic model is no better than the affine one.

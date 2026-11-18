@@ -103,7 +103,8 @@ def test_the_readme_prose_has_no_claim_the_real_run_made_false(stale):
         (PUBLIC_DOC, "A live EyeOS session on these photos would refuse"),
         # Setup notes and wall times were recorded by hand; only the metrics are in it.
         (PUBLIC_DOC, "Every number here is in"),
-        # p08 ranks 5th of 15 by relative gain; the relation with head motion is loose.
+        # p08 gains 3rd most in px but 5th by relative gain; the relation with head
+        # motion is loose.
         (PUBLIC_DOC, "biggest for the people whose head moved most"),
         # The real run timed the extraction.
         (LOCAL_SETUP, "not timed here"),
@@ -204,6 +205,22 @@ def test_the_head_pose_units_note_says_roll_is_in_real_degrees(doc, start):
 
     assert "roll" in note.lower()
     assert "real degrees" in note
+
+
+@needs_results
+def test_the_dataset_doc_ranks_p08s_head_pose_gain_both_ways():
+    # Quoting only the ranking that makes p08 look weaker would be selective.
+    persons = _results()["variants"]
+    eyeos = {p: r["pixel_error_px"]["mean"] for p, r in persons["eyeos"]["persons"].items()}
+    head = {p: r["pixel_error_px"]["mean"] for p, r in persons["with-head-pose"]["persons"].items()}
+    gain = {p: eyeos[p] - head[p] for p in eyeos}
+    by_abs = sorted(gain, key=lambda p: -gain[p]).index("p08") + 1
+    by_rel = sorted(gain, key=lambda p: -gain[p] / eyeos[p]).index("p08") + 1
+    ordinal = {1: "1st", 2: "2nd", 3: "3rd"}
+    prose = " ".join(PUBLIC_DOC.read_text(encoding="utf-8").split())
+
+    assert f"{ordinal.get(by_abs, f'{by_abs}th')} of {len(gain)} by absolute gain" in prose
+    assert f"{ordinal.get(by_rel, f'{by_rel}th')} by relative gain" in prose
 
 
 def _table_headers(text: str) -> list[str]:
