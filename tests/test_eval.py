@@ -209,3 +209,53 @@ def test_eval_calibration_uses_only_frames_the_live_calibration_would_use():
 
     assert len(calibration.samples) == 9 * 5
     assert calibration.validation_error_px < 1.0  # ridge (lambda=1e-3) leaves ~0.04 px
+
+
+def _session_on_a_2560x1440_screen(path: Path) -> None:
+    """Noise-free calibration on a 2560x1440 screen, then one target past 1920x1080."""
+    w, h = 2560.0, 1440.0
+
+    def looking_at(x: float, y: float):
+        return make_landmarks((x - w / 2) / (w / 2), (y - h / 2) / (h / 2))
+
+    rows, t = [], 0.0
+    for target in target_points(w, h):
+        for _ in range(5):
+            rows.append(make_row(t, looking_at(*target), target, "calibration"))
+            t += DT
+    for _ in range(15):
+        rows.append(make_row(t, looking_at(2400.0, 1300.0), (2400.0, 1300.0), "on_target"))
+        t += DT
+    write_csv(path, rows)
+
+
+def test_compute_metrics_takes_the_screen_from_a_config(tmp_path):
+    from eyeos.config import load_config
+
+    session = tmp_path / "big_screen.csv"
+    _session_on_a_2560x1440_screen(session)
+    config_path = tmp_path / "config.yaml"
+    config_path.write_text("screen:\n  width_px: 2560\n  height_px: 1440\n")
+
+    # The default config's 1920x1080 screen clamps the cursor short of the target.
+    assert compute_metrics(session)["mean_pixel_error_filtered_px"] > 400
+    metrics = compute_metrics(session, config=load_config(config_path))
+    assert metrics["mean_pixel_error_raw_px"] < 1.0
+    assert metrics["mean_pixel_error_filtered_px"] < 1.0
+
+
+def test_run_eval_cli_accepts_a_config(tmp_path):
+    import json
+
+    from eval.run_eval import main as run_eval_main
+
+    session = tmp_path / "big_screen.csv"
+    _session_on_a_2560x1440_screen(session)
+    config_path = tmp_path / "config.yaml"
+    config_path.write_text("screen:\n  width_px: 2560\n  height_px: 1440\n")
+    out = tmp_path / "results.json"
+
+    argv = ["--session", str(session), "--config", str(config_path), "--out", str(out)]
+    assert run_eval_main(argv) == 0
+
+    assert json.loads(out.read_text())["mean_pixel_error_filtered_px"] < 1.0

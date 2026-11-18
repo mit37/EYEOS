@@ -6,6 +6,12 @@ exactly what the shipped code does, not a separate "eval model" of it.
 
     python -m eval.run_eval --fixtures eval/fixtures --out eval/results.json
 
+A recorded session (``eyeos record``) is evaluated with the config it was recorded
+with, so the pipeline sees the same screen size, filter and gate settings:
+
+    python -m eval.run_eval --session recordings/session1.csv --config config.yaml \
+        --out recordings/session1-results.json
+
 Per STANDARDS.md §1.3: every number below comes from this script, running against
 this repo's code, and is reproducible with the command above. Numbers this synthetic
 fixture cannot support (see "notes" in the output) are reported as not measured, not
@@ -22,7 +28,7 @@ from pathlib import Path
 from typing import Any
 
 from eyeos.calibration import Calibration
-from eyeos.config import Config
+from eyeos.config import Config, load_config
 from eyeos.features import extract_features
 from eyeos.input_sources.synthetic import SyntheticInputSource
 from eyeos.output.dry_run import DryRunOutputAdapter
@@ -84,10 +90,14 @@ def raw_predictions(
 
 
 def compute_metrics(
-    path: Path, jitter_warmup_frames: int = _JITTER_WARMUP_FRAMES
+    path: Path, jitter_warmup_frames: int = _JITTER_WARMUP_FRAMES, config: Config | None = None
 ) -> dict[str, Any]:
+    """``config`` defaults to the built-in one, whose 1920x1080 screen matches the
+    synthetic fixture's ground truth. The pipeline clamps the cursor to the config's
+    screen, so a session recorded on another screen needs its own config."""
     rows = load_raw_rows(path)
-    config = Config()  # screen defaults (1920x1080) match the fixture's ground truth
+    if config is None:
+        config = Config()
     calibration = build_calibration(rows, config.screen.width_px, config.screen.height_px)
     raw_preds = raw_predictions(rows, calibration)
 
@@ -239,13 +249,19 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument(
         "--session", default=None, help="explicit session CSV path (overrides --fixtures)"
     )
+    parser.add_argument(
+        "--config",
+        default=None,
+        help="config YAML the session was recorded with (screen size, filter, gates); "
+        "default: built-in defaults, which match the synthetic fixture",
+    )
     parser.add_argument("--out", default="eval/results.json")
     args = parser.parse_args(argv)
 
     session_path = (
         Path(args.session) if args.session else Path(args.fixtures) / "synthetic_session.csv"
     )
-    metrics = compute_metrics(session_path)
+    metrics = compute_metrics(session_path, config=load_config(args.config))
 
     out_path = Path(args.out)
     out_path.parent.mkdir(parents=True, exist_ok=True)
