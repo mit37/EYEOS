@@ -162,6 +162,12 @@ is therefore behind an interface and tested only against a fake:
   marked "not measured", pending recordings, and so is the PRD's 5-minute reading
   false-click test. A real-accuracy eval also needs footage recorded with known
   on-screen targets (see `docs/DEMO.md` §4).
+- **Public dataset (MPIIFaceGaze).** `eval/public/` runs the landmark pipeline and
+  calibration on MPIIFaceGaze (`docs/PUBLIC_DATASETS.md`). The dataset's host was not
+  reachable from this container, so it is tested only on a fake dataset with a fake
+  detector, and smoke-tested with the real OpenCV and MediaPipe on blank images. The
+  real download, extraction and evaluation are pending, and no MPIIFaceGaze numbers
+  exist yet.
 
 Everything else runs and is tested in this container with no external hardware:
 features, calibration, filter, gates, hotkey latch logic, the dry-run pipeline and the

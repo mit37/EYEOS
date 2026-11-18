@@ -18,6 +18,8 @@ import json
 import math
 import os
 import random
+import re
+import shlex
 import shutil
 import socket
 import subprocess
@@ -1136,6 +1138,33 @@ def test_the_variant_list_is_the_documented_one():
         "with-head-pose",
         "global-lopo",
     )
+
+
+_DOC = ROOT / "docs" / "PUBLIC_DATASETS.md"
+
+
+def test_the_doc_lists_every_variant_in_its_table():
+    table_rows = [line for line in _DOC.read_text().splitlines() if line.startswith("| `")]
+    # The first cell of each row names the variant(s); later cells may mention them again.
+    first_cells = [row.split("|")[1] for row in table_rows]
+    documented = [name for cell in first_cells for name in re.findall(r"`([a-z0-9.-]+)`", cell)]
+
+    assert [n for n in documented if n in models.VARIANT_NAMES] == list(models.VARIANT_NAMES)
+
+
+def test_the_doc_commands_parse_with_the_real_command_line():
+    text = _DOC.read_text().replace("\\\n", " ")
+    commands = [
+        shlex.split(line.strip())
+        for line in text.splitlines()
+        if line.strip().startswith("python -m eval.public.mpiifacegaze ")
+    ]
+
+    assert {c[3] for c in commands} == {"extract", "evaluate"}
+    for command in commands:
+        args = mpii.build_parser().parse_args(command[3:])
+        assert args.root == Path("datasets/MPIIFaceGaze")
+        assert args.cache == Path("datasets/cache/mpiifacegaze")
 
 
 def test_every_variant_runs_and_the_noise_free_ones_recover_the_targets(tmp_path):
