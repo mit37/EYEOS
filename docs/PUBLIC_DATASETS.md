@@ -18,11 +18,12 @@ models can be refitted and compared on the same data with one command each.
 - **Smoke-tested with the real libraries** (OpenCV 4.11, MediaPipe 0.10.21, Python 3.11,
   Linux): `extract` and `evaluate` ran end to end on four blank generated JPEGs. MediaPipe
   found no face in them, as expected, and `evaluate` reported every person as skipped.
-- **Run on the real dataset (2026-11-18):** the real download, landmark extraction
-  for all 15 participants and evaluation of every variant, in a cloud container. The
-  harness was built where the dataset's host was unreachable; a later session could
-  reach it. Results are in `eval/results/mpiifacegaze.json`, and the run, with an
-  honest reading of the numbers, is described in "Real run" below.
+- **Run on the real dataset once (2026-11-18):** the real download, landmark extraction
+  for all 15 participants and evaluation of the 12 variants that existed then, in a
+  cloud container. The harness was built where the dataset's host was unreachable; a
+  later session could reach it. Results are in `eval/results/mpiifacegaze.json`, and
+  the run, with an honest reading of the numbers, is described in "Real run" below.
+  Variants added since have not run on the real data.
 - **The expected file format was checked against the real files** on that run, and
   matched (see "Expected format" and "Real run"). No parser changed. The readers still
   fail loudly, naming the file and showing the offending line or keys, if a copy of the
@@ -328,7 +329,7 @@ Nothing broke a parser. What we saw, for the next person:
   median residual of at most 5e-7 mm (rounding of the file's six decimals). No
   alternative candidate was needed, and every participant has an angular error.
 
-### Results (all 15 participants scored for every variant)
+### Results (all 15 participants scored for each of the 12 variants)
 
 "Mean", "median" and "p90" are over the 15 per-person means (each person weighs the
 same). With 15 values, the p90 is interpolated between the 3rd and the 2nd worst person,
