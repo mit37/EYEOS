@@ -41,6 +41,7 @@ from eval.public import models, protocol
 from eval.public import mpiifacegaze as mpii
 from eyeos.calibration import Calibration, target_points
 from eyeos.config import Config, ScreenConfig
+from eyeos.features import extract_features
 from eyeos.input_sources.synthetic import SyntheticInputSource
 from eyeos.landmarks import FaceLandmarks, Point3D
 from eyeos.output.dry_run import DryRunOutputAdapter
@@ -1525,6 +1526,8 @@ def test_the_variant_list_is_the_documented_one():
         "per-dot-20",
         "with-head-pose",
         "global-lopo",
+        "centre",
+        "calibration-mean",
     )
 
 
@@ -1743,6 +1746,100 @@ def test_global_lopo_per_user_correction_absorbs_a_quirk_the_others_do_not_share
     for person in results["variants"]["global-lopo"]["persons"].values():
         assert person["pixel_error_px"]["mean"] < 0.75
         assert person["validation_error_px"] < 0.5
+
+
+# ---------------------------------------------------------------------------
+# baselines: constant predictors that ignore the image
+# ---------------------------------------------------------------------------
+
+
+def _calibration_and_test_targets(
+    data: protocol.PersonData, k: int = protocol.DEFAULT_K_PER_DOT
+) -> tuple[np.ndarray, np.ndarray]:
+    """The protocol's calibration and test targets for a person whose frames are all
+    valid, worked out here from select_calibration_set."""
+    width, height = data.screen_px
+    selected, _ = protocol.select_calibration_set(data.targets_px, target_points(width, height), k)
+    calibration = [i for per_dot in selected for i in per_dot]
+    test = np.setdiff1d(np.arange(len(data.targets_px)), calibration)
+    return data.targets_px[calibration], data.targets_px[test]
+
+
+def _fit_alone(
+    variant: protocol.Variant, targets: np.ndarray, screen: tuple[float, float]
+) -> protocol.FittedModel:
+    features = [extract_features(make_landmarks(0.1 * i, -0.05 * i)) for i in range(len(targets))]
+    return variant.fit(features, targets, protocol.FitContext(screen_px=screen))
+
+
+def test_the_centre_baseline_predicts_the_screen_centre_whatever_the_image():
+    targets = np.array([[100.0, 100.0], [1180.0, 700.0], [640.0, 80.0]] * 3)
+    model = _fit_alone(models.build_variants()["centre"], targets, (1280.0, 800.0))
+
+    features = [extract_features(make_landmarks(ox, oy)) for ox, oy in ((0, 0), (0.3, -0.2))]
+    assert model.predict(features) == pytest.approx(np.array([[640.0, 400.0]] * 2))
+    assert model.predict([]).shape == (0, 2)
+    # The leave-one-out of a constant that ignores the data: the RMS distance to the centre.
+    distances = np.hypot(*(targets - [640.0, 400.0]).T)
+    assert model.validation_error_px == pytest.approx(math.sqrt(np.mean(distances**2)))
+
+
+def test_the_calibration_mean_baseline_predicts_the_mean_target_with_a_true_leave_one_out():
+    targets = np.array([[100.0, 100.0], [1180.0, 700.0], [640.0, 80.0], [900.0, 500.0]] * 2)
+    model = _fit_alone(models.build_variants()["calibration-mean"], targets, (1280.0, 800.0))
+
+    mean = targets.mean(axis=0)
+    features = [extract_features(make_landmarks(0.2, 0.1))]
+    assert model.predict(features) == pytest.approx(mean[None, :])
+    # Leaving sample i out moves the mean away from it: its residual is (t_i - mean) n/(n-1).
+    n = len(targets)
+    residuals = (targets - mean) * n / (n - 1)
+    assert model.validation_error_px == pytest.approx(
+        math.sqrt(np.mean(np.sum(residuals**2, axis=1)))
+    )
+
+
+def test_baselines_are_not_validated_on_too_few_samples_like_calibration():
+    targets = np.array([[100.0, 100.0], [1180.0, 700.0], [640.0, 80.0], [9.0, 9.0], [5.0, 5.0]])
+    for name in ("centre", "calibration-mean"):
+        model = _fit_alone(models.build_variants()[name], targets, (1280.0, 800.0))
+        assert model.validation_error_px == math.inf, name
+
+
+def test_baselines_are_scored_on_the_same_frames_as_eyeos(tmp_path):
+    persons = [
+        _person_data_3d(tmp_path, FakePerson("p00", noise=0.05)),
+        _person_data_3d(tmp_path, _second_screen("p01", seed=1, noise=0.05)),
+    ]
+    variants = models.build_variants()
+
+    results = protocol.evaluate(
+        persons, [variants[n] for n in ("eyeos", "centre", "calibration-mean")]
+    )
+
+    for data in persons:
+        eyeos = results["variants"]["eyeos"]["persons"][data.person]
+        calibration_targets, test_targets = _calibration_and_test_targets(data)
+        width, height = data.screen_px
+        expected_points = {
+            "centre": np.rint([width / 2, height / 2]),
+            "calibration-mean": np.rint(calibration_targets.mean(axis=0)),
+        }
+        for name, point in expected_points.items():
+            person = results["variants"][name]["persons"][data.person]
+            for same in (
+                "n_calibration",
+                "n_test",
+                "calibration_mean_distance_px",
+                "head_pose_within_limit_share",
+            ):
+                assert person[same] == eyeos[same], (name, same)
+            errors = np.hypot(*(test_targets - point).T)
+            assert person["pixel_error_px"]["mean"] == pytest.approx(np.mean(errors)), name
+            assert person["angular_error_deg"]["mean"] > 1.0, name
+            # A constant is a poor gaze estimate: far worse than the calibration here.
+            assert person["pixel_error_px"]["mean"] > 5 * eyeos["pixel_error_px"]["mean"], name
+            assert person["passes_gate2"] is False, name
 
 
 # Every pre-existing variant's results on _locked_persons(), recorded at f2bdf78, before

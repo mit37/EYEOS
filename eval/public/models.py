@@ -17,6 +17,15 @@ The variants (``--variants``, default all):
 - ``global-lopo``: one ridge regression trained on every OTHER participant's valid
   frames (iris offsets plus head pose -> screen fractions), then a per-user affine
   correction fitted on this participant's own 9-dot calibration set.
+- ``centre``: baseline; always predicts the screen centre (W/2, H/2) and ignores the
+  image. Its validation error is the RMS distance of the calibration targets to the
+  centre: the leave-one-out of a constant that ignores the data.
+- ``calibration-mean``: baseline; always predicts the mean of the calibration targets.
+  Its validation error is the true leave-one-out RMS of that mean predictor.
+
+The baselines run through the same protocol as every model (same calibration and test
+frames, same rounding and clamping), so their errors are directly comparable: they say
+how much of a model's error is left after it has used the image at all.
 """
 
 from __future__ import annotations
@@ -249,6 +258,66 @@ class GlobalLopoVariant:
 
 
 # ---------------------------------------------------------------------------
+# baselines: constant predictors that ignore the image
+# ---------------------------------------------------------------------------
+
+
+@dataclass(frozen=True)
+class ConstantModel:
+    point_px: tuple[float, float]
+    validation_error_px: float
+
+    def predict(self, features: Sequence[FeatureVector]) -> np.ndarray:
+        return np.tile(np.asarray(self.point_px, dtype=float), (len(features), 1))
+
+
+@dataclass(frozen=True)
+class CentreBaseline:
+    name: str = "centre"
+    description: str = (
+        "baseline: always predicts the screen centre and ignores the image; validation "
+        "error = RMS distance of the calibration targets to the centre"
+    )
+    k_per_dot: int | None = None
+    needs_other_persons: bool = False
+
+    def fit(
+        self, features: Sequence[FeatureVector], targets_px: np.ndarray, context: FitContext
+    ) -> FittedModel:
+        width, height = context.screen_px
+        centre = (width / 2.0, height / 2.0)
+        point = np.array(centre, dtype=float)
+        # A constant that ignores the data predicts the same whatever is held out.
+        validation = leave_one_out_rms_px(targets_px, lambda train, held_out: point)
+        return ConstantModel(centre, validation)
+
+
+@dataclass(frozen=True)
+class CalibrationMeanBaseline:
+    name: str = "calibration-mean"
+    description: str = (
+        "baseline: always predicts the mean of the calibration targets and ignores the "
+        "image; validation error = leave-one-out RMS of that mean"
+    )
+    k_per_dot: int | None = None
+    needs_other_persons: bool = False
+
+    def fit(
+        self, features: Sequence[FeatureVector], targets_px: np.ndarray, context: FitContext
+    ) -> FittedModel:
+        targets = np.asarray(targets_px, dtype=float).reshape(-1, 2)
+
+        def fit_predict(train: np.ndarray, held_out: int) -> np.ndarray:
+            result: np.ndarray = targets[train].mean(axis=0)
+            return result
+
+        mean = targets.mean(axis=0)
+        return ConstantModel(
+            (float(mean[0]), float(mean[1])), leave_one_out_rms_px(targets, fit_predict)
+        )
+
+
+# ---------------------------------------------------------------------------
 # the registry
 # ---------------------------------------------------------------------------
 
@@ -285,6 +354,7 @@ def build_variants() -> dict[str, Variant]:
             )
         )
     variants += [HeadPoseRidgeVariant(), GlobalLopoVariant()]
+    variants += [CentreBaseline(), CalibrationMeanBaseline()]
     return {v.name: v for v in variants}
 
 

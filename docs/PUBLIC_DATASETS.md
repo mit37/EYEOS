@@ -245,6 +245,24 @@ and add a test in `tests/test_public_mpiifacegaze.py`. A variant that sets
 `needs_other_persons` receives the other participants in `context.other_persons`; the
 protocol never includes the participant being evaluated.
 
+### Baselines and the live-style calibration
+
+These variants were added after the first real run (2026-11-18), so the committed
+`eval/results/mpiifacegaze.json` has no numbers for them yet; the next run on the
+dataset will.
+
+Two baselines ignore the image. They put every other error on a scale: how much of it
+is left once a model has used the photo at all.
+
+| Variant | Predicts, for every frame | Its `validation_error_px` |
+|---|---|---|
+| `centre` | the screen centre (W/2, H/2) | the RMS distance of the calibration targets to the centre: the leave-one-out of a constant that ignores the data |
+| `calibration-mean` | the mean of the calibration targets | the true leave-one-out RMS of that mean predictor |
+
+Both go through the same protocol as `eyeos`: the same calibration and test frames, the
+same rounding and clamping, so their pixel and angular errors compare directly with
+every other row.
+
 ## The results JSON
 
 `--out` gets: `dataset`, `license`, `citation`, `generated` (UTC date and time),
