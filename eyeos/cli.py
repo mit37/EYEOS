@@ -5,6 +5,10 @@ the cursor; the safety gates and their logged reasons are still fully exercised.
 ``--calibrate`` shows the 9-dot screen first and fits on the same camera stream the
 session then runs on; ``--overlay`` shows the four gate lights; ``--view`` shows the
 live tracking view (eyeos/tracking_view.py). All three need a display.
+
+``eyeos record`` shows a fullscreen sequence of dots and prompts and saves the face
+landmarks of every frame, labelled with what was on screen, for eval/run_eval.py
+(see docs/RECORDING.md). It never moves the cursor. Needs a display.
 """
 
 from __future__ import annotations
@@ -25,7 +29,11 @@ from eyeos.logging_utils import SessionLogger
 from eyeos.output import OutputAdapter
 from eyeos.overlay import GateOverlay
 from eyeos.pipeline import Pipeline
+from eyeos.recorder import SessionRecorder, check_timings
 from eyeos.tracking_view import TrackingView
+
+# PRD §5's click false-trigger test uses a 5-minute "just reading" segment.
+PRD_READING_S = 300.0
 
 
 def _build_input_source(config: Config, keep_images: bool = False) -> InputSource:
@@ -117,6 +125,37 @@ def build_arg_parser() -> argparse.ArgumentParser:
         "and the gate lights over the camera image (needs a display and OpenCV; "
         "q or closing the window hides it, the session keeps running)",
     )
+
+    record = sub.add_parser(
+        "record",
+        help="record a labelled session for eval/run_eval.py (needs a display and a camera)",
+        description=(
+            "Show calibration and validation dots, three look-away prompts and a "
+            "reading passage, fullscreen, and save each camera frame's face landmarks "
+            "(no images) with what was on screen. See docs/RECORDING.md."
+        ),
+    )
+    record.add_argument("--config", required=True, help="config YAML: input source and screen size")
+    record.add_argument(
+        "--out", required=True, help="session CSV to write (an existing file is never replaced)"
+    )
+    record.add_argument(
+        "--dot-s", type=float, default=2.0, help="seconds each dot is shown (default 2.0)"
+    )
+    record.add_argument(
+        "--settle-s",
+        type=float,
+        default=0.6,
+        help="seconds at the start of each dot, and of reading, left out of the eval "
+        "while the eyes get there (default 0.6)",
+    )
+    record.add_argument(
+        "--reading-s",
+        type=float,
+        default=60.0,
+        help="seconds of reading (default 60; 300 matches PRD §5's 5-minute segment)",
+    )
+    record.add_argument("--no-reading", action="store_true", help="skip the reading stage")
 
     return parser
 
@@ -232,11 +271,82 @@ def _run(args: argparse.Namespace) -> int:
     return 0
 
 
+def _shell_arg(value: str) -> str:
+    """Quote a path for a command line if it has whitespace (cmd, PowerShell and sh all
+    accept double quotes)."""
+    return f'"{value}"' if any(ch.isspace() for ch in value) else value
+
+
+def _record(args: argparse.Namespace) -> int:
+    reading = not args.no_reading
+    # Bad timings, a bad config and an existing file all fail before the camera opens.
+    check_timings(args.dot_s, args.settle_s, args.reading_s, reading)
+    config = load_config(args.config)
+    out = Path(args.out)
+    if out.exists():
+        raise ValueError(
+            f"{out} already exists, and eyeos record never replaces a session: "
+            "pass a new --out path"
+        )
+    if config.input.source != "webcam":
+        print(
+            f"eyeos: warning: input.source is {config.input.source!r}, not 'webcam': its "
+            "frames come as fast as they can be read and don't follow the dots, so this "
+            "is only good for testing",
+            file=sys.stderr,
+        )
+    if reading and args.reading_s < PRD_READING_S:
+        print(
+            f"eyeos: note: reading lasts {args.reading_s:g} s; PRD §5's click "
+            f"false-trigger test uses 5 minutes (--reading-s {PRD_READING_S:g})",
+            file=sys.stderr,
+        )
+
+    with contextlib.ExitStack() as cleanup:
+        input_source = _build_input_source(config)
+        cleanup.callback(input_source.close)
+        frames = iter(input_source.frames())
+        # Open the source before the window: a camera or MediaPipe error raised inside
+        # the window's frame loop would only surface once the screen had come up.
+        first_frame = next(frames, None)
+        if first_frame is None:
+            raise RuntimeError("the input source gave no frames, so there is nothing to record")
+        recorder = SessionRecorder(
+            config.screen.width_px,
+            config.screen.height_px,
+            itertools.chain([first_frame], frames),
+            out,
+            dot_s=args.dot_s,
+            settle_s=args.settle_s,
+            reading_s=args.reading_s,
+            reading=reading,
+        )
+        saved = recorder.run()
+
+    if not saved:
+        print("eyeos: recording cancelled; nothing was saved", file=sys.stderr)
+        return 1
+    results = out.with_name(f"{out.stem}-results.json")
+    print(
+        f"recorded {recorder.frame_count} frames to {out.resolve()} "
+        "(face landmarks only; no camera images)"
+    )
+    print("evaluate it, from the repository root, with:")
+    print(
+        f"python -m eval.run_eval --session {_shell_arg(str(out.resolve()))} "
+        f"--config {_shell_arg(str(Path(args.config).resolve()))} "
+        f"--out {_shell_arg(str(results.resolve()))}"
+    )
+    return 0
+
+
 def main(argv: list[str] | None = None) -> int:
     """Run the CLI. Errors propagate as exceptions (for tests and programmatic use)."""
     args = build_arg_parser().parse_args(argv)
     if args.command == "run":
         return _run(args)
+    if args.command == "record":
+        return _record(args)
     raise ValueError(f"unknown command: {args.command!r}")  # pragma: no cover
 
 

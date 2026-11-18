@@ -6,6 +6,7 @@ from __future__ import annotations
 import ast
 import csv
 import math
+import shlex
 import sys
 from pathlib import Path
 
@@ -650,3 +651,212 @@ def test_the_recorder_listens_only_to_its_own_window_and_never_drives_the_cursor
             imported.add(node.module)
     forbidden = ("eyeos.output", "eyeos.hotkeys", "eyeos.pipeline", "pynput")
     assert not [m for m in imported if m.startswith(forbidden)]
+
+
+# ---------------------------------------------------------------------------
+# eyeos record (the CLI)
+# ---------------------------------------------------------------------------
+
+
+def _record_config(tmp_path, n_frames=1500, backend="dry_run"):
+    """A synthetic input of a user looking at the screen centre, n_frames long."""
+    from eval.generate_synthetic import make_landmarks
+    from eyeos.synthetic_format import CSV_FIELDNAMES, landmarks_to_row
+
+    frames_csv = tmp_path / "camera.csv"
+    with frames_csv.open("w", newline="") as f:
+        writer = csv.DictWriter(f, fieldnames=CSV_FIELDNAMES)
+        writer.writeheader()
+        for i in range(n_frames):
+            writer.writerow(landmarks_to_row(i * DT, make_landmarks(0.0, 0.0)))
+    config_path = tmp_path / "config.yaml"
+    config_path.write_text(
+        f"input:\n  source: synthetic\n  synthetic_path: {frames_csv}\n"
+        f"output:\n  backend: {backend}\n"
+    )
+    return config_path
+
+
+@pytest.fixture
+def scripted_user(monkeypatch, fake_tk):
+    """Install a SessionRecorder in the CLI whose window ``action(recorder, root)``
+    acts on before each tick."""
+    import eyeos.cli as cli
+    from eyeos.recorder import SessionRecorder
+
+    made = []
+
+    def install(action):
+        class Scripted(SessionRecorder):
+            def __init__(self, *args, **kwargs):
+                super().__init__(*args, **kwargs)
+                self.root.on_poll = lambda root: action(self, root)
+                made.append(self)
+
+        monkeypatch.setattr(cli, "SessionRecorder", Scripted)
+        return made
+
+    return install
+
+
+FAST = ["--dot-s", "0.5", "--settle-s", "0.1", "--reading-s", "1"]
+
+
+def test_cli_record_writes_the_session_and_prints_the_next_command(tmp_path, capsys, scripted_user):
+    from eval.generate_synthetic import FIELDNAMES
+    from eval.run_eval import main as run_eval_main
+    from eyeos.cli import console_main
+
+    scripted_user(lambda rec, root: root.fire("<space>"))
+    config = _record_config(tmp_path)
+    out = tmp_path / "recordings" / "s1.csv"  # the directory doesn't exist yet
+
+    assert console_main(["record", "--config", str(config), "--out", str(out), *FAST]) == 0
+
+    lines = capsys.readouterr().out.strip().splitlines()
+    assert lines[0].startswith("recorded ") and str(out.resolve()) in lines[0]
+    assert "landmarks only" in lines[0]
+    with out.open(newline="") as f:
+        assert f.readline().rstrip("\r\n").split(",") == FIELDNAMES
+
+    # The printed command is the one to run next, and it works as printed.
+    command = shlex.split(lines[-1])
+    assert command[:3] == ["python", "-m", "eval.run_eval"]
+    assert command[command.index("--config") + 1] == str(config.resolve())
+    assert run_eval_main(command[3:]) == 0
+    assert Path(command[command.index("--out") + 1]).exists()
+
+
+def test_cli_record_returns_1_when_cancelled(tmp_path, capsys, scripted_user):
+    from eyeos.cli import console_main
+
+    scripted_user(lambda rec, root: root.fire("<Escape>"))
+    out = tmp_path / "s1.csv"
+
+    code = console_main(["record", "--config", str(_record_config(tmp_path)), "--out", str(out)])
+
+    assert code == 1
+    assert "cancelled" in capsys.readouterr().err
+    assert not out.exists()
+
+
+def test_cli_record_never_overwrites_a_session(tmp_path, capsys, scripted_user):
+    from eyeos.cli import console_main
+
+    made = scripted_user(lambda rec, root: root.fire("<space>"))
+    out = tmp_path / "s1.csv"
+    out.write_text("an earlier session\n")
+
+    code = console_main(["record", "--config", str(_record_config(tmp_path)), "--out", str(out)])
+
+    assert code == 2
+    assert "already exists" in capsys.readouterr().err
+    assert out.read_text() == "an earlier session\n"
+    assert made == []  # refused before any window opened
+
+
+def test_cli_record_fails_before_the_screen_when_the_camera_cannot_open(
+    tmp_path, capsys, monkeypatch
+):
+    from eyeos.cli import console_main
+    from tests.fake_capture import FakeCv2, FakeMediapipe, install_fakes
+
+    install_fakes(monkeypatch, cv2=FakeCv2(opened=False), mediapipe=FakeMediapipe())
+    # Opening the screen first would raise this, which console_main doesn't catch.
+    monkeypatch.setitem(sys.modules, "tkinter", make_fake_tk(fail_with=AssertionError("screen")))
+    config = tmp_path / "config.yaml"
+    config.write_text("input:\n  source: webcam\n")
+    out = tmp_path / "s1.csv"
+
+    assert console_main(["record", "--config", str(config), "--out", str(out)]) == 2
+
+    err = capsys.readouterr().err
+    assert err.splitlines()[-1].startswith("eyeos: error: could not open webcam device 0")
+    assert "not 'webcam'" not in err
+    assert not out.exists()
+
+
+def test_cli_record_reports_a_stream_that_ends_mid_run(tmp_path, capsys, scripted_user):
+    from eyeos.cli import console_main
+
+    made = scripted_user(lambda rec, root: root.fire("<space>"))
+    config = _record_config(tmp_path, n_frames=50)
+    out = tmp_path / "s1.csv"
+
+    assert console_main(["record", "--config", str(config), "--out", str(out)]) == 2
+
+    assert "camera stopped during recording" in capsys.readouterr().err
+    assert made[0].root.destroyed
+    assert not out.exists()
+
+
+def test_cli_record_checks_its_timings_before_opening_the_camera(tmp_path, capsys, monkeypatch):
+    from eyeos.cli import console_main
+    from tests.fake_capture import FakeCv2, FakeMediapipe, install_fakes
+
+    fake_cv2 = FakeCv2(opened=False)
+    install_fakes(monkeypatch, cv2=fake_cv2, mediapipe=FakeMediapipe())
+    config = tmp_path / "config.yaml"
+    config.write_text("input:\n  source: webcam\n")
+
+    argv = ["record", "--config", str(config), "--out", str(tmp_path / "s.csv")]
+    assert console_main([*argv, "--dot-s", "0.5", "--settle-s", "0.5"]) == 2
+
+    assert "settle" in capsys.readouterr().err
+    assert fake_cv2.captures == []
+
+
+def test_cli_record_needs_a_config_and_an_out_path(tmp_path, capsys):
+    from eyeos.cli import console_main
+
+    with pytest.raises(SystemExit) as e:
+        console_main(["record", "--out", str(tmp_path / "s.csv")])
+    assert e.value.code == 2
+    with pytest.raises(SystemExit):
+        console_main(["record", "--config", str(_record_config(tmp_path))])
+
+
+def test_cli_record_never_builds_an_output_or_a_key_listener(tmp_path, monkeypatch, scripted_user):
+    import eyeos.cli as cli
+    from eyeos.cli import console_main
+
+    def refuse(_config):
+        raise AssertionError("eyeos record must not move the cursor or listen to keys")
+
+    monkeypatch.setattr(cli, "_build_output", refuse)
+    monkeypatch.setattr(cli, "_build_key_signals", refuse)
+    scripted_user(lambda rec, root: root.fire("<space>"))
+    # Even with a real-cursor backend in the config.
+    config = _record_config(tmp_path, backend="pynput")
+
+    argv = ["record", "--config", str(config), "--out", str(tmp_path / "s.csv"), *FAST]
+    assert console_main(argv) == 0
+
+
+@pytest.mark.parametrize(
+    "extra, says_300",
+    [([], True), (["--reading-s", "300"], False), (["--no-reading"], False)],
+)
+def test_cli_record_says_when_reading_is_shorter_than_the_prd_asks(
+    tmp_path, capsys, scripted_user, extra, says_300
+):
+    from eyeos.cli import console_main
+
+    scripted_user(lambda rec, root: root.fire("<Escape>"))
+    argv = ["record", "--config", str(_record_config(tmp_path)), "--out", str(tmp_path / "s.csv")]
+
+    assert console_main([*argv, *extra]) == 1
+    assert ("--reading-s 300" in capsys.readouterr().err) is says_300
+
+
+def test_cli_record_warns_that_only_a_webcam_records_a_real_session(
+    tmp_path, capsys, scripted_user
+):
+    from eyeos.cli import console_main
+
+    scripted_user(lambda rec, root: root.fire("<Escape>"))
+    argv = ["record", "--config", str(_record_config(tmp_path)), "--out", str(tmp_path / "s.csv")]
+
+    assert console_main([*argv, "--no-reading"]) == 1
+    err = capsys.readouterr().err
+    assert "input.source is 'synthetic', not 'webcam'" in err
