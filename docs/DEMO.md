@@ -117,9 +117,13 @@ opens for good with the first frame.
 2. Look away in three ways. Each one changes a different light, or none:
    - Lean out of the camera's view, or have a second person lean in. The Gate 1
      light goes red ("expected exactly one face") and the cursor freezes.
-   - Keep looking at the screen and turn your head about 20° to one side. Gate 1
-     stays green; the Gate 2 light goes red ("head pose drifted ... — recalibrate",
-     past 15° from your calibration pose) and the cursor freezes until you turn back.
+   - Keep looking at the screen and turn your head to one side. Gate 1 stays green;
+     the Gate 2 light should go red ("head pose drifted ... — recalibrate", past 15 of
+     EyeOS's head-pose units from your calibration pose) and the cursor freezes until
+     you turn back. On MPIIFaceGaze, EyeOS's yaw and pitch read well under the real
+     angle while roll (tilting the head sideways) reads true (README, "The head-pose
+     estimate is uncalibrated"), so a 20° turn may not be enough: note how far you had
+     to turn, or whether it tripped at all, and try a sideways tilt too.
    - Keep your head still and glance past the screen edge with your eyes only. No
      light changes and the cursor pins to the screen edge: EyeOS doesn't catch this.
      It is a known negative result (see README's Results).

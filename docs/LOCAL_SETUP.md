@@ -452,9 +452,13 @@ Tick each box; where you see something else, write it down. That is a real resul
       move_cursor` lines follow your gaze while the real mouse stays put.
 - [ ] Lean out of the camera's view: Gate 1 goes red, `expected exactly one face, saw
       0`. Have a second person lean in: `saw 2`. The `move_cursor` lines stop.
-- [ ] Keep looking at the screen and turn your head about 20° to one side: Gate 1
-      stays green, Gate 2 goes red, `head pose drifted 20.3deg from calibration pose
+- [ ] Keep looking at the screen and turn your head to one side: Gate 1 stays green,
+      and Gate 2 should go red, `head pose drifted 20.3deg from calibration pose
       (limit 15.0deg) — recalibrate` (your number will differ). Turn back: green again.
+      On MPIIFaceGaze EyeOS's yaw and pitch read well under the real angle (only
+      roll, tilting your head sideways, reads true), so a 20° turn may not trip it.
+      Write down roughly how far you had to turn, or that it never tripped, and try a
+      sideways tilt too: that is a real measurement nobody has made yet.
 - [ ] Hold your gaze on one spot: Gate 3 goes green (`dwell satisfied`) after 0.8 s.
       If it never does, your gaze jitters more than the 20 px dwell radius. The
       README's Results predicts this from synthetic noise; seeing it for real is worth
