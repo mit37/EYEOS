@@ -13,7 +13,7 @@
       1. finds Python 3.12, 3.11 or 3.10 through the py launcher (py -3.12, ...).
          EyeOS needs mediapipe<0.10.30, which has no wheels for Python 3.13 or newer,
          and whose Windows wheels are for 64-bit x86 Python (win-amd64) only;
-      2. creates .venv, or reuses one made with a supported Python;
+      2. creates .venv, or reuses one made with a supported Python that has pip;
       3. installs EyeOS in editable mode with the extras
          dev,webcam,windows-fallback,public-eval;
       4. runs scripts\check_setup.py (the real OpenCV + MediaPipe) and the test suite;
@@ -99,12 +99,21 @@ if (Test-Path -LiteralPath $VenvPython) {
         Fail (".venv already exists and holds Python '$venvVersion', not 3.10-3.12. " +
             "Delete it (Remove-Item -Recurse -Force .venv) and run this again.")
     }
+    # A venv creation that failed half way can leave a python.exe without pip.
+    $null = & $VenvPython -m pip --version 2>$null
+    if ($LASTEXITCODE -ne 0) {
+        Fail (".venv already exists but has no pip, so an earlier venv creation probably " +
+            "failed half way. Delete it (Remove-Item -Recurse -Force .venv) and run this again.")
+    }
     Say "reusing .venv (Python $venvVersion)"
 } else {
     Say "creating .venv with Python $PyVersion"
     Write-Host "+ py -$PyVersion -m venv .venv"
     & py "-$PyVersion" -m venv .venv
-    if ($LASTEXITCODE -ne 0) { Fail "could not create .venv with py -$PyVersion (output above)" }
+    if ($LASTEXITCODE -ne 0) {
+        Fail ("could not create .venv with py -$PyVersion (output above). Delete the " +
+            "half-made .venv (Remove-Item -Recurse -Force .venv) before running this again.")
+    }
 }
 
 # --- 4. install, check, test ----------------------------------------------------------

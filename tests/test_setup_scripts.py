@@ -311,3 +311,16 @@ def test_windows_script_runs_the_same_steps_in_the_same_order():
     assert positions == sorted(positions)
     # And every native step's exit code is checked.
     assert text.count("if ($LASTEXITCODE -ne 0)") >= len(steps)
+
+
+def test_windows_script_refuses_a_reused_venv_without_pip():
+    """Like setup_unix.sh: a .venv left by a failed venv creation runs but has no pip,
+    and must not be reused (pip's failure would read as a network problem)."""
+    text = WINDOWS_SCRIPT.read_text()
+    start = text.index("if (Test-Path -LiteralPath $VenvPython) {")
+    reuse = text[start : text.index('Say "reusing .venv', start)]
+    assert "& $VenvPython -m pip --version" in reuse
+    assert "no pip" in reuse and "Remove-Item -Recurse -Force .venv" in reuse
+    created = text[text.index("-m venv .venv", start) : text.index("# --- 4.")]
+    failed = created[created.index("if ($LASTEXITCODE -ne 0)") :]
+    assert "Remove-Item -Recurse -Force .venv" in failed
