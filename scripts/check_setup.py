@@ -67,14 +67,23 @@ def check_eyeos(repo_root: Path = REPO_ROOT) -> Result:
         return Result("eyeos", "fail", f"not importable ({e}): pip install -e . from {repo_root}")
     location = Path(eyeos.__file__).resolve().parent
     name = f"eyeos {getattr(eyeos, '__version__', '?')}"
-    if not location.is_relative_to(repo_root.resolve()):
+    if location == (repo_root / "eyeos").resolve():
+        return Result(name, "ok", f"from {location}")
+    if location.is_relative_to(repo_root.resolve()):
+        # Inside the checkout but not its eyeos/ folder: a copy that pip install without
+        # -e put in .venv's site-packages. `eyeos run` runs it; git pull doesn't reach it.
         return Result(
             name,
             "warn",
-            f"imported from {location}, another checkout, not {repo_root}: run "
-            "pip install -e . from this folder to use this checkout's code",
+            f"imported from {location}, a copy installed without -e, so your edits and "
+            "git pull don't reach it: run pip install -e . from this folder",
         )
-    return Result(name, "ok", f"from {location}")
+    return Result(
+        name,
+        "warn",
+        f"imported from {location}, another checkout, not {repo_root}: run "
+        "pip install -e . from this folder to use this checkout's code",
+    )
 
 
 def _import_error(label: str, module: str, e: Exception) -> Result:

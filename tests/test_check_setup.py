@@ -205,3 +205,27 @@ def test_a_stdout_that_cannot_encode_the_paths_does_not_crash(all_installed, mon
     assert "Jos\\xe9" in out.splitlines()[0]
     assert "[warn] eyeos 2.0.0: imported from /home/Zo\\xeb/" in out
     assert out.rstrip().endswith("All required checks passed.")
+
+
+@pytest.mark.parametrize(
+    "site_packages",
+    [".venv/lib/python3.12/site-packages", ".venv/Lib/site-packages"],  # Linux/macOS, Windows
+)
+def test_eyeos_installed_as_a_copy_inside_the_checkout_warns(monkeypatch, tmp_path, site_packages):
+    """pip install without -e puts a frozen copy in .venv, and .venv is inside the
+    checkout: `eyeos run` would run that copy, not this folder's code after a git pull."""
+    (tmp_path / "eyeos").mkdir()
+    _fake_eyeos(monkeypatch, str(tmp_path / site_packages / "eyeos" / "__init__.py"))
+
+    result = check_setup.check_eyeos(repo_root=tmp_path)
+
+    assert result.status == "warn"
+    assert "a copy" in result.detail and "without -e" in result.detail
+    assert "pip install -e ." in result.detail
+
+
+def test_eyeos_from_this_checkouts_eyeos_folder_is_ok(monkeypatch, tmp_path):
+    _fake_eyeos(monkeypatch, str(tmp_path / "eyeos" / "__init__.py"))
+    result = check_setup.check_eyeos(repo_root=tmp_path)
+    assert result.status == "ok"
+    assert str(tmp_path / "eyeos") in result.detail

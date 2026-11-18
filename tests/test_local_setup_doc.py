@@ -146,3 +146,10 @@ def test_the_guide_says_what_has_not_run():
     assert "setup_windows.ps1" in text
     assert "never been run" in text  # the Windows script
     assert "Python 3.12" in text and "mediapipe<0.10.30" in text
+
+
+def test_troubleshooting_explains_both_eyeos_location_warnings():
+    """check_setup.py warns when eyeos comes from another checkout or from a copy."""
+    troubleshooting = _guide().split("\n## Troubleshooting\n", 1)[1].split("\n## ", 1)[0]
+    assert "comes from another checkout" in troubleshooting
+    assert "a copy installed without -e" in troubleshooting

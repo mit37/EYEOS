@@ -397,6 +397,10 @@ would want a GPU to train. They are future work and not part of this repo.
 - **`check_setup.py` warns that `eyeos` comes from another checkout**: you installed
   EyeOS from a different folder too. Run the `pip install -e ...` line from this
   folder.
+- **`check_setup.py` warns that `eyeos` is a copy installed without -e**: the `pip
+  install` line ran without `-e`, so `.venv` holds a frozen copy that `eyeos run` uses
+  and that neither your edits nor `git pull` change. Run the `pip install -e ...` line
+  again, with the `-e`.
 - **Your recordings never leave the machine.** `eyeos/` contains no networking code.
   Session logs (`logs/`) hold timestamps, gate decisions and their reasons, and cursor
   coordinates. `eyeos record` writes a CSV of landmark numbers (the format `run_eval`
