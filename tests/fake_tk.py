@@ -12,6 +12,11 @@ left (real Tk would then wait for input; a test has none to give). ``Tk.on_poll`
 called before each one, so a scripted user can press keys between callbacks, as Tk
 handles input between them. ``bell()`` only counts.
 
+Every widget reports the window's place and size (``winfo_rootx``/``winfo_rooty``/
+``winfo_width``/``winfo_height``): by default the whole screen from (0, 0), as a
+fullscreen window gets; ``make_fake_tk(window_geometry=(x, y, w, h))`` simulates one
+that doesn't cover it.
+
 Like real Tk, a destroyed window stays destroyed: a second ``destroy()``, and any call
 on one of its widgets or that creates one, raises TclError. ``update()`` and
 ``update_idletasks()`` are the exception: they are core Tcl commands, and real Tk lets
@@ -62,10 +67,30 @@ class _Widget:
 
     configure = config
 
+    def _window(self) -> tuple[int, int, int, int]:
+        root = self._root()
+        root._check_alive("winfo")
+        if root.window_geometry is not None:
+            return tuple(root.window_geometry)
+        return (0, 0, *root.screen_size)
+
+    def winfo_rootx(self) -> int:
+        return self._window()[0]
+
+    def winfo_rooty(self) -> int:
+        return self._window()[1]
+
+    def winfo_width(self) -> int:
+        return self._window()[2]
+
+    def winfo_height(self) -> int:
+        return self._window()[3]
+
 
 class Tk(_Widget):
     fail_with: Exception | None = None  # set to TclError(...) to simulate "no $DISPLAY"
     screen_size: tuple[int, int] = (1920, 1080)
+    window_geometry: tuple[int, int, int, int] | None = None  # None: covers the screen
 
     def __init__(self) -> None:
         if type(self).fail_with is not None:
@@ -83,6 +108,8 @@ class Tk(_Widget):
         self.callback_errors: list[BaseException] = []
         self.on_poll: Any = None  # called before each after() callback in mainloop()
         self.bells = 0
+        self.geometry_spec: str | None = None
+        self.focus_forced = False
         self.now_ms = 0  # the virtual clock after() callbacks are due on
         self._after: dict[str, tuple[int, int, Any, tuple[Any, ...]]] = {}
         self._after_seq = 0
@@ -105,6 +132,14 @@ class Tk(_Widget):
 
     def resizable(self, *_args: Any) -> None:
         self._check_alive("wm")
+
+    def geometry(self, spec: str) -> None:
+        self._check_alive("wm")
+        self.geometry_spec = spec
+
+    def focus_force(self) -> None:
+        self._check_alive("focus")
+        self.focus_forced = True
 
     def bind(self, sequence: str, handler: Any) -> None:
         self._check_alive("bind")
@@ -225,10 +260,16 @@ class Canvas(_Widget):
 
 
 def make_fake_tk(
-    fail_with: Exception | None = None, screen_size: tuple[int, int] = (1920, 1080)
+    fail_with: Exception | None = None,
+    screen_size: tuple[int, int] = (1920, 1080),
+    window_geometry: tuple[int, int, int, int] | None = None,
 ) -> types.ModuleType:
     module = types.ModuleType("tkinter")
-    tk_class = type("Tk", (Tk,), {"fail_with": fail_with, "screen_size": screen_size})
+    tk_class = type(
+        "Tk",
+        (Tk,),
+        {"fail_with": fail_with, "screen_size": screen_size, "window_geometry": window_geometry},
+    )
     module.Tk = tk_class  # type: ignore[attr-defined]
     module.Frame = Frame  # type: ignore[attr-defined]
     module.Label = Label  # type: ignore[attr-defined]
