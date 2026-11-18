@@ -15,6 +15,7 @@ import dataclasses
 import json
 import math
 import random
+import re
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -1105,3 +1106,41 @@ def test_diagnose_cli_reports_a_missing_annotation_file(tmp_path, scipy_io, caps
     assert code == 1
     assert "p00.txt" in capsys.readouterr().err
     assert not out.exists()
+
+
+# ---------------------------------------------------------------------------
+# docs/PUBLIC_DATASETS.md
+# ---------------------------------------------------------------------------
+
+_DOC = Path(__file__).resolve().parents[1] / "docs" / "PUBLIC_DATASETS.md"
+
+
+def _diagnostics_subsection() -> str:
+    text = _DOC.read_text()
+    heading = "### Diagnostics: where the error comes from"
+    start = text.index(heading) + len(heading)
+    after = re.search(r"^##{1,2} ", text[start:], flags=re.MULTILINE)  # the next heading
+    return text[start : start + after.start()] if after else text[start:]
+
+
+def test_the_doc_explains_every_diagnostic_section_and_says_the_real_run_is_pending():
+    section = _diagnostics_subsection()
+
+    assert "not been run on the real data" in section
+    for name in diagnostics.SECTIONS:
+        assert f"`{name}`" in section, name
+
+
+def test_the_docs_diagnose_command_parses_with_the_real_command_line():
+    text = _diagnostics_subsection().replace("\\\n", " ")
+    commands = [
+        line.split()
+        for line in text.splitlines()
+        if line.strip().startswith("python -m eval.public.mpiifacegaze diagnose ")
+    ]
+
+    assert len(commands) == 1
+    args = mpii.build_parser().parse_args(commands[0][3:])
+    assert args.root == Path("datasets/MPIIFaceGaze")
+    assert args.cache == Path("datasets/cache/mpiifacegaze")
+    assert args.out == Path("eval/results/mpiifacegaze-diagnostics.json")

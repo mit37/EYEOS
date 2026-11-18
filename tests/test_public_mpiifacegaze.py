@@ -1832,7 +1832,7 @@ def test_the_doc_commands_parse_with_the_real_command_line():
         if line.strip().startswith("python -m eval.public.mpiifacegaze ")
     ]
 
-    assert {c[3] for c in commands} == {"extract", "evaluate"}
+    assert {c[3] for c in commands} == {"extract", "evaluate", "diagnose"}
     for command in commands:
         args = mpii.build_parser().parse_args(command[3:])
         assert args.root == Path("datasets/MPIIFaceGaze")

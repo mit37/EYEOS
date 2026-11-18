@@ -509,6 +509,85 @@ averages 319 px; Gate 2 needs < 60 px.
   this repo), and a measured constant-prediction baseline (`ridge-10` approximates one,
   as above; the baseline variants added since have not run on the real data).
 
+### Diagnostics: where the error comes from
+
+**This has not been run on the real data yet.** The `diagnose` command was added after
+the run above. It is tested only on fake datasets (`tests/test_public_diagnostics.py`)
+whose cause of error is known: noise-free faces, iris offsets that shift with head yaw,
+a different iris bias on each day, pure landmark noise, and EyeOS head angles that are a
+known multiple of the dataset's. Until a session with the data runs it and commits
+the JSON, nothing here says where the 258 px mean in the table above comes from; this
+section says how to read the answer when it exists.
+
+```bash
+python -m eval.public.mpiifacegaze diagnose --root datasets/MPIIFaceGaze \
+    --cache datasets/cache/mpiifacegaze --out eval/results/mpiifacegaze-diagnostics.json
+# optional: --persons p00,p01  --k-per-dot 5  --min-day-images 60
+```
+
+It needs no new extraction. Each image's day is the `dayNN` folder in the cache's
+`image` column. The cache does not keep the dataset's head pose, so `diagnose` reads
+`head_rvec` and `head_tvec` again from `pXX.txt` under `--root` and matches them to the
+cache by image path. A cached image that is missing from `pXX.txt`, or has another
+target there, stops the run with an error. It prints one line per person and writes a
+JSON in which each section says what question it answers (`sections`) and each metric
+has a one-line description (`metrics`). `aggregate` gives the mean, median, min and max
+of each per-person metric. The JSON has no timestamp and rounds every number to 10
+significant digits, so the same cache and code give the same file.
+
+Two sections fit on all of a person's frames and score on those same frames (b and g).
+They are bounds and explanations, not results. Only d and e follow the evaluation
+protocol.
+
+- **a. `feature_sanity`: are the iris offsets sane?** Per eye, the median, p5 and p95
+  of the x and y offsets; the correlation of the two eyes' x offsets (and y); the
+  correlation of each eye's x with the target's x; EyeOS roll p5 to p95. Both eyes turn
+  together, so their correlation should be near +1. Landmark noise pulls it toward 0.
+  An eye whose x correlates with the target's x with the opposite sign
+  (`target_x_signs_match` false) is broken or swapped.
+- **b. `in_sample_ceiling`: how well could any calibration of these features do?** The
+  shipping model (affine in the 4 iris offsets, same ridge strength) is fitted on all of
+  a person's valid frames and scored on the same frames. The same is done for each eye
+  alone and with EyeOS's head pose added. If this optimistic bound is still far above
+  Gate 2's 60 px, no choice of calibration images can pass Gate 2: the features are the
+  limit. One eye far worse than the other points to that eye.
+- **c. `constant_baselines`: the yardstick.** The error of always predicting the
+  screen centre, and of always predicting the person's own mean target. A model close
+  to these has learned little from the eyes.
+- **d. `cross_day` and `within_day`: is it drift between sittings?** `cross_day` is the
+  standard protocol for the shipping calibration and reproduces `evaluate`'s `eyeos`
+  numbers. `within_day` runs the same protocol (K images per dot, 5 by default, nearest
+  true target, the shipping calibration) inside each day folder with enough valid images
+  (60 by default), and tests on that day's other images. It reports the mean error over
+  those days, the mean leave-one-out validation error (Gate 2's input), how many days
+  pass Gate 2, and how many days were used. Within-day far below cross-day means drift
+  between sittings is a large share of the error; a live session calibrates in the same
+  sitting. Both high means the features are the bottleneck. A day folder can hold
+  several sittings, and a day has fewer images, so its calibration images lie further
+  from the dots (`calibration_mean_distance_px`). The two protocols are not matched in
+  size, and within-day is not a live session either.
+- **e. `error_by_head_pose`: does the error grow as the head moves?** The cross-day
+  test error binned by EyeOS's head-pose distance from the calibration pose (0-5, 5-10,
+  10-15, 15-20 and over 20, in EyeOS's own "degrees", Gate 2's measure), and the error
+  on the frames within Gate 2's head-pose limit only, the frames a live session would
+  act on. Error rising across the bins points to head motion.
+- **f. `head_pose_agreement`: are EyeOS's head angles real degrees?** EyeOS's yaw, pitch
+  and roll are regressed on the dataset's head rotation, per person: slope, intercept
+  and correlation per axis, plus all 9 correlations. |slope| is the scale of EyeOS's
+  "degrees" (1 means real degrees), which sets what Gate 2's 15-degree limit means. The
+  dataset's rotation is read as R = Ry(yaw) Rx(pitch) Rz(roll), head to camera, after
+  undoing a half turn of the head frame if that brings the person's mean rotation closer
+  to the identity (a head frame lined up with the camera's). That reading has not been
+  checked against the real files. So the sign of a slope is not interpreted, and a
+  large off-diagonal correlation would show an axis mix-up.
+- **g. `variance_split`: head motion, the day, or landmark noise?** The share (R²) of
+  the in-sample residual from b that a linear fit explains: on the dataset's head pose
+  (angles and translation), on the day folder alone, and on both. A high head-pose
+  share means head motion the iris offsets do not capture. A high day share means
+  something constant within a day but different between days. Both low means
+  per-frame landmark noise, or effects that are not linear in these. Pure noise scores
+  about k/n (k regressors, n frames), which is small when n is in the thousands.
+
 ## Adding another dataset
 
 1. A downloader `scripts/download_<name>.py` (plus a `.sh` wrapper), modelled on
