@@ -1077,7 +1077,8 @@ def diagnose_dataset(
     min_day_images: int = diagnostics.DEFAULT_MIN_DAY_IMAGES,
 ) -> dict[str, Any]:
     """The diagnostics document for the cached persons (default: every pXX.csv). It has no
-    timestamp, so the same cache and code give the same file."""
+    timestamp and rounds its numbers, so a rerun on the same cache, code and libraries is
+    very unlikely to change it (diagnostics.NUMBER_FORMAT)."""
     names = list(persons) if persons is not None else cached_persons(cache_dir)
     if not names:
         raise DatasetFormatError(

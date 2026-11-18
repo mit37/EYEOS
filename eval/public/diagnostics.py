@@ -19,7 +19,9 @@ part bounds that. They are bounds, not results.
 from __future__ import annotations
 
 import dataclasses
+import importlib.metadata
 import math
+import platform
 from collections.abc import Sequence
 from dataclasses import dataclass
 from typing import Any
@@ -150,6 +152,11 @@ NOTES: dict[str, str] = {
         "numbers for the same cache and K (to the 10 significant digits kept here)."
     ),
     "dataset_head_pose": HEAD_POSE_CONVENTION,
+    "environment": (
+        "the Python, numpy and scipy versions this file was computed with (null = not "
+        "installed). MediaPipe is not run here: the landmarks come from the extract cache, "
+        "which does not record the MediaPipe version that made it."
+    ),
     "eyeos_head_pose": (
         "EyeOS's head pose is its own simplified estimate (eyeos.features: landmark ratios "
         "scaled to 'degrees'), the one Gate 2 uses; head_pose_agreement measures its scale."
@@ -356,13 +363,17 @@ AGGREGATE_NOTE = (
 
 # numpy's vectorised arctan2 and BLAS can return results one unit in the last place
 # apart for the same input at a different memory alignment, so two runs on the same
-# cache could differ in the 16th digit. Rounding makes the file reproducible.
+# cache could differ in the 16th digit. Rounding hides that in all but rare cases: a
+# value that moves by a relative d still crosses a rounding boundary with a chance of
+# about d / 1e-9, and another numpy or BLAS build can move values further.
 SIGNIFICANT_DIGITS = 10
 ZERO_BELOW = 1e-9
 NUMBER_FORMAT = (
     f"every number is rounded to {SIGNIFICANT_DIGITS} significant digits, and any number "
     f"smaller than {ZERO_BELOW:g} in size is written as 0, so that last-digit floating-point "
-    "noise cannot change the file between runs on the same cache"
+    "noise is very unlikely to change the file between runs on the same cache with the "
+    "same libraries (environment); it is not impossible, and other library builds can "
+    "differ further"
 )
 
 
@@ -1054,6 +1065,22 @@ def clean_for_json(value: Any) -> Any:
     return value
 
 
+def _version(package: str) -> str | None:
+    try:
+        return importlib.metadata.version(package)
+    except importlib.metadata.PackageNotFoundError:
+        return None
+
+
+def environment() -> dict[str, str | None]:
+    """The interpreter and numeric libraries the numbers depend on (see NOTES)."""
+    return {
+        "python": platform.python_version(),
+        "numpy": np.__version__,
+        "scipy": _version("scipy"),
+    }
+
+
 def diagnose(
     persons: Sequence[DiagnosticPerson],
     k_per_dot: int = protocol.DEFAULT_K_PER_DOT,
@@ -1067,6 +1094,7 @@ def diagnose(
     return clean_for_json(
         {
             "number_format": NUMBER_FORMAT,
+            "environment": environment(),
             "config": {
                 "protocol_variant": PROTOCOL_VARIANT,
                 "k_per_dot": settings.k_per_dot,

@@ -533,7 +533,10 @@ target there, stops the run with an error. It prints one line per person and wri
 JSON in which each section says what question it answers (`sections`) and each metric
 has a one-line description (`metrics`). `aggregate` gives the mean, median, min and max
 of each per-person metric. The JSON has no timestamp and rounds every number to 10
-significant digits, so the same cache and code give the same file.
+significant digits, so last-digit floating-point noise is very unlikely to change the
+file between runs on the same cache, code and libraries. Very unlikely is not
+impossible, and another numpy or BLAS build can move values further, so the JSON
+records the Python, numpy and scipy versions (`environment`).
 
 Two sections fit on a person's frames and score on those same frames (b and g). They
 are bounds and explanations, not results. Only d and e follow the evaluation protocol.

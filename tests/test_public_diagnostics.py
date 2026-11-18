@@ -12,8 +12,10 @@ scipy and skip without it (it is in the ``dev`` extra, so CI runs them).
 from __future__ import annotations
 
 import dataclasses
+import importlib.util
 import json
 import math
+import platform
 import random
 import re
 from dataclasses import dataclass
@@ -1084,7 +1086,7 @@ def _nudged(face: FaceLandmarks | None) -> FaceLandmarks | None:
 def test_last_bit_noise_in_the_inputs_does_not_change_the_json():
     # numpy's vectorised arctan2 and BLAS can return a result one unit in the last place
     # apart for the same input at a different memory alignment, so the same cache could
-    # give a different file. The JSON is rounded to make that invisible.
+    # give a different file. The JSON is rounded so that this is very unlikely to show.
     spec = Spec(noise=0.05, yaw_range_deg=10.0)
     plain = _person(spec)
     nudged = _person(spec)
@@ -1095,6 +1097,24 @@ def test_last_bit_noise_in_the_inputs_does_not_change_the_json():
         diagnostics.diagnose([nudged]), sort_keys=True
     )
     assert "10 significant digits" in first["number_format"]
+
+
+def test_the_json_records_the_libraries_and_does_not_promise_an_identical_file():
+    result = _diagnose(Spec())
+
+    environment = result["environment"]
+    assert environment["python"] == platform.python_version()
+    assert environment["numpy"] == np.__version__
+    if importlib.util.find_spec("scipy") is None:
+        assert environment["scipy"] is None
+    else:
+        import scipy
+
+        assert environment["scipy"] == scipy.__version__
+    assert "extract" in result["notes"]["environment"]
+    # Rounding makes a changed digit unlikely, not impossible.
+    assert "very unlikely" in result["number_format"]
+    assert "cannot" not in result["number_format"]
 
 
 def test_json_numbers_are_rounded_to_10_significant_digits_and_tiny_ones_to_0():
