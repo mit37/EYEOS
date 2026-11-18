@@ -727,6 +727,11 @@ def extract(
 REPO_ROOT = Path(__file__).resolve().parents[2]
 
 NOTES = {
+    "license": (
+        "The license field names the dataset's license (MPIIFaceGaze is CC BY-NC-SA 4.0). "
+        "This file holds only error metrics of EyeOS's models on that data, per person and "
+        "in aggregate: no images, landmarks or annotations."
+    ),
     "static_photos": (
         "MPIIFaceGaze is still photos, not live video, so the One Euro filter, dwell (Gate 3) "
         "and click confirmation are not exercised: every error is one frame's calibration "
@@ -734,7 +739,8 @@ NOTES = {
     ),
     "calibration_set": (
         "For each of EyeOS's 9 calibration dots, the K valid images whose true target is "
-        "nearest the dot stand in for looking at it, and are added with their true targets. "
+        "nearest the dot stand in for looking at it, and are added with their true targets "
+        "(eyeos-live9 instead averages them into one sample per dot; see eyeos_live9). "
         "calibration_mean_distance_px says how far from the dots those images were."
     ),
     "screens": (
@@ -761,8 +767,38 @@ NOTES = {
         "test frames within Gate 2's head-pose limit of the calibration pose."
     ),
     "validation_error_px": (
-        "Calibration's own leave-one-out RMS error for the eyeos.calibration variants, and the "
-        "same leave-one-out definition for the other models; Gate 2 passes below the limit."
+        "For every variant except eyeos-live9: the leave-one-out RMS error over its 9 x K "
+        "calibration photos (45 at the default K = 5), each labelled with its own true "
+        "target, with the other photos of the same dot left in the fit (Calibration's own "
+        "for the eyeos.calibration variants, the same definition for the others). That is "
+        "not what live Gate 2 judges: live, it is the leave-one-out over 9 samples, each a "
+        "dot's averaged frames placed at the dot. eyeos-live9's validation_error_px is that "
+        "live statistic. passes_gate2 and gate2_passed: validation_error_px below "
+        "config.gate2_max_validation_error_px."
+    ),
+    "restatements": (
+        "eyeos and ridge-0.001 are the same model by construction (Calibration's default "
+        "ridge_lambda is 1e-3), and so is per-dot-5 when config.k_per_dot is 5, the default: "
+        "their per-person results are identical, one result listed under several names."
+    ),
+    "baselines": (
+        "centre and calibration-mean ignore the image: they always predict the screen centre, "
+        "or the mean of the calibration targets, and give every other error its scale. "
+        "centre's validation_error_px is the RMS distance of the calibration targets to the "
+        "centre; calibration-mean's is the leave-one-out RMS of the mean."
+    ),
+    "eyeos_live9": (
+        "eyeos-live9 fits the shipping Calibration the way a live session does "
+        "(eyeos.calibration_session): each dot's K images are averaged into one sample (iris "
+        "offsets and head pose, as collect_dot_features averages frames) placed at the grid "
+        "point, not at the images' true targets. Unlike live, the K images are separate "
+        "moments, often from different days, not consecutive frames of one."
+    ),
+    "environment": (
+        "where evaluate ran: Python, platform and library versions (null = not installed). "
+        "environment.extract copies, per evaluated person, the cache's manifest.json entry "
+        "written by extract (detector, FaceMesh settings, mediapipe and OpenCV versions); "
+        "null when the cache has no manifest, or for a person it does not list."
     ),
 }
 

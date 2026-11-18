@@ -1554,6 +1554,27 @@ def test_evaluate_cli_writes_the_results_json(tmp_path, scipy_io, capsys):
     assert "eyeos" in capsys.readouterr().out
 
 
+def test_the_results_notes_say_what_the_file_holds_and_which_statistic_is_which():
+    notes = mpii.NOTES
+
+    assert "names the dataset's license" in notes["license"]
+    assert "only error metrics of EyeOS's models" in notes["license"]
+    validation = notes["validation_error_px"]
+    assert "45" in validation and "except eyeos-live9" in validation
+    assert "live Gate 2" in validation and "9 samples" in validation
+    assert "ridge-0.001" in notes["restatements"] and "per-dot-5" in notes["restatements"]
+    assert "same model by construction" in notes["restatements"]
+    assert "centre" in notes["baselines"] and "calibration-mean" in notes["baselines"]
+    assert "collect_dot_features" in notes["eyeos_live9"]
+    assert "manifest.json" in notes["environment"]
+    assert "eyeos-live9" in notes["calibration_set"]
+    # Every variant a note names exists.
+    named = set(
+        re.findall(r"\b(?:eyeos-live9|ridge-[\d.]+|per-dot-\d+|calibration-mean)\b", str(notes))
+    )
+    assert named <= set(models.VARIANT_NAMES)
+
+
 def test_package_versions_come_from_the_installed_distributions():
     assert mpii.package_version("numpy") == np.__version__
     assert mpii.package_version("no-such-distribution-eyeos") is None
