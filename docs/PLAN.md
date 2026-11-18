@@ -160,7 +160,11 @@ Restated from `PRD.md` §8, per `STANDARDS.md` §6 step 1.
   asked for a constant-prediction baseline, a live-style calibration variant and
   diagnostics (a same-day split, the dataset's own head pose). These were added after
   the run (the `centre` and `calibration-mean` baselines, `eyeos-live9`, and the
-  `diagnose` command) and have not run on the real data yet.
+  `diagnose` command). A second run on the real data (2026-11-18, commit `b0f817a`)
+  ran them: the 12 original variants reproduced bit for bit, `eyeos-live9` fails live
+  Gate 2's statistic for all 15 people too, and the diagnostics point mainly at
+  per-frame landmark noise in the iris offsets, with head motion and day-to-day drift
+  secondary (`docs/PUBLIC_DATASETS.md`, "Second run").
 
 ## Cloud-instance constraints (PRD §7, STANDARDS §6.4)
 
@@ -240,8 +244,11 @@ is therefore behind an interface and tested only against a fake:
   reachable from the container it was built in, so it was built against a fake dataset
   with a fake detector. A later cloud session (2026-11-18) could reach the host and ran
   the real download, extraction and evaluation; the numbers are in
-  `eval/results/mpiifacegaze.json` and `docs/PUBLIC_DATASETS.md` ("Real run"). That was
-  one run; anything added to the harness since has not run on the real data. The
+  `eval/results/mpiifacegaze.json` and `docs/PUBLIC_DATASETS.md` ("Real run"). A
+  second session the same day reran it with the baselines, `eyeos-live9` and
+  `diagnose` (`eval/results/mpiifacegaze-diagnostics.json`; "Second run"); the first
+  run's numbers reproduced exactly. Anything added to the harness after commit
+  `b0f817a` has not run on the real data. The
   automated tests still use only the fake dataset: the real one is non-commercial and
   never committed, so CI cannot run it.
 

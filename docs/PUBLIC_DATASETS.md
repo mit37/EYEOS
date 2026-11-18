@@ -18,12 +18,15 @@ models can be refitted and compared on the same data with one command each.
 - **Smoke-tested with the real libraries** (OpenCV 4.11, MediaPipe 0.10.21, Python 3.11,
   Linux): `extract` and `evaluate` ran end to end on four blank generated JPEGs. MediaPipe
   found no face in them, as expected, and `evaluate` reported every person as skipped.
-- **Run on the real dataset once (2026-11-18):** the real download, landmark extraction
-  for all 15 participants and evaluation of the 12 variants that existed then, in a
-  cloud container. The harness was built where the dataset's host was unreachable; a
-  later session could reach it. Results are in `eval/results/mpiifacegaze.json`, and
-  the run, with an honest reading of the numbers, is described in "Real run" below.
-  The variants and the `diagnose` command added since have not run on the real data.
+- **Run on the real dataset twice (both 2026-11-18), in cloud containers.** The
+  harness was built where the dataset's host was unreachable; later sessions could
+  reach it. The first run (commit `d3661ee`) downloaded the data, extracted landmarks
+  for all 15 participants and evaluated the 12 variants that existed then: "Real run"
+  below. The second run (commit `b0f817a`), in a fresh container, repeated the download
+  and extraction, evaluated all 15 variants, including the `centre` and
+  `calibration-mean` baselines and `eyeos-live9`, and ran `diagnose`: "Second run"
+  below. The 12 original variants reproduced bit for bit. Results are in
+  `eval/results/mpiifacegaze.json` and `eval/results/mpiifacegaze-diagnostics.json`.
 - **The expected file format was checked against the real files** on that run, and
   matched (see "Expected format" and "Real run"). No parser changed. The readers still
   fail loudly, naming the file and showing the offending line or keys, if a copy of the
@@ -196,9 +199,9 @@ reported per participant.
   dot stay in the fit. Live, Gate 2 judges the leave-one-out over 9 samples, each the
   average of up to 10 frames, added at the dot (`eyeos/calibration_session.py`). The two
   respond to noise differently and can disagree in either direction, so the "0/15"
-  below is 0 of 15 under the 45-photo statistic, not a measured live refusal. A
-  live-style variant, `eyeos-live9`, was added to the harness after this run (see
-  "Variants"); it has not run on the real data yet.
+  below is 0 of 15 under the 45-photo statistic, not a measured live refusal. The
+  live-style variant `eyeos-live9` (see "Variants") computes live Gate 2's statistic
+  on these photos; on the second run it also passed 0 of 15 (see "Second run").
 - **One calibration across many sittings.** The images come from many days (`dayNN`
   folders), so a calibration fitted on some of them is tested on photos from other
   sittings, lighting and postures. A live calibration is used in the same sitting.
@@ -208,9 +211,11 @@ reported per participant.
   EyeOS's own measure. Roll is in real degrees: the tilt, in the image, of the line
   between the eye centres. An audit's check outside this repo, which rotated one real
   MediaPipe face mesh by known angles, suggests yaw reads about 1.5 times and pitch
-  about 0.4 times the true angle. That is speculation until EyeOS's estimate is
-  compared with MPIIFaceGaze's own head pose, which `diagnose` (added after this run)
-  does in its `head_pose_agreement` section; it has not run on the real data yet. Gate
+  about 0.4 times the true angle. `diagnose`'s `head_pose_agreement` compared EyeOS's
+  estimate with MPIIFaceGaze's own head pose on the second run: roll reads about 1:1,
+  yaw about 0.4 to 0.5 times and pitch about 0.13 times the dataset's angle, with weak
+  correlations for yaw and pitch, so the yaw guess above was wrong (see "Second run",
+  f). Gate
   2's 15° limit applies to the largest change on any of the three axes, so it is real
   degrees of roll but EyeOS's measure of yaw and pitch, a different true angle on each
   axis. Every head-pose share here is what Gate 2 would see live, in those units.
@@ -247,9 +252,9 @@ protocol never includes the participant being evaluated.
 
 ### Baselines and the live-style calibration
 
-These variants were added after the first real run (2026-11-18), so the committed
-`eval/results/mpiifacegaze.json` has no numbers for them yet; the next run on the
-dataset will.
+These variants were added after the first real run and ran on the real data in the
+second run (both 2026-11-18); their numbers are in `eval/results/mpiifacegaze.json` and
+read in "Second run" below.
 
 Two baselines ignore the image. They put every other error on a scale: how much of it
 is left once a model has used the photo at all. The third variant builds the shipping
@@ -467,8 +472,8 @@ averages 319 px; Gate 2 needs < 60 px.
   - The cross-sitting part can be measured without new data: the landmark cache keeps
     each image's `dayNN` folder, so a calibration tested within one day can be compared
     with the cross-day numbers here (a day can hold more than one sitting).
-    `diagnose`, added after this run, makes that same-day split (`within_day`); it has
-    not run on the real data yet.
+    `diagnose`, added after this run, makes that same-day split (`within_day`); on
+    the second run, within-day was only about 10 % below cross-day (see "Second run").
     The rest needs a recorded live session (`eyeos record`).
 - **Head pose matters.** Adding EyeOS's own yaw, pitch and roll (`with-head-pose`)
   cuts the mean error by 13 % (258 to 224 px), and learning from the other 14 people
@@ -496,29 +501,28 @@ averages 319 px; Gate 2 needs < 60 px.
   calibration target, which is about the middle of the screen. Against `ridge-10`
   itself, the shipping model's mean error is 40 % lower (258 against 429 px) and lower
   for all 15 people, but for p13 only 13 % lower (348 against 402 px), computed from
-  the JSON's per-person mean pixel errors. That `ridge-10` stands in for a constant is
-  reasoning from the code and the numbers above, not a measurement: the
-  constant-prediction baselines `centre` and `calibration-mean` were added to the
-  harness after this run and have not run on the real data yet.
+  the JSON's per-person mean pixel errors. That `ridge-10` stands in for a constant was
+  reasoning from the code and the numbers above, not a measurement, at the time of this
+  run. The constant baselines measured on the second run bear it out: `centre` and
+  `calibration-mean` both average 441.4 px, against `ridge-10`'s 428.8 px.
 - **Nothing was tuned on this data.** Every variant, threshold and the ridge strengths
   were fixed before this run; this is a single evaluation, not a model selection.
   Changing EyeOS's shipping model based on it (for example adding head pose) would be a
   separate decision, made in `eyeos/` with its own tests.
 - **Not measured here:** how the error compares with published appearance-based
   methods on this dataset (their protocols differ, and no such number is produced by
-  this repo), and a measured constant-prediction baseline (`ridge-10` approximates one,
-  as above; the baseline variants added since have not run on the real data).
+  this repo), and, on this first run, a measured constant-prediction baseline
+  (`ridge-10` approximated one, as above; the second run measured two).
 
 ### Diagnostics: where the error comes from
 
-**This has not been run on the real data yet.** The `diagnose` command was added after
-the run above. It is tested only on fake datasets (`tests/test_public_diagnostics.py`)
+The `diagnose` command was added after the first run and ran on the real data in the
+second run; its output is `eval/results/mpiifacegaze-diagnostics.json`, and "Second
+run" below reads it. It is tested on fake datasets (`tests/test_public_diagnostics.py`)
 whose cause of error is known: noise-free faces, iris offsets that shift with head yaw,
 a different iris bias on each day, pure landmark noise (also with a head that turns
 toward the target), and EyeOS head angles that are a known multiple of the dataset's.
-Until a session with the data runs it and commits
-the JSON, nothing here says where the 258 px mean in the table above comes from; this
-section says how to read the answer when it exists.
+This section says what each part measures and how to read it.
 
 ```bash
 python -m eval.public.mpiifacegaze diagnose --root datasets/MPIIFaceGaze \
@@ -607,9 +611,11 @@ are bounds and explanations, not results. Only d and e follow the evaluation pro
   "degrees" (1 means real degrees), which sets what Gate 2's 15-degree limit means. The
   dataset's rotation is read as R = Ry(yaw) Rx(pitch) Rz(roll), head to camera, after
   undoing a half turn of the head frame if that brings the person's mean rotation closer
-  to the identity (a head frame lined up with the camera's). That reading has not been
-  checked against the real files. So the sign of a slope is not interpreted, and a
-  large off-diagonal correlation would show an axis mix-up.
+  to the identity (a head frame lined up with the camera's). Before the second run that
+  reading had not been checked against the real files; on that run the axes matched
+  (no relabelling, the diagonal correlations dominate, roll's slope is about 1; see
+  "Second run", f). The sign of a slope is still not interpreted, and a large
+  off-diagonal correlation would show an axis mix-up.
 - **g. `variance_split`: head motion, the day, or landmark noise?** The share (R²) of
   the all-days in-sample residual from b that a linear fit explains: on the dataset's
   head pose (angles and translation), on the day folder alone, and on both. Read the
@@ -628,6 +634,196 @@ are bounds and explanations, not results. Only d and e follow the evaluation pro
   Regressors unrelated to the residual score about k/n by chance (k regressors, n
   frames), which is small when n is in the thousands. The terminal summary shows the
   two beyond-target shares (`pose|tgt`, `day|tgt`).
+
+## Second run (2026-11-18): baselines, eyeos-live9 and diagnostics
+
+The second run on the real MPIIFaceGaze, in a fresh cloud container, after the
+baselines, `eyeos-live9` and `diagnose` were added. Every metric quoted here is in
+`eval/results/mpiifacegaze.json` or `eval/results/mpiifacegaze-diagnostics.json`, or is
+computed from them (ratios and per-person counts); "inference" marks reasoning that no
+script measures. The wall times and the p11 head-pose histogram below were recorded by
+hand during the run.
+
+### Setup
+
+- **Date:** 2026-11-18. **Code:** commit `b0f817a` (both JSONs' `git_commit`;
+  `git_dirty` false). No code changed during the run.
+- **Machine:** cloud container, 4 CPUs (Intel Xeon @ 2.10 GHz), no GPU, Linux.
+- **Libraries** (recorded in both JSONs' `environment` block, and per person in the
+  cache manifest): Python 3.12.3, mediapipe 0.10.21, opencv-contrib-python 4.11.0.86,
+  numpy 1.26.4, scipy 1.17.1: the same as the first run. pip resolved them by itself
+  from `pip install -e ".[dev,public-eval]"`; no pins were needed. All 996 tests
+  passed before the run.
+
+### Commands and wall times
+
+```bash
+python3.12 -m venv venv && . venv/bin/activate
+pip install -e ".[dev,public-eval]"
+pytest -q
+python scripts/download_mpiifacegaze.py --accept-license --dest datasets
+python -m eval.public.mpiifacegaze extract --root datasets/MPIIFaceGaze \
+    --cache datasets/cache/mpiifacegaze --workers 4
+python -m eval.public.mpiifacegaze evaluate --root datasets/MPIIFaceGaze \
+    --cache datasets/cache/mpiifacegaze --out eval/results/mpiifacegaze.json
+python -m eval.public.mpiifacegaze diagnose --root datasets/MPIIFaceGaze \
+    --cache datasets/cache/mpiifacegaze --out eval/results/mpiifacegaze-diagnostics.json
+python scripts/update_readme.py
+```
+
+The download took 6 min 0 s. The extraction took 1 min 32 s wall time (5 min 17 s
+CPU) for 37,667 images with 4 workers. `evaluate` (all 15 variants) took 8.6 s, and
+`diagnose` 7.3 s and 7.2 s on two runs.
+
+### Reproducibility
+
+- **`evaluate` against the first run.** For the 12 variants of the first run, every
+  per-person and aggregate value in the new file (4,536 values) was compared with the
+  committed one (the file as committed at `b0f817a`, written by the first run at `d3661ee`). All are
+  identical, bit for bit; so are `detection` and `screen_model`. The only differences
+  are the run metadata (`generated`, `git_commit`), `config.variants` (15 instead of
+  12), the three new variants, the new `environment` block and the notes that describe
+  them. So the fresh download, a fresh extraction with the same library versions and
+  the code changes since `d3661ee` left the original numbers unchanged.
+- **`evaluate` twice.** A second `evaluate` on the same cache gave the same file
+  apart from `generated` (and `git_dirty`, true then because the first output was not
+  yet committed).
+- **`diagnose` twice.** Two runs gave byte-identical files.
+
+### Baselines: how much the eyes add
+
+| | mean px | mean ° | Gate 2 (its validation statistic) |
+|---|---|---|---|
+| centre | 441.4 | 10.89 | 0/15 (536.7 px) |
+| calibration-mean | 441.4 | 10.89 | 0/15 (548.9 px) |
+| eyeos (shipping) | 258.4 | 6.25 | 0/15 (319.3 px, 45-photo) |
+| eyeos-live9 | 281.7 | 6.80 | 0/15 (223.4 px, live-style 9-sample) |
+
+- **`eyeos` is 41.5 % below the `centre` baseline** (258.4 against 441.4 px; 6.25°
+  against 10.89°), and below it for all 15 people. The gain ranges from 14 % (p13: 348
+  against 404 px) to 57 % (p14). So the iris offsets carry real gaze information, but
+  the shipping calibration removes well under half of a blind guess's error. p13, the
+  person with the most head motion, is barely better than guessing the centre.
+- **The two baselines are the same result.** Their aggregate means agree to 0.02 px
+  and their per-person means to within 0.3 px: the 45 calibration targets sit around
+  EyeOS's symmetric 9-dot grid, so their mean is almost exactly the screen centre.
+  (`calibration-mean`'s validation error is higher only because a leave-one-out mean
+  is pulled away from each held-out point.)
+- **`ridge-10` was close to a constant, as the first run reasoned:** 428.8 px against
+  441.4 px.
+
+### eyeos-live9: the live-style Gate 2 statistic
+
+- **Its validation error, the statistic live Gate 2 judges, averages 223.4 px per
+  person (140.7 to 390.5 px): 0 of 15 pass the 60 px limit.** It is lower than the
+  45-photo statistic for all 15 people (319.3 px on average): averaging a dot's 5
+  photos removes some per-photo noise, and the leave-one-out runs over 9 samples. Even
+  the best person (p00, 141 px) is more than twice the limit. On these photos, then,
+  the switch to live Gate 2's statistic does not change the verdict: Gate 2 would
+  refuse every calibration. That is still not a live result: each sample here averages
+  photos from different moments, often different days.
+- **Its test error is worse than `eyeos`'s:** 281.7 px (6.80°) against 258.4 px, worse
+  for all 15 people. It fits 9 samples placed at the dots instead of 45 photos at their
+  true targets (which lie on average 20.4 px from the dots), so this is expected; it
+  sits between `eyeos` and `per-dot-1` (9 single photos, 299.6 px).
+
+### Diagnostics
+
+Means below are means of per-person values (each person weighs the same), from the
+diagnostics JSON's `aggregate`, with the per-person range where it matters.
+
+- **a. Feature sanity: no labelling bug.** For all 15 people both eyes' x offsets
+  correlate with the target's x with the same sign (mean r −0.77 left, −0.77 right),
+  and every median x offset is well inside the eye (|median| at most 0.17 half-widths). The
+  two eyes agree only partly: the correlation of their x offsets averages 0.73 (0.32
+  for p12 to 0.90), of their y offsets 0.43 (0.09 to 0.72). Two eyes that turn
+  together should correlate near +1, so this is the first sign of landmark noise,
+  much worse vertically than horizontally. The y offsets correlate with the target's y
+  at only 0.50 on average.
+- **b. In-sample ceilings: the affine map of these features is the limit.** Fitted and
+  scored on all of a person's frames, the shipping model averages 251.7 px: only 3 %
+  below the protocol's cross-day 258.4 px. R² is 0.71 for x and only 0.38 for y. Fitted
+  separately on each day (`per_day`, the bound for a per-sitting calibration) it
+  averages 223.8 px, 11 % below the all-days ceiling. Adding EyeOS's head pose
+  (all-days, in-sample) gives 207.2 px, 18 % below. One eye alone is worse (290.4 px
+  left, 283.4 px right), with neither eye far worse than the other. So the 45-photo
+  calibration is not what holds the error up: even a fit that has seen every test
+  frame, of the same model, cannot go much lower, across days or within one.
+- **c. Constant baselines (in-sample over all frames):** 442.5 px for the screen
+  centre, 442.3 px for the person's own mean target: the same scale as the protocol's
+  `centre` (441.4 px).
+- **d. Within-day against cross-day: drift between days is a small share.** Calibrated
+  and tested within one day (252 days across the 15 people; 6 to 28 per person),
+  the mean error is 231.3 px, against 258.0 px for the cross-day calibration on the
+  test frames of the same days: a ratio of 0.90 on average (0.78 for p11 to 0.94).
+  The within-day protocol is itself within 3 % of the per-day in-sample ceiling
+  (223.8 px). Its calibration images lie further from the dots (104 px on average,
+  against 20 px cross-day), because a day has fewer images. Not one of the 252 day
+  calibrations passes Gate 2 (mean within-day validation error 294.3 px).
+- **e. Error by head-pose distance: it grows with head motion, but it is already large
+  with a still head.** Pooled over all test frames, by EyeOS's head-pose distance from
+  the calibration pose:
+
+  | distance (EyeOS "°") | 0-5 | 5-10 | 10-15 | 15-20 | > 20 |
+  |---|---|---|---|---|---|
+  | frames | 15,419 | 12,498 | 5,333 | 2,098 | 1,552 |
+  | mean px | 213.9 | 257.7 | 296.4 | 338.3 | 425.8 |
+
+  On the frames within Gate 2's head-pose limit, the ones a live session would act on
+  (89.6 % of test frames on average), the mean is 246.7 px, against 378.7 px beyond
+  it. Error roughly doubles from the stillest bin to the largest, but the stillest
+  bin, within 5 of EyeOS's "degrees" of the calibration pose, still averages 214 px.
+- **f. EyeOS's head pose against the dataset's.** The dataset's rotation, read as
+  R = Ry(yaw) Rx(pitch) Rz(roll), head to camera, needed no half-turn relabelling for
+  any of the 15 people, and that reading matched: each EyeOS axis correlates most with
+  the dataset axis of the same name (mean r: roll 0.89, yaw −0.40, pitch 0.36; the
+  largest mean off-diagonal |r| is 0.17). Roll, which EyeOS measures in real degrees,
+  confirms it: slope 0.94 on average (median 0.995). Yaw's slope averages −0.47
+  (median −0.43; −1.45 to 0.00), pitch's 0.13 (median 0.13; −0.06 to 0.27). The sign
+  of yaw is not interpreted (it depends on the convention, which is not checked beyond
+  this). So EyeOS's yaw reads about 0.4 to 0.5 times, and its pitch about 0.13 times,
+  the dataset's angle, with only weak correlation: most of the variation in EyeOS's
+  yaw and pitch is not explained by the dataset's. The earlier audit's guess (yaw
+  about 1.5, pitch about 0.4) was wrong for yaw. Inference: Gate 2's 15-"degree" limit
+  then corresponds to roughly 30 to 35 real degrees of yaw and far more of pitch, so
+  in practice the gate watches roll and the noise in EyeOS's yaw and pitch more than
+  real yaw and pitch. One outlier: for p11 EyeOS's yaw and pitch do not track the
+  dataset's at all (r 0.01 and −0.11) and roll's slope is 0.48. p11's dataset yaw is
+  bimodal on every day: most frames near +26°, about 180 between −35° and −5° (a histogram made by
+  hand from `p11.txt`; no script records it), which a straight line cannot follow.
+  Whether that is p11's posture or a problem with the dataset's head-pose labels for
+  p11 is not known.
+- **g. Variance split: little of the residual is head motion or the day.** Of the
+  all-days in-sample residual, a linear fit on the target explains 45 % on average
+  (the control: noisy features shrink predictions toward the centre, so the residual
+  grows with the target). Beyond the target, the dataset's head pose explains 6.5 %
+  (1.7 to 15 %), and the day folder 6.8 % (3.0 to 18 %). Chance alone would give about
+  k/n: under 0.5 % for head pose (6 regressors, 1,498 to 2,923 frames), and 0.5 to
+  2.3 % for days (one regressor per day folder). Head pose and day together, raw, explain
+  18.6 %.
+
+### What the diagnostics imply about where the error comes from
+
+This is inference from the numbers above, not a measurement of the cause.
+
+- **Mostly per-frame landmark noise in the iris offsets, especially vertical.** Every
+  check points the same way: the two eyes agree only partly, the in-sample ceiling sits
+  just below the protocol's error even within one day, nearly half of the residual is
+  the shrinkage toward the centre that noisy features cause, and neither head pose nor
+  the day explains more than a few percent of it beyond the target. Iris offsets
+  measured from MediaPipe's static-image landmarks on a 1280x720 laptop webcam photo
+  seem simply too noisy for an affine map to place gaze closer than about 200 px.
+  Whether MediaPipe's live tracking mode is less noisy is not measured.
+- **Head motion is a real but secondary contributor.** Error rises steadily with head
+  distance, and head pose added to the regression helps (`with-head-pose`, and the
+  in-sample ceiling with head pose); but with the head still the error is still about
+  214 px, and the head pose explains about 6 % of the residual beyond the target.
+- **Day-to-day drift is the smallest of the three.** Calibrating within the day helps
+  by about 10 %, and the day explains about 7 % beyond the target.
+- **Consequence for EyeOS (inference):** a same-sitting live calibration on these
+  features would likely still be far from Gate 2's 60 px. The lever is the feature
+  quality (the iris offsets' noise), not the calibration protocol, its size or its
+  regularisation. No live session has been recorded to check this.
 
 ## Adding another dataset
 

@@ -1464,10 +1464,11 @@ def _diagnostics_subsection() -> str:
     return text[start : start + after.start()] if after else text[start:]
 
 
-def test_the_doc_explains_every_diagnostic_section_and_says_the_real_run_is_pending():
+def test_the_doc_explains_every_diagnostic_section_and_says_it_ran_on_the_real_data():
     section = _diagnostics_subsection()
 
-    assert "not been run on the real data" in section
+    assert "ran on the real data" in section
+    assert "mpiifacegaze-diagnostics.json" in section
     for name in diagnostics.SECTIONS:
         assert f"`{name}`" in section, name
 
