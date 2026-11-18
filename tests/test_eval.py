@@ -14,6 +14,7 @@ from eval.generate_synthetic import (
     write_csv,
 )
 from eval.run_eval import build_calibration, compute_metrics, load_raw_rows
+from eyeos.calibration import target_points
 from eyeos.config import Config
 from eyeos.input_sources.synthetic import SyntheticInputSource
 from eyeos.output.dry_run import DryRunOutputAdapter
@@ -171,3 +172,40 @@ def test_looking_away_covers_gate2_and_off_screen_modes_with_per_mode_rates():
     assert by_mode["eyes_off_screen"] == {"frames": 10, "false_accepts": 10}
     # The aggregate stays over the Gate-1 modes only, as the README row says.
     assert metrics["looking_away_frame_count"] == 30
+
+
+def _closed_eyes(landmarks):
+    """The same face with both lids shut (both_irises_visible is False)."""
+    import dataclasses
+
+    from eyeos.landmarks import Point3D
+
+    return dataclasses.replace(
+        landmarks,
+        left_eye_top=Point3D(0.38, 0.40),
+        left_eye_bottom=Point3D(0.38, 0.40),
+        right_eye_top=Point3D(0.62, 0.40),
+        right_eye_bottom=Point3D(0.62, 0.40),
+    )
+
+
+def test_eval_calibration_uses_only_frames_the_live_calibration_would_use():
+    # A real recording blinks, and may catch a bystander, during the calibration dots.
+    # eyeos run --calibrate skips those frames (collect_dot_features), so the offline
+    # fit must too, or a closed lid's guessed iris would skew every prediction.
+    rows, t = [], 0.0
+    for target in target_points(1920, 1080):
+        landmarks = make_landmarks(*offset_for_target(*target))
+        for _ in range(5):
+            rows.append(make_row(t, landmarks, target, "calibration"))
+            t += DT
+        wrong = make_landmarks(0.9, -0.9)  # far from this dot
+        bystander = make_landmarks(0.9, -0.9, face_count=2)
+        rows.append(make_row(t, _closed_eyes(wrong), target, "calibration"))
+        rows.append(make_row(t + DT, bystander, target, "calibration"))
+        t += 2 * DT
+
+    calibration = build_calibration(rows, 1920.0, 1080.0)
+
+    assert len(calibration.samples) == 9 * 5
+    assert calibration.validation_error_px < 1.0  # ridge (lambda=1e-3) leaves ~0.04 px

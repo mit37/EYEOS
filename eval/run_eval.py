@@ -52,12 +52,16 @@ def load_raw_rows(path: Path) -> list[dict[str, str]]:
 
 
 def build_calibration(rows: list[dict[str, str]], screen_w: float, screen_h: float) -> Calibration:
+    """Fit on every calibration-segment frame that ``eyeos run --calibrate`` would use:
+    one face, both eyes open (eyeos.calibration_session.collect_dot_features). A blink's
+    iris position under a closed lid is MediaPipe's guess, and a second face may be a
+    bystander's."""
     cal = Calibration(screen_w, screen_h)
     for row in rows:
         if row.get("segment") != "calibration":
             continue
         _, landmarks = row_to_frame(row)
-        if landmarks is None:
+        if landmarks is None or landmarks.face_count != 1 or not landmarks.both_irises_visible:
             continue
         features = extract_features(landmarks)
         target = (float(row["target_x"]), float(row["target_y"]))
