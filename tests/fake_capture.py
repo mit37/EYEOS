@@ -130,6 +130,7 @@ class FakeCv2(types.ModuleType):
     LINE_AA = 16
     FILLED = -1
     WND_PROP_VISIBLE = 4
+    WINDOW_AUTOSIZE = 1
     error = FakeCv2Error
 
     def __init__(
@@ -143,6 +144,7 @@ class FakeCv2(types.ModuleType):
         keys: Sequence[int] = (),
         window_visible: float | Callable[[int], float] = 1.0,
         imshow_error: Exception | None = None,
+        named_window_error: Exception | None = None,
         window_property_error: Exception | None = None,
         destroy_error: Exception | None = None,
     ) -> None:
@@ -160,11 +162,12 @@ class FakeCv2(types.ModuleType):
         self.keys = list(keys)
         self.window_visible = window_visible
         self.imshow_error = imshow_error
+        self.named_window_error = named_window_error
         self.window_property_error = window_property_error
         self.destroy_error = destroy_error
         self.drawn: list[FakeCv2Call] = []
-        # ("imshow", name, image), ("waitKey", delay), ("getWindowProperty", name, prop),
-        # ("destroyWindow", name), in call order.
+        # ("namedWindow", name), ("imshow", name, image), ("waitKey", delay),
+        # ("getWindowProperty", name, prop), ("destroyWindow", name), in call order.
         self.window_calls: list[tuple[Any, ...]] = []
 
     def VideoCapture(self, source: object) -> FakeVideoCapture:
@@ -263,6 +266,11 @@ class FakeCv2(types.ModuleType):
     def shown(self) -> list[Any]:
         """Every image imshow() was given, in order."""
         return [call[2] for call in self.window_calls if call[0] == "imshow"]
+
+    def namedWindow(self, winname: str, flags: int = WINDOW_AUTOSIZE) -> None:
+        if self.named_window_error is not None:
+            raise self.named_window_error
+        self.window_calls.append(("namedWindow", winname))
 
     def imshow(self, winname: str, mat: Any) -> None:
         if self.imshow_error is not None:

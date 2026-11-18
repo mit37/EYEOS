@@ -94,7 +94,11 @@ window with Qt and ships only Qt's X11 (xcb) plugin, so on a Wayland desktop it 
 through XWayland: `--view` refuses to start if `$DISPLAY` isn't set, and if
 `QT_QPA_PLATFORM` names another plugin (such as `wayland`), it sets it to `xcb` for
 its own process. On Xvfb, `QT_QPA_PLATFORM=wayland` and `offscreen` both ran this way;
-a real Wayland desktop is untested.
+a real Wayland desktop is untested. At start-up, before any calibration, the view
+opens its window and closes it again at once, so an OpenCV that can't show one fails
+then instead of at the first frame: a `-headless` build gets a one-line error, but a Qt
+that can't reach the display still aborts the process (it never raises). The window
+opens for good with the first frame.
 
 ## 2. Narrate while recording (about 2 minutes)
 

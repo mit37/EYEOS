@@ -333,8 +333,10 @@ def fake_cv2(monkeypatch):
     return cv2
 
 
-def _install_cv2(monkeypatch, **kwargs):
-    cv2 = FakeCv2(**kwargs)
+def _install_cv2(monkeypatch, *, keys=(), **kwargs):
+    """``keys``: what the view's per-frame key polls return, in order. (The waitKey of
+    TrackingView()'s start-up check comes first and sees no key.)"""
+    cv2 = FakeCv2(keys=[-1, *keys], **kwargs)
     install_fakes(monkeypatch, cv2=cv2)
     monkeypatch.setenv("DISPLAY", ":99")
     return cv2
@@ -351,6 +353,21 @@ def _frame_input(t=0.0):
         gaze_point_px=(960.0, 540.0),
         head_pose_deg=(0.0, 0.0, 0.0),
     )
+
+
+# What TrackingView() does before the first frame: it opens its window and closes it
+# again, so an OpenCV that can't show one fails before the session (or calibration).
+STARTUP_CHECK = [
+    ("namedWindow", "EyeOS tracking"),
+    ("destroyWindow", "EyeOS tracking"),
+    ("waitKey", 1),
+]
+
+
+def _after_startup(cv2):
+    """The window calls after the start-up check."""
+    assert cv2.window_calls[: len(STARTUP_CHECK)] == STARTUP_CHECK
+    return cv2.window_calls[len(STARTUP_CHECK) :]
 
 
 def _drawn(cv2, name):
@@ -496,7 +513,7 @@ def test_update_draws_the_pupils_their_shift_the_map_and_the_lights(fake_cv2):
     # frame itself is never drawn on.
     (shown,) = fake_cv2.shown
     assert shown == camera and shown is not camera
-    assert fake_cv2.window_calls[:2] == [("imshow", "EyeOS tracking", shown), ("waitKey", 1)]
+    assert _after_startup(fake_cv2)[:2] == [("imshow", "EyeOS tracking", shown), ("waitKey", 1)]
     assert all(call.image is shown for call in fake_cv2.drawn)
 
     circles = _centers(fake_cv2)
@@ -639,7 +656,7 @@ def test_pressing_q_closes_the_window_and_stops_drawing(monkeypatch, key):
 
     assert view.closed
     assert len(cv2.shown) == 2  # nothing drawn after 'q'
-    destroys = [c for c in cv2.window_calls if c[0] == "destroyWindow"]
+    destroys = [c for c in _after_startup(cv2) if c[0] == "destroyWindow"]
     assert destroys == [("destroyWindow", "EyeOS tracking")]
 
 
@@ -726,25 +743,45 @@ def test_close_is_idempotent_and_tolerates_an_already_destroyed_window(monkeypat
     view.close()
 
     assert view.closed
-    destroys = [c for c in cv2.window_calls if c[0] == "destroyWindow"]
+    destroys = [c for c in _after_startup(cv2) if c[0] == "destroyWindow"]
     assert destroys == [("destroyWindow", "EyeOS tracking")]
     # HighGUI only takes a destroyed window off the screen while it handles events.
     assert cv2.window_calls[-1] == ("waitKey", 1)
 
 
-def test_closing_a_view_that_never_showed_a_frame_touches_no_window(fake_cv2):
+def test_the_view_opens_and_closes_its_window_once_when_it_is_built(fake_cv2):
+    from eyeos.tracking_view import TrackingView
+
+    TrackingView(SCREEN)
+
+    assert fake_cv2.window_calls == STARTUP_CHECK
+    assert fake_cv2.shown == []
+
+
+def test_closing_a_view_that_never_showed_a_frame_touches_no_window_again(fake_cv2):
     from eyeos.tracking_view import TrackingView
 
     view = TrackingView(SCREEN)
     view.close()
 
     assert view.closed
-    assert fake_cv2.window_calls == []
+    assert fake_cv2.window_calls == STARTUP_CHECK
 
 
-def test_an_opencv_without_window_support_fails_with_a_clear_error(monkeypatch):
-    # opencv-python-headless raises cv2.error from imshow ("The function is not
-    # implemented. Rebuild the library with Windows, GTK+ 2.x or Cocoa support").
+def test_an_opencv_without_window_support_fails_when_the_view_is_built(monkeypatch):
+    # opencv-python-headless raises cv2.error from every window function ("The function
+    # is not implemented. Rebuild the library with Windows, GTK+ 2.x or Cocoa support").
+    from eyeos.tracking_view import TrackingView
+
+    error = FakeCv2Error("The function is not implemented.")
+    cv2 = _install_cv2(monkeypatch, named_window_error=error, imshow_error=error)
+
+    with pytest.raises(RuntimeError, match="could not open its window"):
+        TrackingView(SCREEN)
+    assert cv2.window_calls == []
+
+
+def test_a_first_imshow_that_fails_gets_the_same_clear_error(monkeypatch):
     from eyeos.tracking_view import TrackingView
 
     _install_cv2(monkeypatch, imshow_error=FakeCv2Error("The function is not implemented."))
@@ -887,7 +924,8 @@ def _synthetic_config(tmp_path, n_frames=4, backend="dry_run", csv_path=None):
 
 
 def _window_call_names(cv2):
-    return [call[0] for call in cv2.window_calls]
+    """The window calls after the start-up check, by name."""
+    return [call[0] for call in _after_startup(cv2)]
 
 
 def test_run_view_shows_every_camera_frame_and_closes_the_window_on_exit(
@@ -1022,7 +1060,7 @@ def test_closing_the_view_mid_run_keeps_the_session_running(tmp_path, monkeypatc
     assert not keyboard.running
 
 
-@pytest.mark.parametrize("problem", ["no-opencv", "no-display", "wayland-only"])
+@pytest.mark.parametrize("problem", ["no-opencv", "headless-opencv", "no-display", "wayland-only"])
 def test_run_view_reports_a_missing_opencv_or_display_as_one_line(
     tmp_path, monkeypatch, capsys, problem
 ):
@@ -1030,10 +1068,18 @@ def test_run_view_reports_a_missing_opencv_or_display_as_one_line(
 
     from eyeos.cli import console_main
 
+    # With --calibrate too: the view is checked before the dots. (Without tkinter the
+    # calibration would fail with a different message, had it started.)
+    monkeypatch.setitem(sys.modules, "tkinter", None)
     if problem == "no-opencv":
         monkeypatch.setitem(sys.modules, "cv2", None)
         monkeypatch.setenv("DISPLAY", ":99")
         expected = "eyeos: error: The tracking view needs OpenCV"
+    elif problem == "headless-opencv":
+        error = FakeCv2Error("The function is not implemented.")
+        install_fakes(monkeypatch, cv2=FakeCv2(named_window_error=error, imshow_error=error))
+        monkeypatch.setenv("DISPLAY", ":99")
+        expected = "eyeos: error: the tracking view could not open its window"
     else:
         install_fakes(monkeypatch, cv2=FakeCv2())
         monkeypatch.setattr("sys.platform", "linux")
@@ -1043,7 +1089,8 @@ def test_run_view_reports_a_missing_opencv_or_display_as_one_line(
             monkeypatch.setenv("WAYLAND_DISPLAY", "wayland-0")
         expected = "eyeos: error: The tracking view needs an X display"
 
-    exit_code = console_main(["run", "--config", str(_synthetic_config(tmp_path)), "--view"])
+    config_path = _synthetic_config(tmp_path)
+    exit_code = console_main(["run", "--config", str(config_path), "--calibrate", "--view"])
 
     captured = capsys.readouterr()
     assert exit_code == 2

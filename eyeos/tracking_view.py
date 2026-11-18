@@ -339,6 +339,14 @@ def _qt_platform_override(platform: str, environ: Mapping[str, str]) -> str | No
     return None if "xcb" in plugins else "xcb"
 
 
+def _window_error(error: Exception) -> RuntimeError:
+    return RuntimeError(
+        f"the tracking view could not open its window ({str(error).strip()}). It needs "
+        "a desktop session and an OpenCV build with window support "
+        "(opencv-contrib-python, not a -headless build)."
+    )
+
+
 def _ascii(text: str) -> str:
     for char, replacement in _ASCII.items():
         text = text.replace(char, replacement)
@@ -510,6 +518,15 @@ class TrackingView:
         self._shown = False
         self._seen_visible = False
         self._closed = False
+        # Open the window and close it again at once, so an OpenCV that can't show one
+        # fails now, before the session or a calibration starts, not at the first frame.
+        # (A Qt that can't start still aborts the process, but before anything else
+        # has been opened.) imshow() opens the window again with the first frame.
+        try:
+            self._cv2.namedWindow(self.window_name)
+        except self._cv2.error as e:
+            raise _window_error(e) from e
+        self._destroy_window()
 
     @property
     def closed(self) -> bool:
@@ -531,11 +548,7 @@ class TrackingView:
         except cv2.error as e:
             if self._shown:
                 raise
-            raise RuntimeError(
-                f"the tracking view could not open its window ({str(e).strip()}). It needs "
-                "a desktop session and an OpenCV build with window support "
-                "(opencv-contrib-python, not a -headless build)."
-            ) from e
+            raise _window_error(e) from e
         self._shown = True
         key = cv2.waitKey(1)
         if key != -1 and (key & 0xFF) in (ord("q"), ord("Q")):
@@ -564,8 +577,10 @@ class TrackingView:
         if self._closed:
             return
         self._closed = True
-        if not self._shown:
-            return
+        if self._shown:
+            self._destroy_window()
+
+    def _destroy_window(self) -> None:
         cv2 = self._cv2
         try:
             cv2.destroyWindow(self.window_name)
