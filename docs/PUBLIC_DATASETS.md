@@ -375,8 +375,9 @@ averages 319 px; Gate 2 needs < 60 px.
   to tell which region of the screen someone looks at, not to hit a button.
 - **How these numbers compare with live use is not measured, in either direction.**
   This setup differs from a live session in ways that push both ways.
-  - Harder here: one calibration is fitted on photos from many days and postures and
-    tested on all the others, while a live session calibrates and runs in one sitting;
+  - Harder here: each calibration is chosen from all of a person's photos, taken over
+    many days and postures, and tested on all the others, while a live session
+    calibrates and runs in one sitting;
     MediaPipe detects each still photo from scratch instead of tracking; nothing is
     smoothed; and photos whose head pose live Gate 2 would freeze are still scored (on
     average 90 % of test photos are within the head-pose limit, 65 % for p13: the
