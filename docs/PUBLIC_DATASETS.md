@@ -34,9 +34,9 @@ models can be refitted and compared on the same data with one command each.
 
 ## MPIIFaceGaze
 
-15 participants (`p00` … `p14`), about 3000 photos each from their own laptop webcam,
-each labelled with the on-screen point the person was looking at, plus 3D labels (face
-centre and gaze target in camera coordinates).
+15 participants (`p00` … `p14`), 1,498 to 2,929 photos each (37,667 in all) from their
+own laptop webcam, each labelled with the on-screen point the person was looking at, plus
+3D labels (face centre and gaze target in camera coordinates).
 
 **License: CC BY-NC-SA 4.0** (Creative Commons Attribution-NonCommercial-ShareAlike 4.0,
 <https://creativecommons.org/licenses/by-nc-sa/4.0/>): non-commercial use only, credit the
@@ -242,7 +242,8 @@ The first run on the real MPIIFaceGaze. Every number here is in
   numpy 1.26.4, scipy 1.17.1. pip resolved these by itself from
   `pip install -e ".[dev,public-eval]"`; no pins were needed.
 - **Data:** `MPIIFaceGaze.zip`, 942.3 MB, 38,278 files; 15 participants, 37,667
-  annotated images (1,498 to 2,929 each, not "about 3000" each).
+  annotated images (1,498 to 2,929 each; this doc and the downloader said "about 3000"
+  each before the run).
 
 ### Commands and wall times
 

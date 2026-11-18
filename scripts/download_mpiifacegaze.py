@@ -40,8 +40,8 @@ _IGNORED_PREFIXES = ("__MACOSX/",)
 
 LICENSE_NOTICE = """\
 MPIIFaceGaze (Max Planck Institute for Informatics)
-  15 participants, about 3000 laptop-webcam face images each, each labelled with
-  the on-screen point the person was looking at.
+  15 participants, 1,498 to 2,929 laptop-webcam face images each (37,667 in all),
+  each labelled with the on-screen point the person was looking at.
 
 License: CC BY-NC-SA 4.0 (Creative Commons Attribution-NonCommercial-ShareAlike 4.0
   International, https://creativecommons.org/licenses/by-nc-sa/4.0/).
