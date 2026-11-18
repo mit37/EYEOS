@@ -2,7 +2,8 @@
 metric "produced by a script in this repo"; §3: test count "generated, not typed").
 
 It fills the Results table (values *and* the fixture facts in its labels), the
-negative-result note under it, the MPIIFaceGaze table (read from the committed
+negative-result note under it, the MPIIFaceGaze section (its table, negative result,
+baseline comparison and reproducing commands, all read from the committed
 ``eval/results/mpiifacegaze.json``, so the check needs no dataset), the CLI transcript
 and the test counts.
 
@@ -21,16 +22,19 @@ import io
 import json
 import os
 import re
+import shlex
+import statistics
 import subprocess
 import sys
 from contextlib import redirect_stdout
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 from typing import Any
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 
 from eval.generate_synthetic import NOISE_SIGMA  # noqa: E402
+from eval.public.protocol import DEFAULT_K_PER_DOT  # noqa: E402
 from eval.run_eval import compute_metrics, load_raw_rows  # noqa: E402
 from eyeos.cli import main as eyeos_main  # noqa: E402
 from eyeos.config import Config  # noqa: E402
@@ -228,13 +232,175 @@ PUBLIC_NOT_MEASURED = (
 )
 
 
+PUBLIC_RESULTS_PATH = "eval/results/mpiifacegaze.json"  # as the README's commands write it
+SHIPPING = "eyeos"
+LIVE_STYLE = "eyeos-live9"  # the shipping calibration fitted as a live session fits it
+BASELINES = ("centre", "calibration-mean")  # constant predictors that ignore the image
+CALIBRATION_DOTS = 9  # eyeos.calibration.target_points: the 3 x 3 grid
+
+
 def _num(value: float | None, spec: str, unit: str = "") -> str:
     return "-" if value is None else f"{value:{spec}}{unit}"
 
 
+def _evaluated(variant: dict[str, Any]) -> list[tuple[str, dict[str, Any]]]:
+    """The per-person records of the persons a variant evaluated (a skipped person's
+    record has no errors)."""
+    return [(p, r) for p, r in variant["persons"].items() if "pixel_error_px" in r]
+
+
+def _person_means(variant: dict[str, Any]) -> dict[str, float]:
+    return {p: r["pixel_error_px"]["mean"] for p, r in _evaluated(variant)}
+
+
+def _median_and_max(variant: dict[str, Any]) -> str:
+    """Median / max of the per-person mean errors: with 15 persons a p90 is the 2nd-3rd
+    worst person interpolated, so the worst person is reported as such."""
+    means = list(_person_means(variant).values())
+    if not means:
+        return "-"
+    return f"{statistics.median(means):.1f} / {max(means):.1f} px"
+
+
+def _better_than(variant: dict[str, Any], reference: dict[str, Any]) -> str:
+    """For how many persons (of those both evaluated) the variant's mean error is lower."""
+    ours, theirs = _person_means(variant), _person_means(reference)
+    common = [p for p in ours if p in theirs]
+    if not common:
+        return "-"
+    return f"{sum(ours[p] < theirs[p] for p in common)} / {len(common)}"
+
+
+def _repeats(variant: dict[str, Any], reference: dict[str, Any]) -> bool:
+    """Are the per-person results identical, number for number?"""
+    return bool(reference["persons"]) and variant["persons"] == reference["persons"]
+
+
+def _validation(variant: dict[str, Any]) -> tuple[str, int, int, int]:
+    """How a variant's per-person validation errors read in a sentence, and (passed,
+    evaluated, not validated) counts."""
+    records = [r for _, r in _evaluated(variant)]
+    errors = [r["validation_error_px"] for r in records if r.get("validation_error_px") is not None]
+    passed = sum(bool(r.get("passes_gate2")) for r in records)
+    if errors:
+        phrase = (
+            f"averages {statistics.fmean(errors):.1f} px per person "
+            f"({min(errors):.1f} to {max(errors):.1f} px)"
+        )
+    else:
+        phrase = "could not be computed for anyone"
+    return phrase, passed, len(records), len(records) - len(errors)
+
+
+def _pass_count(passed: int, evaluated: int, unvalidated: int, persons: str = "") -> str:
+    text = f"{passed} of {evaluated}{persons} pass"
+    return text + (f" ({unvalidated} could not be validated)" if unvalidated else "")
+
+
+def _photos(results: dict[str, Any]) -> int | None:
+    k = results["config"].get("k_per_dot")
+    return None if k is None else CALIBRATION_DOTS * int(k)
+
+
+def _validation_result(results: dict[str, Any]) -> str | None:
+    """The shipping calibration's validation error against Gate 2's limit, and, when the
+    file has it, the live-style statistic: a negative result unless everyone passes."""
+    variants = results["variants"]
+    if SHIPPING not in variants:
+        return None
+    limit = results["config"]["gate2_max_validation_error_px"]
+    photos = _photos(results)
+    over = f"its {photos} calibration photos" if photos else "its calibration photos"
+    phrase, passed, evaluated, unvalidated = _validation(variants[SHIPPING])
+    text = (
+        f"The shipping calibration's leave-one-out validation error over {over} {phrase}, "
+        f"against Gate 2's {limit:g} px limit: "
+        f"{_pass_count(passed, evaluated, unvalidated, ' persons')}."
+    )
+    negative = passed < evaluated
+    live = variants.get(LIVE_STYLE)
+    if live is None:
+        text += " Live Gate 2 judges a different statistic (†), which this file does not report."
+    else:
+        phrase, passed, evaluated, unvalidated = _validation(live)
+        text += (
+            f" Fitted the way a live session fits it (`{LIVE_STYLE}`), its leave-one-out over "
+            f"{CALIBRATION_DOTS} samples, one per dot, is the statistic live Gate 2 judges: it "
+            f"{phrase}, and {_pass_count(passed, evaluated, unvalidated)}."
+        )
+        negative = negative or passed < evaluated
+    return ("**Negative result.** " if negative else "") + text
+
+
+def _centre_comparison(results: dict[str, Any]) -> str | None:
+    """How far the shipping calibration's mean error is below the centre baseline's."""
+    variants = results["variants"]
+    if SHIPPING not in variants or "centre" not in variants:
+        return None
+    ours, centre = (
+        (variants[name]["aggregate"].get("pixel_error_px") or {}).get("mean_of_person_means")
+        for name in (SHIPPING, "centre")
+    )
+    if ours is None or not centre:
+        return None
+    change = 100.0 * (centre - ours) / centre
+    direction = f"{change:.1f}% below" if ours < centre else f"{-change:.1f}% above"
+    text = (
+        f"The shipping calibration's mean error, {ours:.1f} px, is {direction} the `centre` "
+        f"baseline's {centre:.1f} px (a constant guess at the screen centre that ignores the "
+        "image)."
+    )
+    return text if ours < centre else "**Negative result.** " + text
+
+
+def _check_footnote(results: dict[str, Any]) -> str:
+    limit = results["config"]["gate2_max_validation_error_px"]
+    photos = _photos(results)
+    k = results["config"].get("k_per_dot")
+    over = (
+        f"its {photos} calibration photos ({CALIBRATION_DOTS} dots × K = {k}; "
+        f"{CALIBRATION_DOTS} × K for `per-dot-K`)"
+        if photos
+        else f"its {CALIBRATION_DOTS} × K calibration photos"
+    )
+    live = LIVE_STYLE in results["variants"]
+    which = f"For every variant except `{LIVE_STYLE}` it is" if live else "For every variant it is"
+    return (
+        "† Each variant's leave-one-out error, and the persons for whom it is below Gate 2's "
+        f"{limit:g} px limit. {which} over {over}, each at its own true target: not the "
+        f"statistic live Gate 2 judges, which is over {CALIBRATION_DOTS} samples, one per dot, "
+        "each that dot's frames averaged and placed at the dot. "
+        + (f"`{LIVE_STYLE}` computes that one." if live else "This file does not report that one.")
+    )
+
+
+def _reproduce(results: dict[str, Any]) -> str:
+    """The commands that regenerate the results file, with its own root, cache and K."""
+    config = results["config"]
+    root = str(config.get("root", "datasets/MPIIFaceGaze"))
+    cache = str(config.get("cache", "datasets/cache/mpiifacegaze"))
+    where = f"--root {shlex.quote(root)} --cache {shlex.quote(cache)}"
+    k = config.get("k_per_dot")
+    k_flag = "" if k is None or k == DEFAULT_K_PER_DOT else f" --k-per-dot {k}"
+    return "\n".join(
+        [
+            "Reproduce it with the dataset (`docs/PUBLIC_DATASETS.md`):",
+            "",
+            "```bash",
+            "python scripts/download_mpiifacegaze.py --accept-license "
+            f"--dest {shlex.quote(str(PurePosixPath(root).parent))}",
+            f"python -m eval.public.mpiifacegaze extract {where}",
+            f"python -m eval.public.mpiifacegaze evaluate {where} --out {PUBLIC_RESULTS_PATH}"
+            f"{k_flag}",
+            "```",
+        ]
+    )
+
+
 def public_results(results: dict[str, Any] | None) -> str:
-    """The MPIIFaceGaze table, from the committed output of
-    ``python -m eval.public.mpiifacegaze evaluate``; "not measured" without one."""
+    """The MPIIFaceGaze section, from the committed output of
+    ``python -m eval.public.mpiifacegaze evaluate``; "not measured" without one. Works
+    with a file from before the baselines, eyeos-live9 and the environment record."""
     if results is None:
         return PUBLIC_NOT_MEASURED
     detection = results["detection"]["aggregate"]
@@ -243,22 +409,32 @@ def public_results(results: dict[str, Any] | None) -> str:
     date = str(results.get("generated", ""))[:10] or "an unknown date"
     rate = detection.get("detection_rate_mean")
     people = len(results["detection"]["persons"])
-    lines = [
+    limit = results["config"]["gate2_max_validation_error_px"]
+    variants = results["variants"]
+    shipping = variants.get(SHIPPING)
+    paragraphs = [
         f"**Public dataset: MPIIFaceGaze**, laptop-webcam photos of {people} people with "
         "known on-screen targets (`docs/PUBLIC_DATASETS.md`). Generated from the committed "
-        f"`eval/results/mpiifacegaze.json`, written by the evaluation at commit `{commit}`"
+        f"`{PUBLIC_RESULTS_PATH}`, written by the evaluation at commit `{commit}`"
         f"{dirty} on {date}. MediaPipe found one usable face in {detection['valid']} of "
         f"{detection['images']} images (mean detection rate per person "
         f"{_num(None if rate is None else rate * 100, '.1f', '%')}). Each person is "
         "calibrated on the images nearest EyeOS's 9 calibration points and tested on all "
-        "their other images. Errors are per person, then summarised across persons.",
-        "",
-        "| Variant | Persons | Mean error | Median / p90 of person means | Share of screen "
-        "diagonal | Mean angular error | Gate 2 would accept the calibration |",
-        "| --- | --- | --- | --- | --- | --- | --- |",
+        "their other images. Errors are per person, then summarised across persons."
     ]
+    paragraphs += [p for p in (_validation_result(results), _centre_comparison(results)) if p]
+
+    lines = [
+        "| Variant | Persons | Mean error | Median / max of person means | Share of screen "
+        "diagonal | Mean angular error | Better than `eyeos` for | Mean leave-one-out error† "
+        f"| Calibration check passed (leave-one-out < {limit:g} px)† |",
+        "| --- | --- | --- | --- | --- | --- | --- | --- | --- |",
+    ]
+    order = [n for n in BASELINES if n in variants] + [n for n in variants if n not in BASELINES]
     skipped: list[str] = []
-    for name, variant in results["variants"].items():
+    repeated = False
+    for name in order:
+        variant = variants[name]
         agg = variant["aggregate"]
         px = agg.get("pixel_error_px") or {}
         deg = agg.get("angular_error_deg")
@@ -269,19 +445,37 @@ def public_results(results: dict[str, Any] | None) -> str:
             angle = _num(deg.get("mean_of_person_means"), ".2f", "°")
             if agg.get("angular_error_persons", evaluated) < evaluated:
                 angle += f" ({agg['angular_error_persons']} persons)"
-        label = f"`{name}` (shipping)" if name == "eyeos" else f"`{name}`"
+        label = f"`{name}`"
+        if name == SHIPPING:
+            label += " (shipping)"
+        elif name in BASELINES:
+            label += " (baseline)"
+        elif name == LIVE_STYLE:
+            label += " (live-style)"
+        if shipping is not None and name != SHIPPING and _repeats(variant, shipping):
+            label += " (= eyeos)"
+            repeated = True
+        better = "-" if shipping is None or name == SHIPPING else _better_than(variant, shipping)
         lines.append(
             f"| {label} | {evaluated} | {_num(px.get('mean_of_person_means'), '.1f', ' px')} "
-            f"| {_num(px.get('median_of_person_means'), '.1f')} / "
-            f"{_num(px.get('p90_of_person_means'), '.1f')} px "
+            f"| {_median_and_max(variant)} "
             f"| {_num(agg.get('pixel_error_pct_diagonal_mean_of_person_means'), '.2f', '%')} "
-            f"| {angle} | {agg['gate2_passed']} / {evaluated} |"
+            f"| {angle} | {better} | {_num(agg.get('validation_error_px_mean'), '.1f', ' px')} "
+            f"| {agg['gate2_passed']} / {evaluated} |"
         )
         if agg.get("persons_skipped"):
             skipped.append(f"`{name}`: {', '.join(agg['persons_skipped'])}")
+    paragraphs.append("\n".join(lines))
     if skipped:
-        lines += ["", "Persons skipped (too few usable images): " + "; ".join(skipped) + "."]
-    return "\n".join(lines)
+        paragraphs.append("Persons skipped (too few usable images): " + "; ".join(skipped) + ".")
+    paragraphs.append(_check_footnote(results))
+    if repeated:
+        paragraphs.append(
+            "(= eyeos): per-person results identical to `eyeos`'s, number for number, so the "
+            "same result listed again, not an independent confirmation."
+        )
+    paragraphs.append(_reproduce(results))
+    return "\n\n".join(paragraphs)
 
 
 def load_public_results(path: Path = PUBLIC_RESULTS) -> dict[str, Any] | None:
