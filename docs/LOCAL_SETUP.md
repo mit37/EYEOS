@@ -323,9 +323,12 @@ recording anything.
 
 **License.** It is licensed CC BY-NC-SA 4.0: non-commercial use only, credit the
 authors, share anything derived from it under the same license. The images show real
-people's faces, so they and anything derived from them stay out of git (`datasets/`
-is gitignored). The downloader prints the license and citation and downloads nothing
-until you pass `--accept-license`.
+people's faces, so they and the landmark caches made from them stay out of git
+(`datasets/` is gitignored). The one committed file computed from the data,
+`eval/results/mpiifacegaze.json`, holds only error metrics and is shared under the
+dataset's license (`docs/PUBLIC_DATASETS.md`, "The results JSON"). The downloader
+prints the license and citation and downloads nothing until you pass
+`--accept-license`.
 
 ```powershell
 python scripts/download_mpiifacegaze.py --accept-license --dest datasets
@@ -335,9 +338,11 @@ python -m eval.public.mpiifacegaze evaluate --root datasets/MPIIFaceGaze --cache
 ```
 
 - `extract` runs MediaPipe over every image once and caches the landmarks. It is the
-  slow step (not timed here), and it can be stopped and restarted. The first
-  `extract` line is a quick trial on two people and 200 images each; the second does
-  everything, with 4 worker processes.
+  slow step, and it can be stopped and restarted. On the one real run it took about
+  1 min 40 s for all 37,667 images with 4 workers, on a 4-CPU cloud container
+  (`docs/PUBLIC_DATASETS.md`, "Real run"); take that only as a rough guide, since a
+  laptop's CPU and disk differ. The first `extract` line is a quick trial on two
+  people and 200 images each; the second does everything, with 4 worker processes.
 - `evaluate` doesn't run MediaPipe again: it reuses the cache, so it can be re-run as
   often as you like.
 
