@@ -68,8 +68,14 @@ Add `--view` to see what EyeOS measures, drawn over the camera image in a window
 called "EyeOS tracking":
 
 ```bash
-eyeos run --config config.yaml --calibrate --overlay --view
+eyeos run --config config.yaml --view
 ```
+
+That is the form that has run (on Xvfb, see below). `--view` can be combined with
+`--calibrate` and `--overlay`, but that combination is **untested**: it puts Tk's
+windows (the calibration dots, the gate overlay) and OpenCV's Qt window in one
+process, and no environment used to build this had tkinter and OpenCV together. On
+macOS, Tk and Qt both want the main thread, so expect trouble there first.
 
 | Drawn | What it means |
 |---|---|

@@ -165,9 +165,16 @@ is therefore behind an interface and tested only against a fake:
     0.10.21 on Xvfb, from ad-hoc scripts outside the repo: `eyeos run --view` on a
     generated face-free video and on the synthetic fixture, a real `q` keypress (XTest)
     and a real `WM_DELETE_WINDOW` close.
-  - It has never run with a webcam, a real face, a window manager, GTK, macOS or
-    Windows. Its cost per frame (a frame copy, the drawing, `imshow` and `waitKey(1)`)
-    was not measured, so how much it slows a live session is unknown.
+  - After review, with the same OpenCV on Xvfb: real arrow-key presses (XTest) leave
+    the view open; `QT_QPA_PLATFORM=wayland` or `offscreen` is set to `xcb` and the run
+    completes; a real `opencv-python-headless` 4.11 fails with a one-line error before
+    calibration starts. With `$WAYLAND_DISPLAY` set and no X server at all, `--view`
+    exits 2 with a message instead of aborting.
+  - It has never run with a webcam, a real face, a window manager, a real Wayland
+    desktop, GTK, macOS or Windows, or alongside the Tk windows (`--calibrate`,
+    `--overlay`): no environment used here had tkinter and OpenCV together. Its cost
+    per frame (a frame copy, the drawing, `imshow` and `waitKeyEx(1)`) was not
+    measured, so how much it slows a live session is unknown.
 - **Eval.** The README numbers come from a generated synthetic landmark sequence
   (`eval/fixtures/`, made by `eval/generate_synthetic.py`). Real-session numbers are
   marked "not measured", pending recordings, and so is the PRD's 5-minute reading
