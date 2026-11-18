@@ -176,6 +176,36 @@ def test_the_license_precaution_covers_every_copy_of_the_mpiifacegaze_metrics():
         assert place in note, place
 
 
+def test_the_readme_writes_gate_2s_head_pose_limit_without_a_degree_sign():
+    # Yaw and pitch are uncalibrated pseudo-degrees, so "15°" would claim true degrees.
+    text = README.read_text(encoding="utf-8")
+
+    assert not re.search(
+        r"cfg:gates\.calibration_max_head_pose_delta_deg -->[^<]*<!-- /cfg -->\s*°", text
+    )
+
+
+@pytest.mark.parametrize(
+    ("doc", "start"),
+    [
+        (README, "**The head-pose estimate is uncalibrated.**"),
+        (PUBLIC_DOC, "**EyeOS's head pose is a simplified, uncalibrated estimate**"),
+    ],
+    ids=["README.md", "PUBLIC_DATASETS.md"],
+)
+def test_the_head_pose_units_note_says_roll_is_in_real_degrees(doc, start):
+    # features.py takes roll from atan2 on the eye-centre line; only yaw and pitch use
+    # the hand-picked scales, and Gate 2's limit applies to the largest of the three.
+    text = " ".join(doc.read_text(encoding="utf-8").split())
+    begin = text.index(start)
+    end = re.search(r" (- \*\*|#+ )", text[begin:])
+    assert end is not None
+    note = text[begin : begin + end.start()]
+
+    assert "roll" in note.lower()
+    assert "real degrees" in note
+
+
 def _table_headers(text: str) -> list[str]:
     """Every header cell of every Markdown table in ``text``."""
     lines = text.splitlines()

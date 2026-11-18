@@ -147,7 +147,8 @@ session would treat a user, as far as still photos allow:
      (`< gates.calibration_max_error_px`, 60 px by default). Live Gate 2 applies that
      limit to a different leave-one-out; see "Limits of this protocol".
    - The share of test frames whose head pose is within Gate 2's limit
-     (`calibration_max_head_pose_delta_deg`, 15° by default) of the calibration pose.
+     (`calibration_max_head_pose_delta_deg`, 15° by default, in EyeOS's head-pose units;
+     see "Limits of this protocol") of the calibration pose.
 6. **Across participants.** For pixel and angular error: the mean of the per-person means
    (each person weighs the same), the median and p90 of the per-person means, and the
    median and p90 of all test frames pooled. Also the number of persons that pass
@@ -204,13 +205,15 @@ reported per participant.
 - **EyeOS's head pose is a simplified, uncalibrated estimate** (`eyeos.features`), not
   the dataset's head pose. Yaw and pitch are nose-offset ratios multiplied by fixed,
   hand-picked constants (`_YAW_SCALE_DEG`, `_PITCH_SCALE_DEG`), so their "degrees" are
-  EyeOS's own measure. An audit's check outside this repo, which rotated one real
+  EyeOS's own measure. Roll is in real degrees: the tilt, in the image, of the line
+  between the eye centres. An audit's check outside this repo, which rotated one real
   MediaPipe face mesh by known angles, suggests yaw reads about 1.5 times and pitch
   about 0.4 times the true angle. That is speculation until EyeOS's estimate is
   compared with MPIIFaceGaze's own head pose, which `diagnose` (added after this run)
-  does in its `head_pose_agreement` section; it has not run on the real data yet. So the
-  15° limit, and every head-pose share here, is what Gate 2 would see live, in EyeOS's
-  measure, not 15 true degrees.
+  does in its `head_pose_agreement` section; it has not run on the real data yet. Gate
+  2's 15° limit applies to the largest change on any of the three axes, so it is real
+  degrees of roll but EyeOS's measure of yaw and pitch, a different true angle on each
+  axis. Every head-pose share here is what Gate 2 would see live, in those units.
 - **Variants have slightly different test sets.** A variant with more images per dot
   holds more images out for calibration.
 - **Nothing here changes EyeOS.** The variants are experiments for comparison. Changing
