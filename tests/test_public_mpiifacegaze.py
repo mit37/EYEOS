@@ -999,6 +999,42 @@ def test_frames_without_exactly_one_open_eyed_face_are_counted_and_left_out(tmp_
     assert person["n_calibration"] + person["n_test"] == 205
 
 
+def _with_invalid_frames(person: FakePerson) -> FakePerson:
+    """Every 7th image faceless and every 11th (from 3) shut-eyed, as real data has some."""
+    faceless = set(range(0, person.n_images, 7))
+    return dataclasses.replace(
+        person,
+        faces={i: 0 for i in faceless},
+        closed=set(range(3, person.n_images, 11)) - faceless,
+    )
+
+
+def test_noise_free_evaluate_keeps_each_frame_with_its_own_target_around_invalid_frames(
+    tmp_path, scipy_io
+):
+    persons = [
+        _with_invalid_frames(FakePerson("p00")),
+        _with_invalid_frames(_second_screen("p01", seed=1)),
+    ]
+    root, cache = _extracted(tmp_path, persons)
+
+    results = mpii.evaluate_dataset(root, cache, variants=["eyeos", "global-lopo"])
+
+    for person in persons:
+        invalid = len(person.faces) + len(person.closed)
+        assert invalid == 35 + 19
+        assert results["detection"]["persons"][person.name]["valid"] == 240 - invalid
+    for variant in ("eyeos", "global-lopo"):
+        assert results["variants"][variant]["aggregate"]["persons_evaluated"] == 2, variant
+        for name, person in results["variants"][variant]["persons"].items():
+            # Any slip between a valid frame and its target or 3D labels shows up as
+            # hundreds of pixels or degrees, not the rounding error left here.
+            assert person["pixel_error_px"]["mean"] < 0.75, (variant, name)
+            assert person["pixel_error_px"]["p90"] < 0.75, (variant, name)
+            assert person["angular_error_deg"]["mean"] < 0.02, (variant, name)
+            assert person["validation_error_px"] < 0.5, (variant, name)
+
+
 def test_angular_error_is_null_with_the_reason_when_no_screen_model_fits(tmp_path, scipy_io):
     root, cache = _extracted(tmp_path, [FakePerson("p00", gt_offset_mm=40.0)])
 
@@ -1119,6 +1155,40 @@ def _person_data(tmp_path: Path, person: FakePerson) -> protocol.PersonData:
         targets_px=np.array([a.target_px for a in annotations]),
         landmarks=[detector(tmp_path / person.name / a.image) for a in annotations],
     )
+
+
+def _person_data_3d(tmp_path: Path, person: FakePerson) -> protocol.PersonData:
+    """_person_data plus the fake's 3D labels and its own screen model, still no scipy."""
+    data = _person_data(tmp_path, person)
+
+    def to_camera_mm(points_px: np.ndarray) -> np.ndarray:
+        return np.array([person.gaze_target_mm(x, y) for x, y in points_px])
+
+    return dataclasses.replace(
+        data,
+        face_centers_mm=np.tile(person.face_center, (len(data.targets_px), 1)),
+        gaze_targets_mm=to_camera_mm(data.targets_px),
+        to_camera_mm=to_camera_mm,
+    )
+
+
+def test_noise_free_protocol_pairs_valid_frames_with_their_targets_and_3d_labels(tmp_path):
+    persons = [
+        _person_data_3d(tmp_path, _with_invalid_frames(FakePerson("p00"))),
+        _person_data_3d(tmp_path, _with_invalid_frames(_second_screen("p01", seed=1))),
+    ]
+    variants = models.build_variants()
+
+    results = protocol.evaluate(persons, [variants["eyeos"], variants["global-lopo"]])
+
+    for name in ("p00", "p01"):
+        assert results["detection"]["persons"][name]["valid"] == 240 - 35 - 19
+    for variant in ("eyeos", "global-lopo"):
+        for name, person in results["variants"][variant]["persons"].items():
+            assert person["n_calibration"] + person["n_test"] == 240 - 35 - 19
+            assert person["pixel_error_px"]["mean"] < 0.75, (variant, name)
+            assert person["angular_error_deg"]["mean"] < 0.02, (variant, name)
+            assert person["validation_error_px"] < 0.5, (variant, name)
 
 
 def _three_screens(tmp_path: Path, **kwargs: Any) -> list[protocol.PersonData]:
@@ -1327,6 +1397,8 @@ def test_the_lopo_training_set_is_every_other_persons_valid_frames_in_screen_fra
 
     assert features.shape == (238 + 240, 7)
     assert fractions.shape == (238 + 240, 2)
+    # p00's images 0 (no face) and 1 (two faces) are left out, so its rows start at 2.
+    assert fractions[:238] == pytest.approx(p00.data.targets_px[2:] / np.array([1280.0, 800.0]))
     assert fractions[238:] == pytest.approx(p01.data.targets_px / np.array([1440.0, 900.0]))
     assert features[0] == pytest.approx(
         [*p00.features[0].iris_vector(), *p00.features[0].head_pose()]
