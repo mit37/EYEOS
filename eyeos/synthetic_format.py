@@ -16,6 +16,13 @@ CSV_FIELDNAMES: list[str] = ["timestamp_s", "face_count", "detection_confidence"
 ]
 
 
+# A labelled session (``eval/generate_synthetic.py``'s fixture, or ``eyeos record``) adds
+# eval-only ground truth after the frame columns: what was on screen for each frame.
+# SyntheticInputSource ignores them, so a labelled session still replays as input.
+LABEL_FIELDNAMES: tuple[str, ...] = ("target_x", "target_y", "segment", "away_mode")
+SESSION_FIELDNAMES: list[str] = [*CSV_FIELDNAMES, *LABEL_FIELDNAMES]
+
+
 def landmarks_to_row(timestamp_s: float, landmarks: FaceLandmarks | None) -> dict[str, str]:
     row: dict[str, str] = {
         "timestamp_s": repr(timestamp_s),
@@ -52,3 +59,19 @@ def row_to_frame(row: dict[str, str]) -> tuple[float, FaceLandmarks | None]:
         **points,
     )
     return timestamp_s, landmarks
+
+
+def session_row(
+    timestamp_s: float,
+    landmarks: FaceLandmarks | None,
+    target: tuple[float, float] | None,
+    segment: str,
+    away_mode: str = "",
+) -> dict[str, str]:
+    """One SESSION_FIELDNAMES row: a frame plus what was on screen when it was taken."""
+    row = landmarks_to_row(timestamp_s, landmarks)
+    row["target_x"] = repr(target[0]) if target else ""
+    row["target_y"] = repr(target[1]) if target else ""
+    row["segment"] = segment
+    row["away_mode"] = away_mode
+    return row

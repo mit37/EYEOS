@@ -22,6 +22,21 @@ from eyeos.calibration import target_points
 _DOT_RADIUS = 12
 
 
+def check_screen_size(root: Any, screen_width_px: int, screen_height_px: int) -> None:
+    """Destroy ``root`` and raise ValueError unless the screen Tk reports is the config's.
+
+    Dots drawn for the wrong size land somewhere other than where the cursor will be
+    sent, so every target would be off by the scaling factor."""
+    actual = (int(root.winfo_screenwidth()), int(root.winfo_screenheight()))
+    if actual != (int(screen_width_px), int(screen_height_px)):
+        root.destroy()
+        raise ValueError(
+            f"config screen.width_px/height_px is {screen_width_px}x{screen_height_px} but "
+            f"the screen reports {actual[0]}x{actual[1]}: set them to the reported size "
+            "(Windows display scaling changes it, e.g. 1920x1080 at 125% reports 1536x864)"
+        )
+
+
 class CalibrationUI:
     def __init__(
         self,
@@ -52,14 +67,7 @@ class CalibrationUI:
                 "no $DISPLAY / desktop session here). Run it on a machine with a "
                 "desktop session."
             ) from e
-        actual = (int(self.root.winfo_screenwidth()), int(self.root.winfo_screenheight()))
-        if actual != (int(screen_width_px), int(screen_height_px)):
-            self.root.destroy()
-            raise ValueError(
-                f"config screen.width_px/height_px is {screen_width_px}x{screen_height_px} but "
-                f"the screen reports {actual[0]}x{actual[1]}: set them to the reported size "
-                "(Windows display scaling changes it, e.g. 1920x1080 at 125% reports 1536x864)"
-            )
+        check_screen_size(self.root, screen_width_px, screen_height_px)
         self.root.attributes("-fullscreen", True)
         self.canvas: Any = tk.Canvas(self.root, bg="black", highlightthickness=0)
         self.canvas.pack(fill="both", expand=True)

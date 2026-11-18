@@ -36,13 +36,13 @@ from pathlib import Path
 
 from eyeos.calibration import target_points
 from eyeos.landmarks import FaceLandmarks, Point3D
-from eyeos.synthetic_format import CSV_FIELDNAMES, landmarks_to_row
+from eyeos.synthetic_format import SESSION_FIELDNAMES, session_row
 
 SCREEN_W, SCREEN_H = 1920.0, 1080.0
 DT = 0.1  # 10 fps
 NOISE_SIGMA = 0.03  # per-frame iris-offset noise on calibration and on-target frames
 
-FIELDNAMES = [*CSV_FIELDNAMES, "target_x", "target_y", "segment", "away_mode"]
+FIELDNAMES = SESSION_FIELDNAMES  # the frame columns, then target_x/target_y/segment/away_mode
 
 # A frontal, centered eye/face geometry, held fixed for every synthetic frame — only
 # the iris offset (within each eye box) and face_count/detection_confidence vary.
@@ -103,12 +103,7 @@ def make_row(
     segment: str,
     away_mode: str = "",
 ) -> dict[str, str]:
-    row = landmarks_to_row(t, landmarks)
-    row["target_x"] = repr(target[0]) if target else ""
-    row["target_y"] = repr(target[1]) if target else ""
-    row["segment"] = segment
-    row["away_mode"] = away_mode
-    return row
+    return session_row(t, landmarks, target, segment, away_mode)
 
 
 def generate_rows(seed: int = 20260925) -> list[dict[str, str]]:
