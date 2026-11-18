@@ -327,15 +327,24 @@ def test_a_session_records_every_stage_in_order(fake_tk, tmp_path):
     for key, block in _blocks(rows):
         if key[1] and key[0] != "settle":
             assert len(block) == 45  # elapsed 0.625 .. 2.0 s at 32 fps
-    by_dot: dict[tuple[str, str], list[str]] = {}
+    by_dot: dict[tuple[str, str], list[dict[str, str]]] = {}
     for r in rows:
         if r["target_x"]:
-            by_dot.setdefault((r["target_x"], r["target_y"]), []).append(r["segment"])
-    assert len(by_dot) == 21
-    for segments in by_dot.values():
+            by_dot.setdefault((r["target_x"], r["target_y"]), []).append(r)
+    dots = list(by_dot.values())
+    assert len(dots) == 21
+    for i, dot in enumerate(dots):
+        segments = [r["segment"] for r in dot]
         n_settle = segments.count("settle")
         assert segments == ["settle"] * n_settle + [segments[-1]] * (len(segments) - n_settle)
-        assert n_settle in (19, 20)  # the first dot also has its elapsed-0 frame
+        # Only the first dot has a frame at elapsed 0. A later dot's clock starts at the
+        # timestamp of the frame that ended the dot before it, so its first frame is
+        # already one frame in.
+        assert n_settle == (20 if i == 0 else 19), f"dot {i + 1}"
+    # So every dot lasts exactly dot_s, counted from where the one before it ended.
+    ends = [float(dot[-1]["timestamp_s"]) for dot in dots]
+    starts = [float(dots[0][0]["timestamp_s"]), *ends[:-1]]
+    assert [end - start for start, end in zip(starts, ends, strict=True)] == [2.0] * 21
 
     # Reading: 3 s with the first 0.6 s left out, and no target.
     reading = [r for r in rows if r["segment"] == "just_reading"]
