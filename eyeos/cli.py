@@ -16,6 +16,9 @@ from __future__ import annotations
 import argparse
 import contextlib
 import itertools
+import os
+import re
+import shlex
 import sys
 from datetime import datetime, timezone
 from pathlib import Path
@@ -271,10 +274,27 @@ def _run(args: argparse.Namespace) -> int:
     return 0
 
 
-def _shell_arg(value: str) -> str:
-    """Quote a path for a command line if it has whitespace (cmd, PowerShell and sh all
-    accept double quotes)."""
-    return f'"{value}"' if any(ch.isspace() for ch in value) else value
+_POWERSHELL_BARE = re.compile(r"[A-Za-z0-9_./:\\-]+")
+# PowerShell ends a single-quoted string at any of these, not only at the ASCII one.
+_POWERSHELL_SINGLE_QUOTES = re.compile("['‘’‚‛]")
+
+
+def _shell_arg(value: str, *, powershell: bool | None = None) -> str:
+    """Quote a path so the user's shell passes it on unchanged.
+
+    On Windows that is PowerShell (the shell docs/LOCAL_SETUP.md uses; not cmd):
+    anything but a plain path goes in single quotes, which PowerShell takes
+    literally, with each single quote doubled. Elsewhere it is sh (bash, zsh, ...),
+    via shlex.quote. The sh form is tested by running it through sh; the PowerShell
+    form has not been run in a real PowerShell.
+    """
+    if powershell is None:
+        powershell = os.name == "nt"
+    if not powershell:
+        return shlex.quote(value)
+    if _POWERSHELL_BARE.fullmatch(value):
+        return value
+    return "'" + _POWERSHELL_SINGLE_QUOTES.sub(lambda m: m.group() * 2, value) + "'"
 
 
 def _record(args: argparse.Namespace) -> int:

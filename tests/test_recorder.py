@@ -7,7 +7,10 @@ import ast
 import csv
 import errno
 import math
+import os
 import shlex
+import shutil
+import subprocess
 import sys
 from pathlib import Path
 
@@ -775,6 +778,73 @@ def test_cli_record_writes_the_session_and_prints_the_next_command(tmp_path, cap
     assert command[command.index("--config") + 1] == str(config.resolve())
     assert run_eval_main(command[3:]) == 0
     assert Path(command[command.index("--out") + 1]).exists()
+
+
+def _posix_shell_words(command_line):
+    """The words a POSIX shell makes of ``command_line``, after its quote removal and
+    ``$`` expansion, without running the command."""
+    script = f"set -- {command_line}\nprintf '%s\\0' \"$@\""
+    done = subprocess.run(["sh", "-c", script], capture_output=True, check=True, timeout=10)
+    return [os.fsdecode(word) for word in done.stdout.split(b"\0")[:-1]]
+
+
+needs_a_posix_shell = pytest.mark.skipif(
+    os.name == "nt" or shutil.which("sh") is None, reason="needs a POSIX shell"
+)
+
+
+@needs_a_posix_shell
+@pytest.mark.parametrize("folder", ["O'Neil", "my $HOME dir", 'a"b`c\\d!*?[x]&;|<>(){}#~é'])
+def test_cli_record_prints_a_next_command_a_posix_shell_runs_as_printed(
+    tmp_path, capsys, scripted_user, folder
+):
+    from eval.run_eval import main as run_eval_main
+    from eyeos.cli import console_main
+
+    scripted_user(lambda rec, root: root.fire("<space>"))
+    home = tmp_path / folder
+    home.mkdir()
+    config = _record_config(home)
+    out = home / "s1.csv"
+
+    assert console_main(["record", "--config", str(config), "--out", str(out), *FAST]) == 0
+
+    command = _posix_shell_words(capsys.readouterr().out.strip().splitlines()[-1])
+    assert command[:3] == ["python", "-m", "eval.run_eval"]
+    assert command[command.index("--session") + 1] == str(out.resolve())
+    assert command[command.index("--config") + 1] == str(config.resolve())
+    results = home / "s1-results.json"
+    assert command[command.index("--out") + 1] == str(results.resolve())
+    assert run_eval_main(command[3:]) == 0
+    assert results.exists()
+
+
+@needs_a_posix_shell
+@pytest.mark.parametrize(
+    "path", ["/home/me/eyeos/s1.csv", "/tmp/my dir/s1.csv", "/x/'$HOME' \"`id`\"\\\n/s1.csv"]
+)
+def test_shell_arg_survives_a_posix_shell(path):
+    from eyeos.cli import _shell_arg
+
+    assert _posix_shell_words(_shell_arg(path, powershell=False)) == [path]
+
+
+@pytest.mark.parametrize(
+    "path, printed",
+    [
+        ("C:\\Users\\me\\eyeos\\recordings\\s1.csv", "C:\\Users\\me\\eyeos\\recordings\\s1.csv"),
+        ("C:\\Users\\Mary Ann\\s1.csv", "'C:\\Users\\Mary Ann\\s1.csv'"),
+        ("C:\\Users\\O'Neil\\s1.csv", "'C:\\Users\\O''Neil\\s1.csv'"),
+        ("C:\\Users\\me\\$work (1)\\s1.csv", "'C:\\Users\\me\\$work (1)\\s1.csv'"),
+        # PowerShell also ends a single-quoted string at a typographic single quote.
+        ("C:\\Users\\O\u2019Neil\\s1.csv", "'C:\\Users\\O\u2019\u2019Neil\\s1.csv'"),
+    ],
+)
+def test_shell_arg_quotes_for_powershell_on_windows(path, printed):
+    # Written to PowerShell's quoting rules; not run in a real PowerShell (none here).
+    from eyeos.cli import _shell_arg
+
+    assert _shell_arg(path, powershell=True) == printed
 
 
 def test_cli_record_returns_1_when_cancelled(tmp_path, capsys, scripted_user):
