@@ -290,11 +290,21 @@ def _blocks(rows):
 
 def test_a_session_records_every_stage_in_order(fake_tk, tmp_path):
     from eval.generate_synthetic import FIELDNAMES
+    from eyeos.calibration import target_points
     from eyeos.recorder import build_steps
 
     user = FakeUser()
     recorder = _recorder(tmp_path, user, reading_s=3.0)
-    recorder.root.on_poll = _press_space_when_asked
+    read_on_the_intro: list[float] = []
+
+    def poll(root):
+        if recorder.phase == "intro":
+            if len(user.shown) < 10:
+                return  # the user reads the intro while the camera check runs
+            read_on_the_intro.extend(sorted(user.shown))
+        root.fire("<space>")
+
+    recorder.root.on_poll = poll
 
     assert recorder.run() is True
 
@@ -304,6 +314,15 @@ def test_a_session_records_every_stage_in_order(fake_tk, tmp_path):
     rows = _rows(out)
     assert recorder.frame_count == len(rows)
     assert sorted(p.name for p in tmp_path.iterdir()) == ["session.csv"]  # no temp file left
+
+    # The intro's frames feed the camera check but are not recorded: the file starts at
+    # the first frame read after space, on the first calibration dot.
+    assert len(read_on_the_intro) == 10
+    first = rows[0]
+    assert float(first["timestamp_s"]) == read_on_the_intro[-1] + DT
+    assert first["segment"] == "settle"
+    assert (float(first["target_x"]), float(first["target_y"])) == target_points(W, H)[0]
+    assert all(float(r["timestamp_s"]) > read_on_the_intro[-1] for r in rows)
 
     # Measured rows come in the script's order, one block per step.
     measured = [key for key, _ in _blocks(rows) if key[0] != "settle"]
