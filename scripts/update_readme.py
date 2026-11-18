@@ -2,7 +2,9 @@
 metric "produced by a script in this repo"; §3: test count "generated, not typed").
 
 It fills the Results table (values *and* the fixture facts in its labels), the
-negative-result note under it, the CLI transcript and the test counts.
+negative-result note under it, the MPIIFaceGaze table (read from the committed
+``eval/results/mpiifacegaze.json``, so the check needs no dataset), the CLI transcript
+and the test counts.
 
     python scripts/update_readme.py           # rewrite the generated regions
     python scripts/update_readme.py --check   # exit 1 with a diff if README is stale (CI)
@@ -16,6 +18,7 @@ from __future__ import annotations
 import argparse
 import difflib
 import io
+import json
 import os
 import re
 import subprocess
@@ -215,6 +218,76 @@ def results_notes(m: dict[str, Any]) -> str:
     )
 
 
+PUBLIC_RESULTS = ROOT / "eval" / "results" / "mpiifacegaze.json"
+
+PUBLIC_NOT_MEASURED = (
+    "**Public dataset: not measured yet.** `eval/public/` scores the same calibration on "
+    "MPIIFaceGaze, 15 people's real laptop-webcam photos with known on-screen targets "
+    "(`docs/PUBLIC_DATASETS.md`). No results file (`eval/results/mpiifacegaze.json`) has "
+    "been committed yet, so no MPIIFaceGaze number exists."
+)
+
+
+def _num(value: float | None, spec: str, unit: str = "") -> str:
+    return "-" if value is None else f"{value:{spec}}{unit}"
+
+
+def public_results(results: dict[str, Any] | None) -> str:
+    """The MPIIFaceGaze table, from the committed output of
+    ``python -m eval.public.mpiifacegaze evaluate``; "not measured" without one."""
+    if results is None:
+        return PUBLIC_NOT_MEASURED
+    detection = results["detection"]["aggregate"]
+    commit = (results.get("git_commit") or "unknown")[:7]
+    dirty = " (with uncommitted changes)" if results.get("git_dirty") else ""
+    date = str(results.get("generated", ""))[:10] or "an unknown date"
+    rate = detection.get("detection_rate_mean")
+    people = len(results["detection"]["persons"])
+    lines = [
+        f"**Public dataset: MPIIFaceGaze**, laptop-webcam photos of {people} people with "
+        "known on-screen targets (`docs/PUBLIC_DATASETS.md`). Generated from the committed "
+        f"`eval/results/mpiifacegaze.json`, written by the evaluation at commit `{commit}`"
+        f"{dirty} on {date}. MediaPipe found one usable face in {detection['valid']} of "
+        f"{detection['images']} images (mean detection rate per person "
+        f"{_num(None if rate is None else rate * 100, '.1f', '%')}). Each person is "
+        "calibrated on the images nearest EyeOS's 9 calibration points and tested on all "
+        "their other images. Errors are per person, then summarised across persons.",
+        "",
+        "| Variant | Persons | Mean error | Median / p90 of person means | Share of screen "
+        "diagonal | Mean angular error | Gate 2 would accept the calibration |",
+        "| --- | --- | --- | --- | --- | --- | --- |",
+    ]
+    skipped: list[str] = []
+    for name, variant in results["variants"].items():
+        agg = variant["aggregate"]
+        px = agg.get("pixel_error_px") or {}
+        deg = agg.get("angular_error_deg")
+        evaluated = agg["persons_evaluated"]
+        if deg is None:
+            angle = "not measured (no trusted screen model)"
+        else:
+            angle = _num(deg.get("mean_of_person_means"), ".2f", "°")
+            if agg.get("angular_error_persons", evaluated) < evaluated:
+                angle += f" ({agg['angular_error_persons']} persons)"
+        label = f"`{name}` (shipping)" if name == "eyeos" else f"`{name}`"
+        lines.append(
+            f"| {label} | {evaluated} | {_num(px.get('mean_of_person_means'), '.1f', ' px')} "
+            f"| {_num(px.get('median_of_person_means'), '.1f')} / "
+            f"{_num(px.get('p90_of_person_means'), '.1f')} px "
+            f"| {_num(agg.get('pixel_error_pct_diagonal_mean_of_person_means'), '.2f', '%')} "
+            f"| {angle} | {agg['gate2_passed']} / {evaluated} |"
+        )
+        if agg.get("persons_skipped"):
+            skipped.append(f"`{name}`: {', '.join(agg['persons_skipped'])}")
+    if skipped:
+        lines += ["", "Persons skipped (too few usable images): " + "; ".join(skipped) + "."]
+    return "\n".join(lines)
+
+
+def load_public_results(path: Path = PUBLIC_RESULTS) -> dict[str, Any] | None:
+    return json.loads(path.read_text()) if path.exists() else None
+
+
 def region(name: str, body: str, src: str) -> str:
     """Replace the text between ``<!-- name:start -->`` and ``<!-- name:end -->``."""
     pattern = re.compile(
@@ -268,6 +341,7 @@ def render(text: str) -> str:
     text = region("cli-demo", cli_transcript(), text)
     text = region("results", results_table(metrics, facts), text)
     text = region("results-notes", results_notes(metrics), text)
+    text = region("public-results", public_results(load_public_results()), text)
     text = inline("test-count", total, text)
     text = inline("gate-test-count", gates, text)
     text = config_values(text)

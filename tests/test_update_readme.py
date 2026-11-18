@@ -102,3 +102,69 @@ def test_config_values_quoted_in_prose_are_filled_from_the_defaults():
     )
     with pytest.raises(RuntimeError, match="unknown config value: gates.no_such_setting"):
         update_readme.config_values("<!-- cfg:gates.no_such_setting -->1<!-- /cfg -->")
+
+
+def _public_results() -> dict:
+    """What `eval.public.mpiifacegaze evaluate` writes, from the real protocol on two
+    noise-free fake persons (no scipy or dataset needed)."""
+    import random
+
+    import numpy as np
+
+    from eval.generate_synthetic import make_landmarks
+    from eval.public import models, protocol
+    from tests.fake_mpiifacegaze import offsets_for_target
+
+    def person(name: str) -> protocol.PersonData:
+        rng = random.Random(name)
+        width, height = 1280.0, 800.0
+        targets = [(rng.uniform(0, width - 1), rng.uniform(0, height - 1)) for _ in range(400)]
+        landmarks = [make_landmarks(*offsets_for_target(x, y, width, height)) for x, y in targets]
+        landmarks[0] = None  # one image without a face
+        return protocol.PersonData(name, (width, height), np.array(targets), landmarks)
+
+    variants = models.build_variants()
+    out = protocol.evaluate(
+        [person("p00"), person("p01")], [variants["eyeos"], variants["global-lopo"]]
+    )
+    return {
+        "generated": "2026-11-18T02:00:00+00:00",
+        "git_commit": "0123456789abcdef0123456789abcdef01234567",
+        "git_dirty": False,
+        **out,
+    }
+
+
+def test_public_results_without_a_results_file_say_not_measured():
+    text = update_readme.public_results(None)
+    assert "not measured" in text
+    assert "|" not in text
+
+
+def test_public_results_table_has_a_row_per_variant_with_its_numbers():
+    results = _public_results()
+    text = update_readme.public_results(results)
+    detection = results["detection"]["aggregate"]
+    assert f"{detection['valid']} of {detection['images']}" in text
+    assert "photos of 2 people" in text
+    assert "0123456" in text and "2026-11-18" in text
+    for name, variant in results["variants"].items():
+        agg = variant["aggregate"]
+        row = next(line for line in text.splitlines() if line.startswith(f"| `{name}`"))
+        assert f"{agg['pixel_error_px']['mean_of_person_means']:.1f}" in row
+        assert f"{agg['gate2_passed']} / {agg['persons_evaluated']}" in row
+    # The shipping calibration is the row to read first.
+    assert "| `eyeos` (shipping)" in text
+
+
+def test_public_results_mark_missing_angles_and_skipped_persons():
+    results = _public_results()
+    agg = results["variants"]["eyeos"]["aggregate"]
+    agg["angular_error_deg"] = None
+    agg["persons_skipped"] = ["p07"]
+    results["git_dirty"] = True
+    text = update_readme.public_results(results)
+    row = next(line for line in text.splitlines() if line.startswith("| `eyeos`"))
+    assert "not measured" in row
+    assert "p07" in text
+    assert "uncommitted changes" in text
